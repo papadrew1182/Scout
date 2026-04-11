@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Scout",
+    "slug": "scout",
+    "version": "0.1.0",
+    "scheme": "scout",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"]
+  }
+}
