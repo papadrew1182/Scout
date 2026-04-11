@@ -1,4 +1,5 @@
 from app.models.access import RoleTier, RoleTierOverride
+from app.models.action_items import ParentActionItem
 from app.models.ai import AIConversation, AIMessage, AIToolAudit
 from app.models.calendar import Event, EventAttendee
 from app.models.connectors import ConnectorConfig, ConnectorMapping
@@ -47,6 +48,7 @@ __all__ = [
     "ActivityRecord",
     "GroceryItem",
     "PurchaseRequest",
+    "ParentActionItem",
     "AIConversation",
     "AIMessage",
     "AIToolAudit",

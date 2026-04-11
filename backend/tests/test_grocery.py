@@ -4,7 +4,8 @@ Covers:
 - create grocery item (adult vs child approval_status)
 - list / update / mark purchased
 - purchase request create / approve / reject / convert
-- child permission restrictions
+- child permission restrictions (own requests only, no pending-review)
+- parent action item creation on child submissions
 - family isolation
 """
 
@@ -16,6 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.action_items import ParentActionItem
 from app.models.foundation import Family, FamilyMember
 from app.models.grocery import GroceryItem, PurchaseRequest
 from app.schemas.grocery import GroceryItemCreate, GroceryItemUpdate, PurchaseRequestCreate, ReviewAction
@@ -26,6 +28,7 @@ from app.services.grocery_service import (
     create_grocery_item,
     create_purchase_request,
     list_grocery_items,
+    list_parent_action_items,
     list_pending_review_items,
     list_purchase_requests,
     reject_purchase_request,
@@ -67,11 +70,28 @@ class TestGroceryItemList:
         assert "A" in titles
         assert "B" not in titles
 
-    def test_pending_review_list(self, db: Session, family, children):
+    def test_pending_review_list_adult(self, db: Session, family, adults, children):
         sadie = children["sadie"]
+        andrew = adults["robert"]
         create_grocery_item(db, family.id, sadie.id, GroceryItemCreate(title="Gum"))
-        pending = list_pending_review_items(db, family.id)
+        pending = list_pending_review_items(db, family.id, actor_member_id=andrew.id)
         assert any(i.title == "Gum" for i in pending)
+
+
+class TestPendingReviewPermissions:
+    def test_child_cannot_view_pending_review(self, db: Session, family, children):
+        sadie = children["sadie"]
+        create_grocery_item(db, family.id, sadie.id, GroceryItemCreate(title="Test"))
+        with pytest.raises(HTTPException) as exc:
+            list_pending_review_items(db, family.id, actor_member_id=sadie.id)
+        assert exc.value.status_code == 403
+
+    def test_adult_can_view_pending_review(self, db: Session, family, adults, children):
+        sadie = children["sadie"]
+        andrew = adults["robert"]
+        create_grocery_item(db, family.id, sadie.id, GroceryItemCreate(title="Pending item"))
+        items = list_pending_review_items(db, family.id, actor_member_id=andrew.id)
+        assert any(i.title == "Pending item" for i in items)
 
 
 class TestGroceryItemApproval:
@@ -87,6 +107,42 @@ class TestGroceryItemApproval:
         with pytest.raises(HTTPException) as exc:
             update_grocery_item(db, family.id, children["sadie"].id, item.id, GroceryItemUpdate(approval_status="rejected"))
         assert exc.value.status_code == 403
+
+
+class TestPurchaseRequestPermissions:
+    def test_child_sees_only_own_requests(self, db: Session, family, children):
+        sadie = children["sadie"]
+        townes = children["townes"]
+        create_purchase_request(db, family.id, sadie.id, PurchaseRequestCreate(title="Sadie's book"))
+        create_purchase_request(db, family.id, townes.id, PurchaseRequestCreate(title="Townes's game"))
+
+        sadie_reqs = list_purchase_requests(
+            db, family.id, actor_member_id=sadie.id, actor_role="child"
+        )
+        titles = {r.title for r in sadie_reqs}
+        assert "Sadie's book" in titles
+        assert "Townes's game" not in titles
+
+    def test_child_does_not_see_sibling_request(self, db: Session, family, children):
+        townes = children["townes"]
+        create_purchase_request(db, family.id, children["sadie"].id, PurchaseRequestCreate(title="Sadie only"))
+
+        townes_reqs = list_purchase_requests(
+            db, family.id, actor_member_id=townes.id, actor_role="child"
+        )
+        assert not any(r.title == "Sadie only" for r in townes_reqs)
+
+    def test_parent_sees_all_family_requests(self, db: Session, family, adults, children):
+        create_purchase_request(db, family.id, children["sadie"].id, PurchaseRequestCreate(title="Sadie thing"))
+        create_purchase_request(db, family.id, children["townes"].id, PurchaseRequestCreate(title="Townes thing"))
+
+        andrew = adults["robert"]
+        all_reqs = list_purchase_requests(
+            db, family.id, actor_member_id=andrew.id, actor_role="adult"
+        )
+        titles = {r.title for r in all_reqs}
+        assert "Sadie thing" in titles
+        assert "Townes thing" in titles
 
 
 class TestPurchaseRequests:
@@ -149,6 +205,45 @@ class TestPurchaseRequests:
         with pytest.raises(HTTPException) as exc:
             approve_purchase_request(db, family.id, adults["robert"].id, req.id, ReviewAction())
         assert exc.value.status_code == 400
+
+
+class TestParentActionItems:
+    def test_child_grocery_creates_action(self, db: Session, family, children):
+        sadie = children["sadie"]
+        create_grocery_item(db, family.id, sadie.id, GroceryItemCreate(title="Chips"))
+
+        actions = list_parent_action_items(db, family.id)
+        assert any(a.action_type == "grocery_review" and "Chips" in a.title for a in actions)
+
+    def test_adult_grocery_does_not_create_action(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        create_grocery_item(db, family.id, andrew.id, GroceryItemCreate(title="Bread"))
+
+        actions = list_parent_action_items(db, family.id)
+        assert not any("Bread" in a.title for a in actions)
+
+    def test_purchase_request_creates_action(self, db: Session, family, children):
+        townes = children["townes"]
+        create_purchase_request(
+            db, family.id, townes.id,
+            PurchaseRequestCreate(title="Basketball"),
+        )
+
+        actions = list_parent_action_items(db, family.id)
+        assert any(a.action_type == "purchase_request" and "Basketball" in a.title for a in actions)
+
+    def test_approve_resolves_action(self, db: Session, family, adults, children):
+        req = create_purchase_request(
+            db, family.id, children["sadie"].id,
+            PurchaseRequestCreate(title="Resolved item"),
+        )
+        approve_purchase_request(db, family.id, adults["robert"].id, req.id, ReviewAction())
+
+        actions = list_parent_action_items(db, family.id, status_filter="pending")
+        assert not any("Resolved item" in a.title for a in actions)
+
+        resolved = list_parent_action_items(db, family.id, status_filter="resolved")
+        assert any("Resolved item" in a.title for a in resolved)
 
 
 class TestTenantIsolation:

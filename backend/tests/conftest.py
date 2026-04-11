@@ -1,12 +1,16 @@
 """Shared fixtures: test database, session, and seeded family data.
 
-Uses a real PostgreSQL database (scout_test). Each test runs in a
-transaction that is rolled back after the test completes.
+Uses a real PostgreSQL database (scout_test). Schema is built by running
+the actual SQL migrations (not ORM create_all) so CHECK constraints,
+unique indexes, and triggers match production.
+
+Each test runs in a transaction that is rolled back after the test completes.
 """
 
 import uuid
 from collections.abc import Generator
 from datetime import date, time
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -17,6 +21,7 @@ from app.models.foundation import Family, FamilyMember
 from app.models.life_management import ChoreTemplate, Routine, RoutineStep
 
 TEST_DATABASE_URL = "postgresql://scout:scout@localhost:5432/scout_test"
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "database" / "migrations"
 
 engine = create_engine(TEST_DATABASE_URL)
 TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -24,10 +29,28 @@ TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
-    """Create all tables once per test session."""
-    Base.metadata.create_all(engine)
+    """Build test schema from real SQL migrations."""
+    with engine.connect() as conn:
+        # Drop all tables cleanly
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("GRANT ALL ON SCHEMA public TO scout"))
+        conn.commit()
+
+        # Run each migration in order
+        for migration_file in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            sql = migration_file.read_text(encoding="utf-8")
+            conn.execute(text(sql))
+            conn.commit()
+
     yield
-    Base.metadata.drop_all(engine)
+
+    # Teardown: drop all tables
+    with engine.connect() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("GRANT ALL ON SCHEMA public TO scout"))
+        conn.commit()
 
 
 @pytest.fixture()
@@ -84,7 +107,6 @@ def sadie_routines(db: Session, family: Family, children: dict) -> list[Routine]
     db.add_all(routines)
     db.flush()
 
-    # Add steps to morning routine
     morning = routines[0]
     steps = [
         RoutineStep(routine_id=morning.id, name="Get dressed", sort_order=1),

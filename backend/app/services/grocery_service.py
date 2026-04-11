@@ -3,6 +3,11 @@
 All sources converge into grocery_items: meal_ai, manual, purchase_request.
 Children's manual additions default to pending_review.
 Purchase requests go through an approval flow before becoming grocery items.
+
+Permission rules:
+- list_purchase_requests: children see only their own; adults see all family
+- list_pending_review_items: adults only; children get 403
+- approve/reject/convert: adults only
 """
 
 import uuid
@@ -12,6 +17,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.action_items import ParentActionItem
 from app.models.grocery import GroceryItem, PurchaseRequest
 from app.models.foundation import FamilyMember
 from app.schemas.grocery import (
@@ -21,6 +27,51 @@ from app.schemas.grocery import (
     ReviewAction,
 )
 from app.services.tenant_guard import require_family, require_member_in_family
+
+
+def _create_parent_action(
+    db: Session,
+    family_id: uuid.UUID,
+    created_by: uuid.UUID,
+    action_type: str,
+    title: str,
+    detail: str | None = None,
+    entity_type: str | None = None,
+    entity_id: uuid.UUID | None = None,
+) -> ParentActionItem:
+    item = ParentActionItem(
+        family_id=family_id,
+        created_by_member_id=created_by,
+        action_type=action_type,
+        title=title,
+        detail=detail,
+        entity_type=entity_type,
+        entity_id=entity_id,
+    )
+    db.add(item)
+    db.flush()
+    return item
+
+
+def _resolve_parent_action(
+    db: Session,
+    family_id: uuid.UUID,
+    entity_type: str,
+    entity_id: uuid.UUID,
+    resolver_id: uuid.UUID,
+) -> None:
+    stmt = (
+        select(ParentActionItem)
+        .where(ParentActionItem.family_id == family_id)
+        .where(ParentActionItem.entity_type == entity_type)
+        .where(ParentActionItem.entity_id == entity_id)
+        .where(ParentActionItem.status == "pending")
+    )
+    for action in db.scalars(stmt).all():
+        action.status = "resolved"
+        action.resolved_by = resolver_id
+        action.resolved_at = datetime.now().astimezone()
+    db.flush()
 
 
 # ============================================================================
@@ -58,7 +109,6 @@ def create_grocery_item(
 ) -> GroceryItem:
     member = require_member_in_family(db, family_id, member_id)
 
-    # Children's items default to pending_review
     approval = "active"
     if member.role == "child":
         approval = "pending_review"
@@ -76,6 +126,17 @@ def create_grocery_item(
         approval_status=approval,
     )
     db.add(item)
+    db.flush()
+
+    if member.role == "child":
+        _create_parent_action(
+            db, family_id, member_id,
+            action_type="grocery_review",
+            title=f"{member.first_name} added '{payload.title}' to the grocery list",
+            entity_type="grocery_item",
+            entity_id=item.id,
+        )
+
     db.commit()
     db.refresh(item)
     return item
@@ -93,7 +154,6 @@ def update_grocery_item(
 
     data = payload.model_dump(exclude_unset=True)
 
-    # Children can only mark their own items or items assigned to them
     if actor.role == "child":
         if "approval_status" in data:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Children cannot change approval status")
@@ -112,9 +172,18 @@ def update_grocery_item(
     return item
 
 
-def list_pending_review_items(db: Session, family_id: uuid.UUID) -> list[GroceryItem]:
-    """Items needing parent review (child-added)."""
+def list_pending_review_items(
+    db: Session,
+    family_id: uuid.UUID,
+    actor_member_id: uuid.UUID | None = None,
+) -> list[GroceryItem]:
+    """Items needing parent review. Adults only — children get 403."""
     require_family(db, family_id)
+    if actor_member_id:
+        actor = require_member_in_family(db, family_id, actor_member_id)
+        if actor.role == "child":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Children cannot view pending review items")
+
     stmt = (
         select(GroceryItem)
         .where(GroceryItem.family_id == family_id)
@@ -130,6 +199,7 @@ def approve_grocery_item(
     _require_adult(db, family_id, reviewer_id)
     item = get_grocery_item(db, family_id, item_id)
     item.approval_status = "active"
+    _resolve_parent_action(db, family_id, "grocery_item", item_id, reviewer_id)
     db.commit()
     db.refresh(item)
     return item
@@ -141,6 +211,7 @@ def reject_grocery_item(
     _require_adult(db, family_id, reviewer_id)
     item = get_grocery_item(db, family_id, item_id)
     item.approval_status = "rejected"
+    _resolve_parent_action(db, family_id, "grocery_item", item_id, reviewer_id)
     db.commit()
     db.refresh(item)
     return item
@@ -153,11 +224,17 @@ def reject_grocery_item(
 def list_purchase_requests(
     db: Session,
     family_id: uuid.UUID,
+    actor_member_id: uuid.UUID | None = None,
+    actor_role: str | None = None,
     status_filter: str | None = None,
     requested_by: uuid.UUID | None = None,
 ) -> list[PurchaseRequest]:
     require_family(db, family_id)
     stmt = select(PurchaseRequest).where(PurchaseRequest.family_id == family_id)
+
+    if actor_role == "child" and actor_member_id:
+        stmt = stmt.where(PurchaseRequest.requested_by_member_id == actor_member_id)
+
     if status_filter:
         stmt = stmt.where(PurchaseRequest.status == status_filter)
     if requested_by:
@@ -179,7 +256,7 @@ def create_purchase_request(
     member_id: uuid.UUID,
     payload: PurchaseRequestCreate,
 ) -> PurchaseRequest:
-    require_member_in_family(db, family_id, member_id)
+    member = require_member_in_family(db, family_id, member_id)
 
     req = PurchaseRequest(
         family_id=family_id,
@@ -194,6 +271,17 @@ def create_purchase_request(
         urgency=payload.urgency,
     )
     db.add(req)
+    db.flush()
+
+    _create_parent_action(
+        db, family_id, member_id,
+        action_type="purchase_request",
+        title=f"{member.first_name} requested '{payload.title}'",
+        detail=payload.details,
+        entity_type="purchase_request",
+        entity_id=req.id,
+    )
+
     db.commit()
     db.refresh(req)
     return req
@@ -215,6 +303,7 @@ def approve_purchase_request(
     req.reviewed_by_member_id = reviewer_id
     req.reviewed_at = datetime.now().astimezone()
     req.review_note = action.review_note
+    _resolve_parent_action(db, family_id, "purchase_request", request_id, reviewer_id)
     db.commit()
     db.refresh(req)
     return req
@@ -236,6 +325,7 @@ def reject_purchase_request(
     req.reviewed_by_member_id = reviewer_id
     req.reviewed_at = datetime.now().astimezone()
     req.review_note = action.review_note
+    _resolve_parent_action(db, family_id, "purchase_request", request_id, reviewer_id)
     db.commit()
     db.refresh(req)
     return req
@@ -247,7 +337,6 @@ def convert_purchase_request_to_grocery(
     reviewer_id: uuid.UUID,
     request_id: uuid.UUID,
 ) -> tuple[PurchaseRequest, GroceryItem]:
-    """Convert a purchase request into an active grocery item."""
     _require_adult(db, family_id, reviewer_id)
     req = get_purchase_request(db, family_id, request_id)
     if req.status not in ("pending", "approved"):
@@ -272,10 +361,28 @@ def convert_purchase_request_to_grocery(
     req.linked_grocery_item_id = item.id
     req.reviewed_by_member_id = reviewer_id
     req.reviewed_at = datetime.now().astimezone()
+    _resolve_parent_action(db, family_id, "purchase_request", request_id, reviewer_id)
     db.commit()
     db.refresh(req)
     db.refresh(item)
     return req, item
+
+
+# ============================================================================
+# Parent Action Items
+# ============================================================================
+
+def list_parent_action_items(
+    db: Session, family_id: uuid.UUID, status_filter: str = "pending"
+) -> list[ParentActionItem]:
+    require_family(db, family_id)
+    stmt = (
+        select(ParentActionItem)
+        .where(ParentActionItem.family_id == family_id)
+        .where(ParentActionItem.status == status_filter)
+        .order_by(ParentActionItem.created_at.desc())
+    )
+    return list(db.scalars(stmt).all())
 
 
 # ============================================================================

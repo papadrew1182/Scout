@@ -37,8 +37,12 @@ def list_current_grocery_items(
     "/families/{family_id}/groceries/pending-review",
     response_model=list[GroceryItemRead],
 )
-def list_pending_review(family_id: uuid.UUID, db: Session = Depends(get_db)):
-    return grocery_service.list_pending_review_items(db, family_id)
+def list_pending_review(
+    family_id: uuid.UUID,
+    actor_member_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+):
+    return grocery_service.list_pending_review_items(db, family_id, actor_member_id)
 
 
 @router.post(
@@ -103,11 +107,20 @@ def reject_grocery_item(
 )
 def list_purchase_requests(
     family_id: uuid.UUID,
+    actor_member_id: uuid.UUID = Query(...),
     status: str | None = Query(None),
     requested_by: uuid.UUID | None = Query(None),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.list_purchase_requests(db, family_id, status, requested_by)
+    from app.services.tenant_guard import require_member_in_family
+    actor = require_member_in_family(db, family_id, actor_member_id)
+    return grocery_service.list_purchase_requests(
+        db, family_id,
+        actor_member_id=actor_member_id,
+        actor_role=actor.role,
+        status_filter=status,
+        requested_by=requested_by,
+    )
 
 
 @router.post(

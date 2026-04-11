@@ -441,7 +441,12 @@ def _create_purchase_request(executor: ToolExecutor, args: dict) -> dict:
 def _list_purchase_requests(executor: ToolExecutor, args: dict) -> dict:
     from app.services import grocery_service
     status_filter = args.get("status")
-    reqs = grocery_service.list_purchase_requests(executor.db, executor.family_id, status_filter=status_filter)
+    reqs = grocery_service.list_purchase_requests(
+        executor.db, executor.family_id,
+        actor_member_id=executor.actor_member_id,
+        actor_role=executor.actor_role,
+        status_filter=status_filter,
+    )
     return {"requests": _serialize(reqs)}
 
 

@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 
+import { NeedSomething } from "../../components/NeedSomething";
 import {
   fetchMembers,
   fetchTaskInstances,
@@ -552,6 +553,9 @@ export default function ParentDashboard() {
           {payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}
         </Text>
       </Pressable>
+
+      {/* ---- Need Something? ---- */}
+      <NeedSomething />
     </ScrollView>
   );
 }
