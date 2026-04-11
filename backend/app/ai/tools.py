@@ -39,6 +39,9 @@ CONFIRMATION_REQUIRED = {
     "create_or_update_meal_plan",
     "mark_chore_or_routine_complete",
     "send_notification_or_create_action",
+    "approve_purchase_request",
+    "reject_purchase_request",
+    "convert_purchase_request_to_grocery_item",
 }
 
 
@@ -402,6 +405,71 @@ def _get_rewards_or_allowance_status(executor: ToolExecutor, args: dict) -> dict
     }
 
 
+def _add_grocery_item(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    from app.schemas.grocery import GroceryItemCreate
+    payload = GroceryItemCreate(
+        title=args["title"],
+        quantity=args.get("quantity"),
+        unit=args.get("unit"),
+        category=args.get("category"),
+        preferred_store=args.get("preferred_store"),
+        notes=args.get("notes"),
+        source=args.get("source", "manual"),
+    )
+    item = grocery_service.create_grocery_item(executor.db, executor.family_id, executor.actor_member_id, payload)
+    return {"created": _serialize(item)}
+
+
+def _create_purchase_request(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    from app.schemas.grocery import PurchaseRequestCreate
+    payload = PurchaseRequestCreate(
+        type=args.get("type", "grocery"),
+        title=args["title"],
+        details=args.get("details"),
+        quantity=args.get("quantity"),
+        unit=args.get("unit"),
+        preferred_brand=args.get("preferred_brand"),
+        preferred_store=args.get("preferred_store"),
+        urgency=args.get("urgency"),
+    )
+    req = grocery_service.create_purchase_request(executor.db, executor.family_id, executor.actor_member_id, payload)
+    return {"created": _serialize(req)}
+
+
+def _list_purchase_requests(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    status_filter = args.get("status")
+    reqs = grocery_service.list_purchase_requests(executor.db, executor.family_id, status_filter=status_filter)
+    return {"requests": _serialize(reqs)}
+
+
+def _approve_purchase_request(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    from app.schemas.grocery import ReviewAction
+    req_id = uuid.UUID(args["request_id"])
+    action = ReviewAction(review_note=args.get("review_note"))
+    req = grocery_service.approve_purchase_request(executor.db, executor.family_id, executor.actor_member_id, req_id, action)
+    return {"approved": _serialize(req)}
+
+
+def _reject_purchase_request(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    from app.schemas.grocery import ReviewAction
+    req_id = uuid.UUID(args["request_id"])
+    action = ReviewAction(review_note=args.get("review_note"))
+    req = grocery_service.reject_purchase_request(executor.db, executor.family_id, executor.actor_member_id, req_id, action)
+    return {"rejected": _serialize(req)}
+
+
+def _convert_purchase_request_to_grocery(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import grocery_service
+    req_id = uuid.UUID(args["request_id"])
+    req, item = grocery_service.convert_purchase_request_to_grocery(executor.db, executor.family_id, executor.actor_member_id, req_id)
+    return {"request": _serialize(req), "grocery_item": _serialize(item)}
+
+
 def _send_notification_or_create_action(executor: ToolExecutor, args: dict) -> dict:
     return {
         "status": "logged",
@@ -434,6 +502,12 @@ _TOOL_HANDLERS: dict[str, Any] = {
     "search_notes": _search_notes,
     "get_rewards_or_allowance_status": _get_rewards_or_allowance_status,
     "send_notification_or_create_action": _send_notification_or_create_action,
+    "add_grocery_item": _add_grocery_item,
+    "create_purchase_request": _create_purchase_request,
+    "list_purchase_requests": _list_purchase_requests,
+    "approve_purchase_request": _approve_purchase_request,
+    "reject_purchase_request": _reject_purchase_request,
+    "convert_purchase_request_to_grocery_item": _convert_purchase_request_to_grocery,
 }
 
 
@@ -634,6 +708,89 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 "confirmed": {"type": "boolean"},
             },
             "required": ["target_member_id", "message"],
+        },
+    ),
+    "add_grocery_item": ToolDefinition(
+        name="add_grocery_item",
+        description="Add an item to the family grocery list.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "quantity": {"type": "number"},
+                "unit": {"type": "string"},
+                "category": {"type": "string"},
+                "preferred_store": {"type": "string"},
+                "notes": {"type": "string"},
+                "source": {"type": "string", "enum": ["manual", "meal_ai"]},
+            },
+            "required": ["title"],
+        },
+    ),
+    "create_purchase_request": ToolDefinition(
+        name="create_purchase_request",
+        description="Create a purchase request for non-routine items needing approval.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "type": {"type": "string", "enum": ["grocery", "household", "personal", "other"]},
+                "details": {"type": "string"},
+                "quantity": {"type": "number"},
+                "unit": {"type": "string"},
+                "preferred_brand": {"type": "string"},
+                "preferred_store": {"type": "string"},
+                "urgency": {"type": "string", "enum": ["low", "normal", "high", "urgent"]},
+            },
+            "required": ["title"],
+        },
+    ),
+    "list_purchase_requests": ToolDefinition(
+        name="list_purchase_requests",
+        description="List purchase requests. Optionally filter by status.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["pending", "approved", "rejected", "converted", "fulfilled"]},
+            },
+        },
+    ),
+    "approve_purchase_request": ToolDefinition(
+        name="approve_purchase_request",
+        description="Approve a pending purchase request. Parent-only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string"},
+                "review_note": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["request_id"],
+        },
+    ),
+    "reject_purchase_request": ToolDefinition(
+        name="reject_purchase_request",
+        description="Reject a pending purchase request. Parent-only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string"},
+                "review_note": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["request_id"],
+        },
+    ),
+    "convert_purchase_request_to_grocery_item": ToolDefinition(
+        name="convert_purchase_request_to_grocery_item",
+        description="Convert a purchase request into an active grocery item. Parent-only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["request_id"],
         },
     ),
 }

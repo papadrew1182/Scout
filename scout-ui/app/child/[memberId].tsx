@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 
+import { NeedSomething as NeedSomethingWidget } from "../../components/NeedSomething";
 import { TaskCard } from "../../components/TaskCard";
 import { shared, colors } from "../../lib/styles";
 import {
@@ -304,6 +305,9 @@ export default function ChildDashboard() {
           })}
         </View>
       </View>
+
+      {/* ---- Need Something? ---- */}
+      <NeedSomethingWidget memberId={memberId} isChild={true} />
     </ScrollView>
   );
 }

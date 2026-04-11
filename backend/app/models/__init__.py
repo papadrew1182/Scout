@@ -13,6 +13,7 @@ from app.models.life_management import (
     TaskInstanceStepCompletion,
 )
 from app.models.finance import Bill
+from app.models.grocery import GroceryItem, PurchaseRequest
 from app.models.health_fitness import ActivityRecord, HealthSummary
 from app.models.meals import DietaryPreference, Meal, MealPlan
 from app.models.notes import Note
@@ -44,6 +45,8 @@ __all__ = [
     "Bill",
     "HealthSummary",
     "ActivityRecord",
+    "GroceryItem",
+    "PurchaseRequest",
     "AIConversation",
     "AIMessage",
     "AIToolAudit",

@@ -130,3 +130,40 @@ export interface Note {
   created_at: string;
   updated_at: string;
 }
+
+export interface GroceryItem {
+  id: string;
+  family_id: string;
+  added_by_member_id: string;
+  title: string;
+  quantity: number | null;
+  unit: string | null;
+  category: string | null;
+  preferred_store: string | null;
+  notes: string | null;
+  source: string;
+  approval_status: string;
+  purchase_request_id: string | null;
+  is_purchased: boolean;
+  purchased_at: string | null;
+  purchased_by: string | null;
+}
+
+export interface PurchaseRequest {
+  id: string;
+  family_id: string;
+  requested_by_member_id: string;
+  type: string;
+  title: string;
+  details: string | null;
+  quantity: number | null;
+  unit: string | null;
+  preferred_brand: string | null;
+  preferred_store: string | null;
+  urgency: string | null;
+  status: string;
+  linked_grocery_item_id: string | null;
+  reviewed_by_member_id: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+}

@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { CURRENT_USER_ID, CURRENT_USER_NAME, DEV_MODE } from "../../lib/config";
+import { NeedSomething as NeedSomethingWidget } from "../../components/NeedSomething";
 import { shared, colors } from "../../lib/styles";
 import {
   fetchEvents,
@@ -736,6 +737,9 @@ export default function PersonalDashboard() {
           surface here.
         </Text>
       </Collapsible>
+
+      {/* ---- Need Something? ---- */}
+      <NeedSomethingWidget />
 
       {/* ---- Dev Tools (hidden when DEV_MODE is false) ---- */}
       {DEV_MODE && <DevToolsPanel onIngested={handleIngested} />}

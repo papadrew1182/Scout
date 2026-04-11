@@ -11,6 +11,7 @@ from app.routes import (
     daily_wins,
     families,
     finance,
+    grocery,
     health_fitness,
     integrations,
     meals,
@@ -48,6 +49,7 @@ app.include_router(notes.router)
 app.include_router(finance.router)
 app.include_router(health_fitness.router)
 app.include_router(integrations.router)
+app.include_router(grocery.router)
 app.include_router(ai.router)
 
 

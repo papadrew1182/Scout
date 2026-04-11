@@ -40,6 +40,15 @@ export function NavBar() {
         </Pressable>
 
         <Pressable
+          style={[styles.link, isActive("/grocery") && styles.linkActive]}
+          onPress={() => router.push("/grocery")}
+        >
+          <Text style={[styles.linkText, isActive("/grocery") && styles.linkTextActive]}>
+            Grocery
+          </Text>
+        </Pressable>
+
+        <Pressable
           style={[styles.link, isActive("/child") && styles.linkActive]}
           onPress={() => setChildOpen(!childOpen)}
         >

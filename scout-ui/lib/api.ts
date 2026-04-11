@@ -5,9 +5,11 @@ import type {
   DailyWin,
   Event,
   FamilyMember,
+  GroceryItem,
   Meal,
   Note,
   PersonalTask,
+  PurchaseRequest,
   Routine,
   StepCompletion,
   TaskInstance,
@@ -181,6 +183,68 @@ export function fetchRecentNotes(
   if (familyMemberId) params.set("family_member_id", familyMemberId);
   params.set("limit", String(limit));
   return get(`${familyUrl}/notes/recent?${params.toString()}`);
+}
+
+// ---- Grocery ----
+
+export function fetchGroceryItems(includePurchased?: boolean): Promise<GroceryItem[]> {
+  const params = new URLSearchParams();
+  if (includePurchased) params.set("include_purchased", "true");
+  const qs = params.toString();
+  return get(`${familyUrl}/groceries/current${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchPendingReviewItems(): Promise<GroceryItem[]> {
+  return get(`${familyUrl}/groceries/pending-review`);
+}
+
+export function createGroceryItem(
+  memberId: string,
+  payload: { title: string; quantity?: number; unit?: string; category?: string; preferred_store?: string; notes?: string }
+): Promise<GroceryItem> {
+  return post(`${familyUrl}/groceries/items?member_id=${memberId}`, payload);
+}
+
+export function updateGroceryItem(
+  memberId: string,
+  itemId: string,
+  payload: { title?: string; is_purchased?: boolean; approval_status?: string }
+): Promise<GroceryItem> {
+  const res = fetch(`${familyUrl}/groceries/items/${itemId}?member_id=${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.then(async (r) => {
+    if (!r.ok) { const t = await r.text().catch(() => ""); console.error("API ERROR:", r.status, t); throw new Error("Failed to fetch"); }
+    return r.json();
+  });
+}
+
+export function fetchPurchaseRequests(status?: string): Promise<PurchaseRequest[]> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const qs = params.toString();
+  return get(`${familyUrl}/purchase-requests${qs ? `?${qs}` : ""}`);
+}
+
+export function createPurchaseRequest(
+  memberId: string,
+  payload: { title: string; type?: string; details?: string; quantity?: number; unit?: string; preferred_brand?: string; preferred_store?: string; urgency?: string }
+): Promise<PurchaseRequest> {
+  return post(`${familyUrl}/purchase-requests?member_id=${memberId}`, payload);
+}
+
+export function approvePurchaseRequest(reviewerId: string, requestId: string): Promise<PurchaseRequest> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/approve?reviewer_id=${reviewerId}`, {});
+}
+
+export function rejectPurchaseRequest(reviewerId: string, requestId: string): Promise<PurchaseRequest> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/reject?reviewer_id=${reviewerId}`, {});
+}
+
+export function convertPurchaseRequestToGrocery(reviewerId: string, requestId: string): Promise<GroceryItem> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/convert-to-grocery?reviewer_id=${reviewerId}`);
 }
 
 // ---- Integrations (dev/operator only) ----

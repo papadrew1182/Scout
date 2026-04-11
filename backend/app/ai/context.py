@@ -149,6 +149,13 @@ def get_allowed_tools_for_surface(role: str, surface: str) -> list[str]:
         "list_meals_or_meal_plan",
         "get_rewards_or_allowance_status",
         "search_notes",
+        "list_purchase_requests",
+    ]
+
+    # Children can add grocery items and create purchase requests
+    child_write_tools = [
+        "add_grocery_item",
+        "create_purchase_request",
     ]
 
     write_tools_adult = [
@@ -161,14 +168,19 @@ def get_allowed_tools_for_surface(role: str, surface: str) -> list[str]:
         "create_or_update_meal_plan",
         "generate_grocery_list",
         "create_note",
+        "add_grocery_item",
+        "create_purchase_request",
     ]
 
     parent_tools = [
         "send_notification_or_create_action",
+        "approve_purchase_request",
+        "reject_purchase_request",
+        "convert_purchase_request_to_grocery_item",
     ]
 
     if role == "child" or surface == "child":
-        return read_tools
+        return read_tools + child_write_tools
 
     tools = read_tools + write_tools_adult
     if surface == "parent":
