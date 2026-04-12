@@ -1,4 +1,4 @@
-import { API_BASE_URL, FAMILY_ID } from "./config";
+import { API_BASE_URL } from "./config";
 import type {
   Bill,
   ChoreTemplate,
@@ -19,16 +19,24 @@ import type {
   WeeklyMealPlanGenerateResponse,
 } from "./types";
 
-const familyUrl = `${API_BASE_URL}/families/${FAMILY_ID}`;
-
 // ---------------------------------------------------------------------------
-// Token management — set by AuthProvider, read by all API calls
+// Auth + family state — set by AuthProvider, read by all API calls
 // ---------------------------------------------------------------------------
 
 let _authToken: string | null = null;
+let _familyId: string | null = null;
 
 export function setApiToken(token: string | null) {
   _authToken = token;
+}
+
+export function setApiFamilyId(familyId: string | null) {
+  _familyId = familyId;
+}
+
+function familyUrl(): string {
+  if (!_familyId) throw new Error("No active family. Sign in first.");
+  return `${API_BASE_URL}/families/${_familyId}`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -44,6 +52,10 @@ function authHeaders(): Record<string, string> {
 
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders() });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("API ERROR:", res.status, url, text);
@@ -58,6 +70,10 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
     headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("API ERROR:", res.status, url, text);
@@ -72,6 +88,10 @@ async function patch<T>(url: string, body: unknown): Promise<T> {
     headers: { ...authHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("API ERROR:", res.status, url, text);
@@ -81,11 +101,27 @@ async function patch<T>(url: string, body: unknown): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
+// Centralized 401 handler — clears auth state on session expiry
+// ---------------------------------------------------------------------------
+
+let _onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(handler: () => void) {
+  _onUnauthorized = handler;
+}
+
+function _handleUnauthorized() {
+  _authToken = null;
+  _familyId = null;
+  if (_onUnauthorized) _onUnauthorized();
+}
+
+// ---------------------------------------------------------------------------
 // Family members
 // ---------------------------------------------------------------------------
 
 export function fetchMembers(): Promise<FamilyMember[]> {
-  return get(`${familyUrl}/members`);
+  return get(`${familyUrl()}/members`);
 }
 
 // ---------------------------------------------------------------------------
@@ -96,19 +132,17 @@ export function fetchTaskInstances(
   date: string,
   memberId?: string
 ): Promise<TaskInstance[]> {
-  let url = `${familyUrl}/task-instances?instance_date=${date}`;
+  let url = `${familyUrl()}/task-instances?instance_date=${date}`;
   if (memberId) url += `&member_id=${memberId}`;
   return get(url);
 }
 
-export function fetchStepCompletions(
-  instanceId: string
-): Promise<StepCompletion[]> {
-  return get(`${familyUrl}/task-instances/${instanceId}/steps`);
+export function fetchStepCompletions(instanceId: string): Promise<StepCompletion[]> {
+  return get(`${familyUrl()}/task-instances/${instanceId}/steps`);
 }
 
 export function markTaskComplete(instanceId: string): Promise<TaskInstance> {
-  return post(`${familyUrl}/task-instances/${instanceId}/complete`, {});
+  return post(`${familyUrl()}/task-instances/${instanceId}/complete`, {});
 }
 
 export async function updateStepCompletion(
@@ -117,13 +151,13 @@ export async function updateStepCompletion(
   isCompleted: boolean
 ): Promise<StepCompletion> {
   return patch(
-    `${familyUrl}/task-instances/${instanceId}/steps/${stepCompletionId}`,
+    `${familyUrl()}/task-instances/${instanceId}/steps/${stepCompletionId}`,
     { is_completed: isCompleted },
   );
 }
 
 export function generateTasks(date: string): Promise<TaskInstance[]> {
-  return post(`${familyUrl}/task-instances/generate?target_date=${date}`);
+  return post(`${familyUrl()}/task-instances/generate?target_date=${date}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -131,13 +165,17 @@ export function generateTasks(date: string): Promise<TaskInstance[]> {
 // ---------------------------------------------------------------------------
 
 export function fetchRoutines(memberId?: string): Promise<Routine[]> {
-  let url = `${familyUrl}/routines`;
+  let url = `${familyUrl()}/routines`;
   if (memberId) url += `?member_id=${memberId}`;
   return get(url);
 }
 
 export function fetchChoreTemplates(): Promise<ChoreTemplate[]> {
-  return get(`${familyUrl}/chore-templates`);
+  return get(`${familyUrl()}/chore-templates`);
+}
+
+export function fetchRoutineSteps(routineId: string): Promise<any[]> {
+  return get(`${familyUrl()}/routines/${routineId}/steps`);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +188,7 @@ export function fetchDailyWins(
   endDate: string
 ): Promise<DailyWin[]> {
   return get(
-    `${familyUrl}/daily-wins?member_id=${memberId}&start_date=${startDate}&end_date=${endDate}`
+    `${familyUrl()}/daily-wins?member_id=${memberId}&start_date=${startDate}&end_date=${endDate}`
   );
 }
 
@@ -167,7 +205,7 @@ export async function createWeeklyPayout(
   baselineCents: number,
   weekStart: string
 ): Promise<unknown> {
-  const url = `${familyUrl}/allowance/weekly-payout?member_id=${memberId}&baseline_cents=${baselineCents}&week_start=${weekStart}`;
+  const url = `${familyUrl()}/allowance/weekly-payout?member_id=${memberId}&baseline_cents=${baselineCents}&week_start=${weekStart}`;
   const res = await fetch(url, { method: "POST", headers: authHeaders() });
   if (!res.ok) {
     throw new PayoutError(res.status, `payout request failed (${res.status})`);
@@ -189,7 +227,7 @@ export function fetchMeals(
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
   const qs = params.toString();
-  return get(`${familyUrl}/meals${qs ? `?${qs}` : ""}`);
+  return get(`${familyUrl()}/meals${qs ? `?${qs}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +244,7 @@ export function fetchEvents(
   if (end) params.set("end", end);
   if (hearthVisibleOnly) params.set("hearth_visible_only", "true");
   const qs = params.toString();
-  return get(`${familyUrl}/events${qs ? `?${qs}` : ""}`);
+  return get(`${familyUrl()}/events${qs ? `?${qs}` : ""}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,9 +255,7 @@ export function fetchTopPersonalTasks(
   assignedTo: string,
   limit: number = 5
 ): Promise<PersonalTask[]> {
-  return get(
-    `${familyUrl}/personal-tasks/top?assigned_to=${assignedTo}&limit=${limit}`
-  );
+  return get(`${familyUrl()}/personal-tasks/top?assigned_to=${assignedTo}&limit=${limit}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +263,7 @@ export function fetchTopPersonalTasks(
 // ---------------------------------------------------------------------------
 
 export function fetchUnpaidBills(): Promise<Bill[]> {
-  return get(`${familyUrl}/bills/unpaid`);
+  return get(`${familyUrl()}/bills/unpaid`);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,84 +277,84 @@ export function fetchRecentNotes(
   const params = new URLSearchParams();
   if (familyMemberId) params.set("family_member_id", familyMemberId);
   params.set("limit", String(limit));
-  return get(`${familyUrl}/notes/recent?${params.toString()}`);
+  return get(`${familyUrl()}/notes/recent?${params.toString()}`);
 }
 
 // ---------------------------------------------------------------------------
-// Grocery — auth-derived actor, no more member_id params on protected routes
+// Grocery
 // ---------------------------------------------------------------------------
 
 export function fetchGroceryItems(includePurchased?: boolean): Promise<GroceryItem[]> {
   const params = new URLSearchParams();
   if (includePurchased) params.set("include_purchased", "true");
   const qs = params.toString();
-  return get(`${familyUrl}/groceries/current${qs ? `?${qs}` : ""}`);
+  return get(`${familyUrl()}/groceries/current${qs ? `?${qs}` : ""}`);
 }
 
 export function fetchPendingReviewItems(): Promise<GroceryItem[]> {
-  return get(`${familyUrl}/groceries/pending-review`);
+  return get(`${familyUrl()}/groceries/pending-review`);
 }
 
 export function createGroceryItem(
   payload: { title: string; quantity?: number; unit?: string; category?: string; preferred_store?: string; notes?: string }
 ): Promise<GroceryItem> {
-  return post(`${familyUrl}/groceries/items`, payload);
+  return post(`${familyUrl()}/groceries/items`, payload);
 }
 
 export function updateGroceryItem(
   itemId: string,
   payload: { title?: string; is_purchased?: boolean; approval_status?: string }
 ): Promise<GroceryItem> {
-  return patch(`${familyUrl}/groceries/items/${itemId}`, payload);
+  return patch(`${familyUrl()}/groceries/items/${itemId}`, payload);
 }
 
 export function fetchPurchaseRequests(status?: string): Promise<PurchaseRequest[]> {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   const qs = params.toString();
-  return get(`${familyUrl}/purchase-requests${qs ? `?${qs}` : ""}`);
+  return get(`${familyUrl()}/purchase-requests${qs ? `?${qs}` : ""}`);
 }
 
 export function createPurchaseRequest(
   payload: { title: string; type?: string; details?: string; quantity?: number; unit?: string; preferred_brand?: string; preferred_store?: string; urgency?: string }
 ): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests`, payload);
+  return post(`${familyUrl()}/purchase-requests`, payload);
 }
 
 export function approvePurchaseRequest(requestId: string): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/approve`, {});
+  return post(`${familyUrl()}/purchase-requests/${requestId}/approve`, {});
 }
 
 export function rejectPurchaseRequest(requestId: string): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/reject`, {});
+  return post(`${familyUrl()}/purchase-requests/${requestId}/reject`, {});
 }
 
 export function convertPurchaseRequestToGrocery(requestId: string): Promise<GroceryItem> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/convert-to-grocery`);
+  return post(`${familyUrl()}/purchase-requests/${requestId}/convert-to-grocery`);
 }
 
 // ---------------------------------------------------------------------------
-// Dashboards — auth-derived actor
+// Dashboards
 // ---------------------------------------------------------------------------
 
 export function fetchPersonalDashboard(): Promise<any> {
-  return get(`${familyUrl}/dashboard/personal`);
+  return get(`${familyUrl()}/dashboard/personal`);
 }
 
 export function fetchParentDashboard(): Promise<any> {
-  return get(`${familyUrl}/dashboard/parent`);
+  return get(`${familyUrl()}/dashboard/parent`);
 }
 
 export function fetchChildDashboard(): Promise<any> {
-  return get(`${familyUrl}/dashboard/child`);
+  return get(`${familyUrl()}/dashboard/child`);
 }
 
 export function fetchActionItems(status: string = "pending"): Promise<any[]> {
-  return get(`${familyUrl}/action-items/current?status=${status}`);
+  return get(`${familyUrl()}/action-items/current?status=${status}`);
 }
 
 // ---------------------------------------------------------------------------
-// AI Chat — auth-derived actor
+// AI Chat
 // ---------------------------------------------------------------------------
 
 export async function sendChatMessage(
@@ -327,7 +363,7 @@ export async function sendChatMessage(
   conversationId?: string,
 ): Promise<any> {
   return post(`${API_BASE_URL}/api/ai/chat`, {
-    family_id: FAMILY_ID,
+    family_id: _familyId,
     surface,
     message,
     conversation_id: conversationId || undefined,
@@ -336,19 +372,19 @@ export async function sendChatMessage(
 
 export function fetchDailyBrief(): Promise<any> {
   return post(`${API_BASE_URL}/api/ai/brief/daily`, {
-    family_id: FAMILY_ID,
+    family_id: _familyId,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Weekly Meal Plans — auth-derived actor
+// Weekly Meal Plans
 // ---------------------------------------------------------------------------
 
 export function generateWeeklyMealPlan(
   weekStartDate: string,
   opts?: { constraints?: Record<string, unknown>; answers?: Record<string, unknown> },
 ): Promise<WeeklyMealPlanGenerateResponse> {
-  return post(`${familyUrl}/meals/weekly/generate`, {
+  return post(`${familyUrl()}/meals/weekly/generate`, {
     week_start_date: weekStartDate,
     constraints: opts?.constraints,
     answers: opts?.answers,
@@ -356,31 +392,31 @@ export function generateWeeklyMealPlan(
 }
 
 export function fetchCurrentWeeklyPlan(): Promise<WeeklyMealPlan> {
-  return get(`${familyUrl}/meals/weekly/current`);
+  return get(`${familyUrl()}/meals/weekly/current`);
 }
 
 export function fetchWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
-  return get(`${familyUrl}/meals/weekly/${planId}`);
+  return get(`${familyUrl()}/meals/weekly/${planId}`);
 }
 
 export function fetchWeeklyPlans(includeArchived?: boolean): Promise<WeeklyMealPlan[]> {
   const qs = includeArchived ? "?include_archived=true" : "";
-  return get(`${familyUrl}/meals/weekly${qs}`);
+  return get(`${familyUrl()}/meals/weekly${qs}`);
 }
 
 export function updateWeeklyPlan(
   planId: string,
   payload: { title?: string; week_plan?: unknown; prep_plan?: unknown; grocery_plan?: unknown; plan_summary?: string },
 ): Promise<WeeklyMealPlan> {
-  return patch(`${familyUrl}/meals/weekly/${planId}`, payload);
+  return patch(`${familyUrl()}/meals/weekly/${planId}`, payload);
 }
 
 export function approveWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
-  return post(`${familyUrl}/meals/weekly/${planId}/approve`);
+  return post(`${familyUrl()}/meals/weekly/${planId}/approve`);
 }
 
 export function archiveWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
-  return post(`${familyUrl}/meals/weekly/${planId}/archive`);
+  return post(`${familyUrl()}/meals/weekly/${planId}/archive`);
 }
 
 export function regenerateWeeklyPlanDay(
@@ -388,14 +424,14 @@ export function regenerateWeeklyPlanDay(
   day: string,
   mealTypes?: string[],
 ): Promise<WeeklyMealPlan> {
-  return post(`${familyUrl}/meals/weekly/${planId}/regenerate-day`, {
+  return post(`${familyUrl()}/meals/weekly/${planId}/regenerate-day`, {
     day,
     meal_types: mealTypes,
   });
 }
 
 export function fetchWeeklyPlanGroceries(planId: string): Promise<GroceryItem[]> {
-  return get(`${familyUrl}/meals/weekly/${planId}/groceries`);
+  return get(`${familyUrl()}/meals/weekly/${planId}/groceries`);
 }
 
 // ---------------------------------------------------------------------------
@@ -414,15 +450,15 @@ export function createMealReview(payload: {
   repeat_decision: "repeat" | "tweak" | "retire";
   notes?: string | null;
 }): Promise<MealReview> {
-  return post(`${familyUrl}/meals/reviews`, { ...payload, member_id: "00000000-0000-0000-0000-000000000000" });
+  return post(`${familyUrl()}/meals/reviews`, { ...payload, member_id: "00000000-0000-0000-0000-000000000000" });
 }
 
 export function fetchMealReviews(limit: number = 50): Promise<MealReview[]> {
-  return get(`${familyUrl}/meals/reviews?limit=${limit}`);
+  return get(`${familyUrl()}/meals/reviews?limit=${limit}`);
 }
 
 export function fetchMealReviewSummary(): Promise<MealReviewSummary> {
-  return get(`${familyUrl}/meals/reviews/summary`);
+  return get(`${familyUrl()}/meals/reviews/summary`);
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +469,7 @@ export async function ingestGoogleCalendar(
   payload: { external_id: string; title: string; starts_at: string; ends_at: string; description?: string; location?: string }
 ): Promise<unknown> {
   return post(`${API_BASE_URL}/integrations/google-calendar/ingest`, {
-    family_id: FAMILY_ID,
+    family_id: _familyId,
     payload,
   });
 }
@@ -442,7 +478,7 @@ export async function ingestYnabBill(
   payload: { external_id: string; title: string; amount_cents: number; due_date: string; description?: string }
 ): Promise<unknown> {
   return post(`${API_BASE_URL}/integrations/ynab/ingest`, {
-    family_id: FAMILY_ID,
+    family_id: _familyId,
     payload,
   });
 }

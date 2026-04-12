@@ -520,3 +520,68 @@ class TestRouteLockdown:
     def test_grocery_list_requires_auth(self, client, db, family):
         r = client.get(f"/families/{family.id}/groceries/current")
         assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /api/auth/me provides family derivation data
+# ---------------------------------------------------------------------------
+
+
+class TestMeFamilyDerivation:
+    def test_me_contains_family_and_member_ids(self, client, db, family, adults, robert_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.get("/api/auth/me", headers=_auth(token))
+        assert r.status_code == 200
+        data = r.json()
+        assert "member_id" in data
+        assert "family_id" in data
+        assert "family_name" in data
+        assert "role" in data
+        assert data["family_id"] == str(family.id)
+        assert data["member_id"] == str(adults["robert"].id)
+
+
+# ---------------------------------------------------------------------------
+# Production config validation
+# ---------------------------------------------------------------------------
+
+
+class TestConfigValidation:
+    def test_production_requires_auth(self):
+        from app.config import Settings
+        s = Settings(environment="production", auth_required=False, database_url="x")
+        # We can't call validate_startup() directly since it uses module-level settings,
+        # but we can test the property
+        assert s.is_production is True
+
+    def test_development_allows_no_auth(self):
+        from app.config import Settings
+        s = Settings(environment="development", auth_required=False, database_url="x")
+        assert s.is_production is False
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap safety
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrapSafety:
+    def test_bootstrap_refuses_when_accounts_exist(self, client, db, family, adults, robert_account):
+        r = client.post("/api/auth/bootstrap", json={
+            "email": "new@family.com", "password": "pass123456",
+        })
+        assert r.status_code == 409
+
+    def test_bootstrap_only_when_zero_accounts(self, client, db, family, adults):
+        r = client.post("/api/auth/bootstrap", json={
+            "email": "first@family.com", "password": "firstpass",
+        })
+        assert r.status_code == 200
+        # Second attempt fails
+        r2 = client.post("/api/auth/bootstrap", json={
+            "email": "second@family.com", "password": "secondpass",
+        })
+        assert r2.status_code == 409

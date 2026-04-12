@@ -88,6 +88,9 @@ def ready():
         return {"status": "not_ready", "reason": f"database: {e}"}
     return {
         "status": "ready",
+        "environment": settings.environment,
+        "auth_required": settings.auth_required,
+        "bootstrap_enabled": settings.enable_bootstrap,
         "ai_available": settings.ai_available,
         "meal_generation": settings.enable_meal_generation,
     }
