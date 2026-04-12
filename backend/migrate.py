@@ -8,7 +8,12 @@ def run_migrations():
     if not db_url:
         raise RuntimeError("No database URL found in SCOUT_DATABASE_URL or DATABASE_URL")
 
-    migrations_dir = os.path.join(os.path.dirname(__file__), "..", "database", "migrations")
+    # Look for migrations: first in backend/migrations (production/Railway),
+    # then in ../database/migrations (local dev with full repo)
+    base = os.path.dirname(__file__)
+    migrations_dir = os.path.join(base, "migrations")
+    if not os.path.isdir(migrations_dir):
+        migrations_dir = os.path.join(base, "..", "database", "migrations")
     migration_files = sorted(glob.glob(os.path.join(migrations_dir, "*.sql")))
 
     conn = psycopg2.connect(db_url)
