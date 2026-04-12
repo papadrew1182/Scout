@@ -29,8 +29,10 @@ router = APIRouter(tags=["grocery"])
 def list_current_grocery_items(
     family_id: uuid.UUID,
     include_purchased: bool = Query(False),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return grocery_service.list_grocery_items(db, family_id, include_purchased=include_purchased)
 
 

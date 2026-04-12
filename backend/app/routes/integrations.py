@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.calendar import EventRead
 from app.schemas.finance import BillRead
@@ -49,6 +50,7 @@ class YnabIngestResponse(BaseModel):
 @router.post("/google-calendar/ingest", response_model=GoogleCalendarIngestResponse)
 def google_calendar_ingest(
     body: GoogleCalendarIngestRequest,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
     event, created = ingest_event(db, body.family_id, body.payload)
@@ -58,6 +60,7 @@ def google_calendar_ingest(
 @router.post("/ynab/ingest", response_model=YnabIngestResponse)
 def ynab_ingest(
     body: YnabIngestRequest,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
     bill, created = ingest_scheduled_transaction(db, body.family_id, body.payload)

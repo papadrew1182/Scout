@@ -4,6 +4,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.health_fitness import (
     ActivityRecordCreate,
@@ -26,8 +27,10 @@ def list_health_summaries(
     family_member_id: uuid.UUID | None = Query(None),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.list_health_summaries(
         db, family_id, family_member_id, start_date, end_date
     )
@@ -37,8 +40,10 @@ def list_health_summaries(
 def get_latest_summary(
     family_id: uuid.UUID,
     family_member_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.get_latest_summary(db, family_id, family_member_id)
 
 
@@ -46,15 +51,18 @@ def get_latest_summary(
 def create_health_summary(
     family_id: uuid.UUID,
     payload: HealthSummaryCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.create_health_summary(db, family_id, payload)
 
 
 @router.get("/summaries/{summary_id}", response_model=HealthSummaryRead)
 def get_health_summary(
-    family_id: uuid.UUID, summary_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, summary_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     return health_fitness_service.get_health_summary(db, family_id, summary_id)
 
 
@@ -63,8 +71,10 @@ def update_health_summary(
     family_id: uuid.UUID,
     summary_id: uuid.UUID,
     payload: HealthSummaryUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.update_health_summary(
         db, family_id, summary_id, payload
     )
@@ -72,8 +82,9 @@ def update_health_summary(
 
 @router.delete("/summaries/{summary_id}", status_code=204)
 def delete_health_summary(
-    family_id: uuid.UUID, summary_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, summary_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     health_fitness_service.delete_health_summary(db, family_id, summary_id)
 
 
@@ -86,8 +97,10 @@ def list_activity_records(
     activity_type: str | None = Query(None),
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.list_activity_records(
         db, family_id, family_member_id, activity_type, start, end
     )
@@ -98,8 +111,10 @@ def list_recent_activity(
     family_id: uuid.UUID,
     family_member_id: uuid.UUID = Query(...),
     limit: int = Query(10, ge=1, le=100),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.list_recent_activity(
         db, family_id, family_member_id, limit
     )
@@ -109,15 +124,18 @@ def list_recent_activity(
 def create_activity_record(
     family_id: uuid.UUID,
     payload: ActivityRecordCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.create_activity_record(db, family_id, payload)
 
 
 @router.get("/activity/{activity_id}", response_model=ActivityRecordRead)
 def get_activity_record(
-    family_id: uuid.UUID, activity_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, activity_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     return health_fitness_service.get_activity_record(db, family_id, activity_id)
 
 
@@ -126,8 +144,10 @@ def update_activity_record(
     family_id: uuid.UUID,
     activity_id: uuid.UUID,
     payload: ActivityRecordUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return health_fitness_service.update_activity_record(
         db, family_id, activity_id, payload
     )
@@ -135,6 +155,7 @@ def update_activity_record(
 
 @router.delete("/activity/{activity_id}", status_code=204)
 def delete_activity_record(
-    family_id: uuid.UUID, activity_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, activity_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     health_fitness_service.delete_activity_record(db, family_id, activity_id)

@@ -310,10 +310,13 @@ class TestUpdatePlan:
 
 
 class TestPlanGroceries:
-    def test_returns_groceries_after_approve(self, client, db, family, adults):
+    def test_returns_groceries_after_approve(self, client, db, family, adults, adult_token):
         plan = _make_draft(db, family, adults["robert"])
         wmp.approve_weekly_meal_plan(db, family.id, adults["robert"].id, plan.id)
-        r = client.get(f"/families/{family.id}/meals/weekly/{plan.id}/groceries")
+        r = client.get(
+            f"/families/{family.id}/meals/weekly/{plan.id}/groceries",
+            headers=_auth_header(adult_token),
+        )
         assert r.status_code == 200
         assert len(r.json()) == 2
 
@@ -384,17 +387,23 @@ class TestMealReviews:
 
 
 class TestListReviews:
-    def test_list_reviews(self, client, db, family, adults):
+    def test_list_reviews(self, client, db, family, adults, adult_token):
         from app.schemas.meals import MealReviewCreate
         wmp.create_meal_review(db, family.id, MealReviewCreate(
             member_id=adults["robert"].id, meal_title="Test", rating_overall=4, repeat_decision="repeat"
         ))
-        r = client.get(f"/families/{family.id}/meals/reviews")
+        r = client.get(
+            f"/families/{family.id}/meals/reviews",
+            headers=_auth_header(adult_token),
+        )
         assert r.status_code == 200
         assert len(r.json()) >= 1
 
-    def test_review_summary(self, client, db, family):
-        r = client.get(f"/families/{family.id}/meals/reviews/summary")
+    def test_review_summary(self, client, db, family, adults, adult_token):
+        r = client.get(
+            f"/families/{family.id}/meals/reviews/summary",
+            headers=_auth_header(adult_token),
+        )
         assert r.status_code == 200
         assert "total_reviews" in r.json()
 

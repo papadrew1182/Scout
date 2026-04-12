@@ -246,3 +246,277 @@ class TestActorEnforcement:
             headers=_auth(token),
         )
         assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Password change
+# ---------------------------------------------------------------------------
+
+
+class TestPasswordChange:
+    def test_change_own_password(self, client, db, adults, robert_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.post("/api/auth/password/change", json={
+            "current_password": "password123",
+            "new_password": "newpass456",
+        }, headers=_auth(token))
+        assert r.status_code == 200
+
+        # Old password no longer works
+        r2 = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        assert r2.status_code == 401
+
+        # New password works
+        r3 = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "newpass456",
+        })
+        assert r3.status_code == 200
+
+    def test_wrong_current_password_rejected(self, client, db, adults, robert_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.post("/api/auth/password/change", json={
+            "current_password": "wrong",
+            "new_password": "newpass456",
+        }, headers=_auth(token))
+        assert r.status_code == 401
+
+    def test_short_password_rejected(self, client, db, adults, robert_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.post("/api/auth/password/change", json={
+            "current_password": "password123",
+            "new_password": "short",
+        }, headers=_auth(token))
+        assert r.status_code == 422  # pydantic validation
+
+
+# ---------------------------------------------------------------------------
+# Admin password reset
+# ---------------------------------------------------------------------------
+
+
+class TestAdminPasswordReset:
+    def test_admin_can_reset_child_password(self, client, db, adults, children, robert_account, sadie_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.post(f"/api/auth/accounts/{sadie_account.id}/reset-password", json={
+            "account_id": str(sadie_account.id),
+            "new_password": "newkidpass",
+        }, headers=_auth(token))
+        assert r.status_code == 200
+
+        # Child can log in with new password
+        r2 = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "newkidpass",
+        })
+        assert r2.status_code == 200
+
+    def test_child_cannot_reset_password(self, client, db, adults, children, robert_account, sadie_account):
+        login = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "kidpass123",
+        })
+        token = login.json()["token"]
+        r = client.post(f"/api/auth/accounts/{robert_account.id}/reset-password", json={
+            "account_id": str(robert_account.id),
+            "new_password": "hacked",
+        }, headers=_auth(token))
+        assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Session management
+# ---------------------------------------------------------------------------
+
+
+class TestSessionManagement:
+    def test_list_sessions(self, client, db, adults, robert_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.get("/api/auth/sessions", headers=_auth(token))
+        assert r.status_code == 200
+        sessions = r.json()
+        assert len(sessions) >= 1
+
+    def test_revoke_other_sessions(self, client, db, adults, robert_account):
+        # Create two sessions
+        login1 = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token1 = login1.json()["token"]
+        login2 = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token2 = login2.json()["token"]
+
+        # Revoke other sessions from session 1
+        r = client.post("/api/auth/sessions/revoke-others", headers=_auth(token1))
+        assert r.status_code == 200
+        assert r.json()["revoked"] >= 1
+
+        # Token 2 should be invalidated
+        r2 = client.get("/api/auth/me", headers=_auth(token2))
+        assert r2.status_code == 401
+
+        # Token 1 still works
+        r3 = client.get("/api/auth/me", headers=_auth(token1))
+        assert r3.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Account management (admin)
+# ---------------------------------------------------------------------------
+
+
+class TestAccountManagement:
+    def test_list_accounts_adult_only(self, client, db, family, adults, children, robert_account, sadie_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+        r = client.get("/api/auth/accounts", headers=_auth(token))
+        assert r.status_code == 200
+        accounts = r.json()
+        names = [a["first_name"] for a in accounts]
+        assert "Robert" in names
+        assert "Sadie" in names
+
+    def test_child_cannot_list_accounts(self, client, db, family, adults, children, sadie_account):
+        login = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "kidpass123",
+        })
+        token = login.json()["token"]
+        r = client.get("/api/auth/accounts", headers=_auth(token))
+        assert r.status_code == 403
+
+    def test_deactivate_and_activate(self, client, db, adults, children, robert_account, sadie_account):
+        login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        token = login.json()["token"]
+
+        # Deactivate
+        r = client.post(f"/api/auth/accounts/{sadie_account.id}/deactivate", headers=_auth(token))
+        assert r.status_code == 200
+
+        # Child can't log in
+        r2 = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "kidpass123",
+        })
+        assert r2.status_code == 401
+
+        # Reactivate
+        r3 = client.post(f"/api/auth/accounts/{sadie_account.id}/activate", headers=_auth(token))
+        assert r3.status_code == 200
+
+        # Child can log in again
+        r4 = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "kidpass123",
+        })
+        assert r4.status_code == 200
+
+    def test_admin_revoke_sessions(self, client, db, adults, children, robert_account, sadie_account):
+        # Child logs in
+        login = client.post("/api/auth/login", json={
+            "email": "sadie@whitfield.com", "password": "kidpass123",
+        })
+        child_token = login.json()["token"]
+
+        # Admin revokes child's sessions
+        admin_login = client.post("/api/auth/login", json={
+            "email": "robert@whitfield.com", "password": "password123",
+        })
+        admin_token = admin_login.json()["token"]
+        r = client.post(f"/api/auth/accounts/{sadie_account.id}/revoke-sessions", headers=_auth(admin_token))
+        assert r.status_code == 200
+
+        # Child's token is now invalid
+        r2 = client.get("/api/auth/me", headers=_auth(child_token))
+        assert r2.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiting:
+    def test_rate_limit_after_many_failures(self, client, db, family):
+        # Clear rate limit state
+        auth_service._login_attempts.clear()
+        for i in range(10):
+            client.post("/api/auth/login", json={
+                "email": "nobody@test.com", "password": "wrong",
+            })
+        r = client.post("/api/auth/login", json={
+            "email": "nobody@test.com", "password": "wrong",
+        })
+        assert r.status_code == 429
+        # Cleanup
+        auth_service._login_attempts.clear()
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrap:
+    def test_bootstrap_creates_first_account(self, client, db, family, adults):
+        r = client.post("/api/auth/bootstrap", json={
+            "email": "first@family.com", "password": "firstpass",
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["email"] == "first@family.com"
+        assert "member_id" in data
+
+    def test_bootstrap_blocked_when_accounts_exist(self, client, db, family, adults, robert_account):
+        r = client.post("/api/auth/bootstrap", json={
+            "email": "second@family.com", "password": "pass123",
+        })
+        assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Route lockdown verification
+# ---------------------------------------------------------------------------
+
+
+class TestRouteLockdown:
+    def test_family_routes_require_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/members")
+        assert r.status_code == 401
+
+    def test_calendar_routes_require_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/events")
+        assert r.status_code == 401
+
+    def test_notes_routes_require_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/notes")
+        assert r.status_code == 401
+
+    def test_personal_tasks_require_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/personal-tasks")
+        assert r.status_code == 401
+
+    def test_finance_routes_require_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/bills")
+        assert r.status_code == 401
+
+    def test_grocery_list_requires_auth(self, client, db, family):
+        r = client.get(f"/families/{family.id}/groceries/current")
+        assert r.status_code == 401

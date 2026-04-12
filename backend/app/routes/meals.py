@@ -33,17 +33,20 @@ router = APIRouter(prefix="/families/{family_id}", tags=["meals"])
 # --- Meal Plans ---
 
 @router.get("/meal-plans", response_model=list[MealPlanRead])
-def list_meal_plans(family_id: uuid.UUID, db: Session = Depends(get_db)):
+def list_meal_plans(family_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return meals_service.list_meal_plans(db, family_id)
 
 
 @router.post("/meal-plans", response_model=MealPlanRead, status_code=201)
-def create_meal_plan(family_id: uuid.UUID, payload: MealPlanCreate, db: Session = Depends(get_db)):
+def create_meal_plan(family_id: uuid.UUID, payload: MealPlanCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return meals_service.create_meal_plan(db, family_id, payload)
 
 
 @router.get("/meal-plans/{plan_id}", response_model=MealPlanRead)
-def get_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return meals_service.get_meal_plan(db, family_id, plan_id)
 
 
@@ -52,13 +55,16 @@ def update_meal_plan(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
     payload: MealPlanUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return meals_service.update_meal_plan(db, family_id, plan_id, payload)
 
 
 @router.delete("/meal-plans/{plan_id}", status_code=204)
-def delete_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     meals_service.delete_meal_plan(db, family_id, plan_id)
 
 
@@ -197,8 +203,9 @@ def regenerate_weekly_plan_day(
     response_model=list[GroceryItemRead],
 )
 def list_weekly_plan_groceries(
-    family_id: uuid.UUID, plan_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, plan_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.list_plan_grocery_items(db, family_id, plan_id)
 
 
@@ -224,15 +231,18 @@ def create_meal_review(
 def list_meal_reviews(
     family_id: uuid.UUID,
     limit: int = Query(50, ge=1, le=200),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.list_meal_reviews(db, family_id, limit)
 
 
 @router.get("/meals/reviews/summary", response_model=MealReviewSummary)
 def get_meal_review_summary(
-    family_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.get_meal_review_summary(db, family_id)
 
 
@@ -245,18 +255,22 @@ def list_meals(
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     meal_plan_id: uuid.UUID | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return meals_service.list_meals(db, family_id, meal_date, start_date, end_date, meal_plan_id)
 
 
 @router.post("/meals", response_model=MealRead, status_code=201)
-def create_meal(family_id: uuid.UUID, payload: MealCreate, db: Session = Depends(get_db)):
+def create_meal(family_id: uuid.UUID, payload: MealCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return meals_service.create_meal(db, family_id, payload)
 
 
 @router.get("/meals/{meal_id}", response_model=MealRead)
-def get_meal(family_id: uuid.UUID, meal_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_meal(family_id: uuid.UUID, meal_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return meals_service.get_meal(db, family_id, meal_id)
 
 
@@ -265,13 +279,16 @@ def update_meal(
     family_id: uuid.UUID,
     meal_id: uuid.UUID,
     payload: MealUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return meals_service.update_meal(db, family_id, meal_id, payload)
 
 
 @router.delete("/meals/{meal_id}", status_code=204)
-def delete_meal(family_id: uuid.UUID, meal_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_meal(family_id: uuid.UUID, meal_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     meals_service.delete_meal(db, family_id, meal_id)
 
 
@@ -282,8 +299,9 @@ def delete_meal(family_id: uuid.UUID, meal_id: uuid.UUID, db: Session = Depends(
     response_model=list[DietaryPreferenceRead],
 )
 def list_dietary_preferences(
-    family_id: uuid.UUID, member_id: uuid.UUID, db: Session = Depends(get_db)
+    family_id: uuid.UUID, member_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
+    actor.require_family(family_id)
     return meals_service.list_dietary_preferences(db, family_id, member_id)
 
 
@@ -296,8 +314,10 @@ def add_dietary_preference(
     family_id: uuid.UUID,
     member_id: uuid.UUID,
     payload: DietaryPreferenceCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return meals_service.add_dietary_preference(db, family_id, member_id, payload)
 
 
@@ -309,6 +329,8 @@ def remove_dietary_preference(
     family_id: uuid.UUID,
     member_id: uuid.UUID,
     preference_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     meals_service.remove_dietary_preference(db, family_id, member_id, preference_id)

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Auth
     auth_required: bool = False  # When True, bearer token required on all protected routes
     session_ttl_hours: int = 72
+    enable_bootstrap: bool = True  # When True, POST /api/auth/bootstrap available (disable in prod)
 
     # Feature flags
     enable_ai: bool = True
@@ -53,4 +54,8 @@ def validate_startup() -> list[str]:
         warnings.append("Meal generation disabled via SCOUT_ENABLE_MEAL_GENERATION=false")
     if not settings.auth_required:
         warnings.append("SCOUT_AUTH_REQUIRED=false; legacy member_id fallback enabled (dev only)")
+    if settings.auth_required and settings.enable_bootstrap:
+        warnings.append("WARNING: Bootstrap enabled in auth-required mode. Set SCOUT_ENABLE_BOOTSTRAP=false for production.")
+    if settings.auth_required and "localhost" in settings.cors_origins:
+        warnings.append("WARNING: CORS allows localhost in auth-required mode. Set SCOUT_CORS_ORIGINS for production.")
     return warnings

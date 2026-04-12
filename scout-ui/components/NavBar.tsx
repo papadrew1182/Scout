@@ -87,6 +87,15 @@ export function NavBar({ onScoutPress }: NavBarProps) {
             Child {childOpen ? "▴" : "▾"}
           </Text>
         </Pressable>
+
+        <Pressable
+          style={[styles.link, isActive("/settings") && styles.linkActive]}
+          onPress={() => router.push("/settings")}
+        >
+          <Text style={[styles.linkText, isActive("/settings") && styles.linkTextActive]}>
+            Settings
+          </Text>
+        </Pressable>
       </View>
 
       {childOpen && (

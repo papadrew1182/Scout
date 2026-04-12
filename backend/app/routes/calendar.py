@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.calendar import (
     EventAttendeeCreate,
@@ -27,18 +28,22 @@ def list_events(
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
     hearth_visible_only: bool = Query(False),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return calendar_service.list_events(db, family_id, start, end, hearth_visible_only)
 
 
 @router.post("", response_model=EventRead, status_code=201)
-def create_event(family_id: uuid.UUID, payload: EventCreate, db: Session = Depends(get_db)):
+def create_event(family_id: uuid.UUID, payload: EventCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return calendar_service.create_event(db, family_id, payload)
 
 
 @router.get("/{event_id}", response_model=EventRead)
-def get_event(family_id: uuid.UUID, event_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_event(family_id: uuid.UUID, event_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return calendar_service.get_event(db, family_id, event_id)
 
 
@@ -47,13 +52,16 @@ def update_event(
     family_id: uuid.UUID,
     event_id: uuid.UUID,
     payload: EventUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return calendar_service.update_event(db, family_id, event_id, payload)
 
 
 @router.delete("/{event_id}", status_code=204)
-def delete_event(family_id: uuid.UUID, event_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_event(family_id: uuid.UUID, event_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     calendar_service.delete_event(db, family_id, event_id)
 
 
@@ -62,15 +70,18 @@ def create_recurrence_instance(
     family_id: uuid.UUID,
     event_id: uuid.UUID,
     payload: EventInstanceCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return calendar_service.create_recurrence_instance(db, family_id, event_id, payload)
 
 
 # --- Attendees ---
 
 @router.get("/{event_id}/attendees", response_model=list[EventAttendeeRead])
-def list_attendees(family_id: uuid.UUID, event_id: uuid.UUID, db: Session = Depends(get_db)):
+def list_attendees(family_id: uuid.UUID, event_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    actor.require_family(family_id)
     return calendar_service.list_attendees(db, family_id, event_id)
 
 
@@ -79,8 +90,10 @@ def add_attendee(
     family_id: uuid.UUID,
     event_id: uuid.UUID,
     payload: EventAttendeeCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return calendar_service.add_attendee(db, family_id, event_id, payload)
 
 
@@ -90,8 +103,10 @@ def update_attendee(
     event_id: uuid.UUID,
     attendee_id: uuid.UUID,
     payload: EventAttendeeUpdate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return calendar_service.update_attendee_response(db, family_id, event_id, attendee_id, payload)
 
 
@@ -100,6 +115,8 @@ def remove_attendee(
     family_id: uuid.UUID,
     event_id: uuid.UUID,
     attendee_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     calendar_service.remove_attendee(db, family_id, event_id, attendee_id)
