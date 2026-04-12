@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ai_request_timeout: int = 60
     ai_max_requests_per_minute: int = 30
 
+    cors_origins: str = "http://localhost:8081,http://localhost:19006"
+
     model_config = {"env_prefix": "SCOUT_"}
 
 
