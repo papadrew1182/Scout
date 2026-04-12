@@ -520,3 +520,35 @@ class TestRouteLockdown:
     def test_grocery_list_requires_auth(self, client, db, family):
         r = client.get(f"/families/{family.id}/groceries/current")
         assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /ready endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestReady:
+    def test_ready_returns_status_fields(self, client, db, family):
+        r = client.get("/ready")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "ready"
+        assert "auth_required" in data
+        assert "bootstrap_enabled" in data
+        assert "accounts_exist" in data
+        assert "ai_available" in data
+        assert "meal_generation" in data
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap idempotency
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrapIdempotency:
+    def test_bootstrap_ignores_enable_flag_when_accounts_exist(self, client, db, family, adults, robert_account):
+        """Even with enable_bootstrap=true, bootstrap returns 409 if accounts exist."""
+        r = client.post("/api/auth/bootstrap", json={
+            "email": "new@test.com", "password": "pass123456",
+        })
+        assert r.status_code == 409

@@ -3,7 +3,7 @@ import { ActivityIndicator, View } from "react-native";
 import { Slot } from "expo-router";
 
 import { AuthProvider, useAuth } from "../lib/auth";
-import { setApiToken } from "../lib/api";
+import { setApiToken, setApiFamilyId } from "../lib/api";
 import { LoginScreen } from "../components/LoginScreen";
 import { NavBar } from "../components/NavBar";
 import { ScoutPanel } from "../components/ScoutLauncher";
@@ -13,10 +13,11 @@ function AppShell() {
   const { token, member, loading } = useAuth();
   const [scoutOpen, setScoutOpen] = useState(false);
 
-  // Sync auth token to API module
+  // Sync auth token + family to API module
   useEffect(() => {
     setApiToken(token);
-  }, [token]);
+    setApiFamilyId(member?.family_id ?? null);
+  }, [token, member]);
 
   if (loading) {
     return (

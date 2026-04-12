@@ -28,3 +28,8 @@ Thumbs.db
 
 # Scout test artifacts
 settings/
+
+# Playwright
+smoke-tests/node_modules/
+smoke-tests/playwright-report/
+smoke-tests/test-results/

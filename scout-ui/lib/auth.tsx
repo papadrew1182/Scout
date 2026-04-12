@@ -1,12 +1,13 @@
 /**
- * Auth context: login, logout, current user, token persistence.
+ * Auth context: login, logout, current user, token + family persistence.
  *
  * Token is stored in localStorage (web) for persistence across refresh.
- * All API calls read the token from this context.
+ * Active family is derived from the authenticated member, not hardcoded.
  */
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { API_BASE_URL } from "./config";
+import { setApiToken, setApiFamilyId, setOnUnauthorized } from "./api";
 
 export interface AuthMember {
   member_id: string;
@@ -59,36 +60,44 @@ function setStoredToken(token: string | null) {
   }
 }
 
+function syncApi(t: string | null, m: AuthMember | null) {
+  setApiToken(t);
+  setApiFamilyId(m?.family_id ?? null);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [member, setMember] = useState<AuthMember | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // On mount, check for stored token and validate
+  const clearAuth = useCallback(() => {
+    setToken(null);
+    setMember(null);
+    setStoredToken(null);
+    syncApi(null, null);
+  }, []);
+
+  useEffect(() => { setOnUnauthorized(clearAuth); }, [clearAuth]);
+
   useEffect(() => {
     const stored = getStoredToken();
-    if (!stored) {
-      setLoading(false);
-      return;
-    }
+    if (!stored) { setLoading(false); return; }
+    setApiToken(stored);
     fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${stored}` },
     })
       .then(async (r) => {
         if (r.ok) {
-          const data = await r.json();
+          const data = (await r.json()) as AuthMember;
           setToken(stored);
-          setMember(data as AuthMember);
-        } else {
-          setStoredToken(null);
-        }
+          setMember(data);
+          syncApi(stored, data);
+        } else { clearAuth(); }
       })
-      .catch(() => {
-        setStoredToken(null);
-      })
+      .catch(() => clearAuth())
       .finally(() => setLoading(false));
-  }, []);
+  }, [clearAuth]);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
@@ -98,20 +107,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ email, password }),
     });
     if (!r.ok) {
-      const text = await r.text().catch(() => "");
       setError("Invalid email or password");
-      throw new Error(text || "Login failed");
+      throw new Error("Login failed");
     }
     const data = await r.json();
     setToken(data.token);
     setStoredToken(data.token);
-
-    // Fetch full member info
+    setApiToken(data.token);
     const me = await fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${data.token}` },
     });
     if (me.ok) {
-      setMember((await me.json()) as AuthMember);
+      const md = (await me.json()) as AuthMember;
+      setMember(md);
+      syncApi(data.token, md);
     }
   }, []);
 
@@ -122,10 +131,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});
     }
-    setToken(null);
-    setMember(null);
-    setStoredToken(null);
-  }, [token]);
+    clearAuth();
+  }, [token, clearAuth]);
 
   return (
     <AuthContext.Provider value={{ token, member, loading, error, login, logout }}>

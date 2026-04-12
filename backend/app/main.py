@@ -78,16 +78,25 @@ def health():
 @app.get("/ready")
 def ready():
     """Readiness check: app booted, database reachable, config loaded."""
-    from sqlalchemy import text
+    from sqlalchemy import func, select as sa_select, text
     from app.database import SessionLocal
+    from app.models.foundation import UserAccount
+    db = None
     try:
         db = SessionLocal()
         db.execute(text("SELECT 1"))
-        db.close()
+        account_count = db.scalar(sa_select(func.count()).select_from(UserAccount)) or 0
     except Exception as e:
         return {"status": "not_ready", "reason": f"database: {e}"}
+    finally:
+        if db:
+            db.close()
+
     return {
         "status": "ready",
+        "auth_required": settings.auth_required,
+        "bootstrap_enabled": settings.enable_bootstrap,
+        "accounts_exist": account_count > 0,
         "ai_available": settings.ai_available,
         "meal_generation": settings.enable_meal_generation,
     }

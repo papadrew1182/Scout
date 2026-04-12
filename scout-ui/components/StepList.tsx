@@ -7,10 +7,9 @@ import {
   View,
 } from "react-native";
 
-import { fetchStepCompletions, updateStepCompletion } from "../lib/api";
+import { fetchStepCompletions, fetchRoutineSteps, updateStepCompletion } from "../lib/api";
 import { colors } from "../lib/styles";
 import type { StepCompletion } from "../lib/types";
-import { API_BASE_URL, FAMILY_ID } from "../lib/config";
 
 interface RoutineStep {
   id: string;
@@ -34,8 +33,7 @@ export function StepList({ taskInstanceId, routineId, onStepChange }: Props) {
 
     Promise.all([
       fetchStepCompletions(taskInstanceId),
-      fetch(`${API_BASE_URL}/families/${FAMILY_ID}/routines/${routineId}/steps`)
-        .then((r) => r.json()) as Promise<RoutineStep[]>,
+      fetchRoutineSteps(routineId) as Promise<RoutineStep[]>,
     ])
       .then(([completions, routineSteps]) => {
         if (cancelled) return;
