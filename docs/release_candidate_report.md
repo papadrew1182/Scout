@@ -96,7 +96,74 @@
 | Item | Risk | Mitigation |
 |---|---|---|
 | Docker compose not E2E verified | Low | Compose is structurally correct; local stack verified directly |
-| No deployed smoke run | Low | Run `SCOUT_WEB_URL=<url> npx playwright test` post-deploy |
 | Rate limiter is in-memory | Low | Resets on restart; acceptable for single-instance private app |
 | No email password reset | Low | Admin direct-reset via Settings; private family only |
-| AI features require ANTHROPIC_API_KEY | Low | App functions without AI; meals/grocery/auth all work |
+
+---
+
+## Deployed Verification (2026-04-12)
+
+**Commit deployed:** `5c7d849` (main)
+**Backend:** https://scout-backend-production-9991.up.railway.app
+**Frontend:** https://scout-ui-gamma.vercel.app
+
+### Production Environment Variables Set
+
+| Variable | Set | Value |
+|---|---|---|
+| SCOUT_DATABASE_URL | Yes | (Railway Postgres) |
+| SCOUT_ENVIRONMENT | Yes | `production` |
+| SCOUT_AUTH_REQUIRED | Yes | `true` |
+| SCOUT_CORS_ORIGINS | Yes | Vercel + Railway + localhost |
+| SCOUT_ENABLE_BOOTSTRAP | Yes | `false` |
+| SCOUT_ANTHROPIC_API_KEY | Yes | (set) |
+
+### Deployment Verification Results
+
+| Check | Result |
+|---|---|
+| Backend /health | `{"status":"ok"}` |
+| Backend /ready | `{"status":"ready","ai_available":true,"meal_generation":true}` |
+| Unauthenticated /api/auth/me | 401 (auth enforced) |
+| Adult login (robertsandrewt@gmail.com) | Success (token + member returned) |
+| Frontend loads (Vercel) | 200 OK |
+| Frontend API_BASE_URL | Correct (scout-backend-production-9991.up.railway.app) |
+| Bootstrap endpoint | Disabled (SCOUT_ENABLE_BOOTSTRAP=false) |
+
+### Deployed Smoke Tests (Playwright)
+
+**Auth tests (4/4 passed):**
+- Adult can sign in
+- Bad password shows error
+- Sign out returns to login
+- Invalid token clears to login
+
+**Surface tests (5/5 passed):**
+- Personal dashboard loads
+- Meals This Week loads
+- Grocery page loads
+- Settings page loads
+- Adult sees Accounts & Access
+
+**Child tests:** Skipped (no child account in production yet; create via Settings > Accounts & Access)
+
+### Issues Found and Fixed
+
+| Issue | Fix |
+|---|---|
+| SCOUT_ENVIRONMENT not set in Railway | Set to `production` via `railway variable set` |
+| SCOUT_AUTH_REQUIRED not set (defaulted false) | Set to `true` |
+| SCOUT_ENABLE_BOOTSTRAP not set (defaulted true) | Set to `false` |
+
+No code changes were needed. All issues were environment configuration.
+
+### Final Launch Recommendation
+
+**GO — Scout is live for private family use.**
+
+- Backend: Railway (healthy, auth enforced)
+- Frontend: Vercel (loads, correct API URL)
+- Auth: Required, working, sessions functioning
+- Bootstrap: Disabled, accounts exist
+- AI: Available (API key set)
+- 9/9 deployed smoke tests pass
