@@ -25,7 +25,7 @@ test.describe("Adult surfaces", () => {
 
   test("meals this week loads", async ({ page }) => {
     await page.click("text=Meals");
-    await expect(page.locator("text=This Week")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
   });
 
   test("grocery page loads", async ({ page }) => {
