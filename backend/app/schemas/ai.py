@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    family_id: uuid.UUID
-    member_id: uuid.UUID
+    family_id: uuid.UUID | None = None  # Optional: route derives from actor session
+    member_id: uuid.UUID | None = None  # Optional: route derives from actor session
     surface: str = Field(default="personal", pattern="^(personal|parent|child)$")
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: uuid.UUID | None = None
@@ -21,8 +21,8 @@ class ChatResponse(BaseModel):
 
 
 class BriefRequest(BaseModel):
-    family_id: uuid.UUID
-    member_id: uuid.UUID
+    family_id: uuid.UUID | None = None
+    member_id: uuid.UUID | None = None
 
 
 class BriefResponse(BaseModel):
@@ -32,8 +32,8 @@ class BriefResponse(BaseModel):
 
 
 class WeeklyPlanRequest(BaseModel):
-    family_id: uuid.UUID
-    member_id: uuid.UUID
+    family_id: uuid.UUID | None = None
+    member_id: uuid.UUID | None = None
 
 
 class WeeklyPlanResponse(BaseModel):
@@ -43,8 +43,8 @@ class WeeklyPlanResponse(BaseModel):
 
 
 class StapleMealsRequest(BaseModel):
-    family_id: uuid.UUID
-    member_id: uuid.UUID
+    family_id: uuid.UUID | None = None
+    member_id: uuid.UUID | None = None
 
 
 class StapleMealsResponse(BaseModel):

@@ -1,8 +1,9 @@
 """AI orchestration routes."""
 
+import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,7 +24,8 @@ from app.schemas.ai import (
     WeeklyPlanRequest,
     WeeklyPlanResponse,
 )
-from app.services.tenant_guard import require_family, require_member_in_family
+
+logger = logging.getLogger("scout.ai.routes")
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -31,19 +33,29 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 @router.post("/chat", response_model=ChatResponse)
 def ai_chat(
     body: ChatRequest,
+    request: Request,
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(body.family_id)
-    result = orchestrator.chat(
-        db=db,
-        family_id=actor.family_id,
-        member_id=actor.member_id,
-        surface=body.surface,
-        user_message=body.message,
-        conversation_id=body.conversation_id,
-    )
-    return ChatResponse(**result)
+    trace_id = request.headers.get("x-scout-trace-id", "")
+    if body.family_id:
+        actor.require_family(body.family_id)
+
+    logger.info("ai_chat_start trace=%s member=%s surface=%s", trace_id, actor.member_id, body.surface)
+    try:
+        result = orchestrator.chat(
+            db=db,
+            family_id=actor.family_id,
+            member_id=actor.member_id,
+            surface=body.surface,
+            user_message=body.message,
+            conversation_id=body.conversation_id,
+        )
+        logger.info("ai_chat_success trace=%s conversation=%s", trace_id, result.get("conversation_id"))
+        return ChatResponse(**result)
+    except Exception as e:
+        logger.error("ai_chat_fail trace=%s error=%s", trace_id, str(e)[:200])
+        raise
 
 
 @router.post("/brief/daily", response_model=BriefResponse)
@@ -52,7 +64,8 @@ def daily_brief(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(body.family_id)
+    if body.family_id:
+        actor.require_family(body.family_id)
     result = orchestrator.generate_daily_brief(db, actor.family_id, actor.member_id)
     return BriefResponse(**result)
 
@@ -63,7 +76,8 @@ def weekly_plan(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(body.family_id)
+    if body.family_id:
+        actor.require_family(body.family_id)
     result = orchestrator.generate_weekly_plan(db, actor.family_id, actor.member_id)
     return WeeklyPlanResponse(**result)
 
@@ -74,7 +88,8 @@ def staple_meals(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(body.family_id)
+    if body.family_id:
+        actor.require_family(body.family_id)
     result = orchestrator.suggest_staple_meals(db, actor.family_id, actor.member_id)
     return StapleMealsResponse(**result)
 

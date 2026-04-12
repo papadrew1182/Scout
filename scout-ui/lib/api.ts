@@ -342,12 +342,28 @@ export async function sendChatMessage(
   surface: string = "personal",
   conversationId?: string,
 ): Promise<any> {
-  return post(`${API_BASE_URL}/api/ai/chat`, {
-    family_id: _familyId,
-    surface,
-    message,
-    conversation_id: conversationId || undefined,
+  const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "Content-Type": "application/json",
+      "X-Scout-Trace-Id": traceId,
+    },
+    body: JSON.stringify({
+      surface,
+      message,
+      conversation_id: conversationId || undefined,
+    }),
   });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error(`[Scout AI] trace=${traceId} status=${res.status} error=${text.slice(0, 200)}`);
+    throw new Error(`AI request failed (${res.status})`);
+  }
+  const data = await res.json();
+  return data;
 }
 
 export function fetchDailyBrief(): Promise<any> {
