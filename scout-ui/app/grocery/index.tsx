@@ -9,7 +9,6 @@ import {
 } from "react-native";
 
 import { NeedSomething } from "../../components/NeedSomething";
-import { CURRENT_USER_ID } from "../../lib/config";
 import {
   fetchGroceryItems,
   fetchPendingReviewItems,
@@ -51,7 +50,7 @@ export default function GroceryPage() {
 
   const handleTogglePurchased = async (item: GroceryItem) => {
     try {
-      await updateGroceryItem(CURRENT_USER_ID, item.id, { is_purchased: !item.is_purchased });
+      await updateGroceryItem(item.id, { is_purchased: !item.is_purchased });
       load();
     } catch (e) {
       console.error(e);
@@ -60,7 +59,7 @@ export default function GroceryPage() {
 
   const handleApproveItem = async (item: GroceryItem) => {
     try {
-      await updateGroceryItem(CURRENT_USER_ID, item.id, { approval_status: "active" });
+      await updateGroceryItem(item.id, { approval_status: "active" });
       load();
     } catch (e) {
       console.error(e);
@@ -69,7 +68,7 @@ export default function GroceryPage() {
 
   const handleApproveRequest = async (req: PurchaseRequest) => {
     try {
-      await approvePurchaseRequest(CURRENT_USER_ID, req.id);
+      await approvePurchaseRequest(req.id);
       load();
     } catch (e) {
       console.error(e);
@@ -78,7 +77,7 @@ export default function GroceryPage() {
 
   const handleRejectRequest = async (req: PurchaseRequest) => {
     try {
-      await rejectPurchaseRequest(CURRENT_USER_ID, req.id);
+      await rejectPurchaseRequest(req.id);
       load();
     } catch (e) {
       console.error(e);
@@ -87,7 +86,7 @@ export default function GroceryPage() {
 
   const handleConvertRequest = async (req: PurchaseRequest) => {
     try {
-      await convertPurchaseRequestToGrocery(CURRENT_USER_ID, req.id);
+      await convertPurchaseRequestToGrocery(req.id);
       load();
     } catch (e) {
       console.error(e);

@@ -8,7 +8,6 @@ import {
   View,
 } from "react-native";
 
-import { CURRENT_USER_ID } from "../../lib/config";
 import { fetchWeeklyPlanGroceries, updateGroceryItem } from "../../lib/api";
 import { useCurrentWeeklyPlan, formatWeekStart } from "../../lib/meal_plan_hooks";
 import { shared, colors } from "../../lib/styles";
@@ -40,7 +39,7 @@ export default function MealsGroceriesPage() {
 
   const togglePurchased = async (item: GroceryItem) => {
     try {
-      await updateGroceryItem(CURRENT_USER_ID, item.id, {
+      await updateGroceryItem(item.id, {
         is_purchased: !item.is_purchased,
       });
       load();

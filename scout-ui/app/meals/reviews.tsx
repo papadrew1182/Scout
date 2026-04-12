@@ -9,7 +9,6 @@ import {
   View,
 } from "react-native";
 
-import { CURRENT_USER_ID } from "../../lib/config";
 import {
   createMealReview,
   fetchMealReviewSummary,
@@ -85,7 +84,6 @@ export default function ReviewsPage() {
     setMsg(null);
     try {
       await createMealReview({
-        member_id: CURRENT_USER_ID,
         weekly_plan_id: plan?.id ?? null,
         linked_meal_ref: mealRef,
         meal_title: mealTitle.trim(),

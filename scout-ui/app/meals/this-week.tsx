@@ -9,15 +9,14 @@ import {
   View,
 } from "react-native";
 
-import { CURRENT_USER_ID } from "../../lib/config";
 import {
   approveWeeklyPlan,
   archiveWeeklyPlan,
   generateWeeklyMealPlan,
   regenerateWeeklyPlanDay,
 } from "../../lib/api";
+import { useAuth } from "../../lib/auth";
 import { useCurrentWeeklyPlan, WEEKDAYS, formatWeekStart } from "../../lib/meal_plan_hooks";
-import { useFamilyMembers } from "../../lib/hooks";
 import { shared, colors } from "../../lib/styles";
 import type { WeeklyMealPlanGenerateResponse } from "../../lib/types";
 
@@ -31,14 +30,14 @@ function nextMondayISO(): string {
 
 export default function ThisWeekPage() {
   const { plan, loading, notFound, error, reload } = useCurrentWeeklyPlan();
-  const { adults } = useFamilyMembers();
+  const { member } = useAuth();
   const [generating, setGenerating] = useState(false);
   const [questions, setQuestions] = useState<{ key: string; question: string; hint?: string | null }[] | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const isAdult = adults.some((a) => a.id === CURRENT_USER_ID);
+  const isAdult = member?.role === "adult";
   const status = plan?.status;
 
   const runGenerate = async (answersPayload?: Record<string, string>) => {
@@ -46,7 +45,6 @@ export default function ThisWeekPage() {
     setMsg(null);
     try {
       const res: WeeklyMealPlanGenerateResponse = await generateWeeklyMealPlan(
-        CURRENT_USER_ID,
         nextMondayISO(),
         answersPayload ? { answers: answersPayload } : undefined,
       );
@@ -72,7 +70,7 @@ export default function ThisWeekPage() {
     setBusy(true);
     setMsg(null);
     try {
-      await approveWeeklyPlan(plan.id, CURRENT_USER_ID);
+      await approveWeeklyPlan(plan.id);
       setMsg("Plan approved. Groceries synced.");
       reload();
     } catch (e: any) {
@@ -87,7 +85,7 @@ export default function ThisWeekPage() {
     setBusy(true);
     setMsg(null);
     try {
-      await archiveWeeklyPlan(plan.id, CURRENT_USER_ID);
+      await archiveWeeklyPlan(plan.id);
       setMsg("Plan archived.");
       reload();
     } catch (e: any) {
@@ -102,7 +100,7 @@ export default function ThisWeekPage() {
     setBusy(true);
     setMsg(null);
     try {
-      await regenerateWeeklyPlanDay(plan.id, CURRENT_USER_ID, day);
+      await regenerateWeeklyPlanDay(plan.id, day);
       setMsg(`Regenerated ${day}.`);
       reload();
     } catch (e: any) {

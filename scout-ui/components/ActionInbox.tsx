@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 
-import { CURRENT_USER_ID } from "../lib/config";
 import { fetchActionItems } from "../lib/api";
 import { colors, shared } from "../lib/styles";
 
@@ -56,7 +55,7 @@ export function ActionInbox() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetchActionItems(CURRENT_USER_ID);
+      const data = await fetchActionItems();
       setItems(data);
     } catch (e: any) {
       setError(e.message ?? "Failed to load");

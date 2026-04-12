@@ -21,8 +21,29 @@ import type {
 
 const familyUrl = `${API_BASE_URL}/families/${FAMILY_ID}`;
 
+// ---------------------------------------------------------------------------
+// Token management — set by AuthProvider, read by all API calls
+// ---------------------------------------------------------------------------
+
+let _authToken: string | null = null;
+
+export function setApiToken(token: string | null) {
+  _authToken = token;
+}
+
+function authHeaders(): Record<string, string> {
+  if (_authToken) {
+    return { Authorization: `Bearer ${_authToken}` };
+  }
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// Base helpers
+// ---------------------------------------------------------------------------
+
 async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     console.error("API ERROR:", res.status, url, text);
@@ -34,7 +55,7 @@ async function get<T>(url: string): Promise<T> {
 async function post<T>(url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -45,9 +66,31 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return await res.json();
 }
 
+async function patch<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, url, text);
+    throw new Error(`Failed to fetch`);
+  }
+  return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Family members
+// ---------------------------------------------------------------------------
+
 export function fetchMembers(): Promise<FamilyMember[]> {
   return get(`${familyUrl}/members`);
 }
+
+// ---------------------------------------------------------------------------
+// Task instances
+// ---------------------------------------------------------------------------
 
 export function fetchTaskInstances(
   date: string,
@@ -64,6 +107,29 @@ export function fetchStepCompletions(
   return get(`${familyUrl}/task-instances/${instanceId}/steps`);
 }
 
+export function markTaskComplete(instanceId: string): Promise<TaskInstance> {
+  return post(`${familyUrl}/task-instances/${instanceId}/complete`, {});
+}
+
+export async function updateStepCompletion(
+  instanceId: string,
+  stepCompletionId: string,
+  isCompleted: boolean
+): Promise<StepCompletion> {
+  return patch(
+    `${familyUrl}/task-instances/${instanceId}/steps/${stepCompletionId}`,
+    { is_completed: isCompleted },
+  );
+}
+
+export function generateTasks(date: string): Promise<TaskInstance[]> {
+  return post(`${familyUrl}/task-instances/generate?target_date=${date}`);
+}
+
+// ---------------------------------------------------------------------------
+// Routines / Chores
+// ---------------------------------------------------------------------------
+
 export function fetchRoutines(memberId?: string): Promise<Routine[]> {
   let url = `${familyUrl}/routines`;
   if (memberId) url += `?member_id=${memberId}`;
@@ -74,6 +140,10 @@ export function fetchChoreTemplates(): Promise<ChoreTemplate[]> {
   return get(`${familyUrl}/chore-templates`);
 }
 
+// ---------------------------------------------------------------------------
+// Daily Wins / Allowance
+// ---------------------------------------------------------------------------
+
 export function fetchDailyWins(
   memberId: string,
   startDate: string,
@@ -82,31 +152,6 @@ export function fetchDailyWins(
   return get(
     `${familyUrl}/daily-wins?member_id=${memberId}&start_date=${startDate}&end_date=${endDate}`
   );
-}
-
-export function markTaskComplete(instanceId: string): Promise<TaskInstance> {
-  return post(`${familyUrl}/task-instances/${instanceId}/complete`, {});
-}
-
-export async function updateStepCompletion(
-  instanceId: string,
-  stepCompletionId: string,
-  isCompleted: boolean
-): Promise<StepCompletion> {
-  const res = await fetch(
-    `${familyUrl}/task-instances/${instanceId}/steps/${stepCompletionId}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_completed: isCompleted }),
-    }
-  );
-  if (!res.ok) throw new Error(`PATCH step failed: ${res.status}`);
-  return res.json();
-}
-
-export function generateTasks(date: string): Promise<TaskInstance[]> {
-  return post(`${familyUrl}/task-instances/generate?target_date=${date}`);
 }
 
 export class PayoutError extends Error {
@@ -123,14 +168,16 @@ export async function createWeeklyPayout(
   weekStart: string
 ): Promise<unknown> {
   const url = `${familyUrl}/allowance/weekly-payout?member_id=${memberId}&baseline_cents=${baselineCents}&week_start=${weekStart}`;
-  const res = await fetch(url, { method: "POST" });
+  const res = await fetch(url, { method: "POST", headers: authHeaders() });
   if (!res.ok) {
     throw new PayoutError(res.status, `payout request failed (${res.status})`);
   }
   return res.json();
 }
 
-// ---- Meals ----
+// ---------------------------------------------------------------------------
+// Meals
+// ---------------------------------------------------------------------------
 
 export function fetchMeals(
   mealDate?: string,
@@ -145,7 +192,9 @@ export function fetchMeals(
   return get(`${familyUrl}/meals${qs ? `?${qs}` : ""}`);
 }
 
-// ---- Calendar ----
+// ---------------------------------------------------------------------------
+// Calendar
+// ---------------------------------------------------------------------------
 
 export function fetchEvents(
   start?: string,
@@ -160,7 +209,9 @@ export function fetchEvents(
   return get(`${familyUrl}/events${qs ? `?${qs}` : ""}`);
 }
 
-// ---- Personal Tasks ----
+// ---------------------------------------------------------------------------
+// Personal Tasks
+// ---------------------------------------------------------------------------
 
 export function fetchTopPersonalTasks(
   assignedTo: string,
@@ -171,13 +222,17 @@ export function fetchTopPersonalTasks(
   );
 }
 
-// ---- Finance ----
+// ---------------------------------------------------------------------------
+// Finance
+// ---------------------------------------------------------------------------
 
 export function fetchUnpaidBills(): Promise<Bill[]> {
   return get(`${familyUrl}/bills/unpaid`);
 }
 
-// ---- Notes ----
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
 
 export function fetchRecentNotes(
   familyMemberId?: string,
@@ -189,7 +244,9 @@ export function fetchRecentNotes(
   return get(`${familyUrl}/notes/recent?${params.toString()}`);
 }
 
-// ---- Grocery ----
+// ---------------------------------------------------------------------------
+// Grocery — auth-derived actor, no more member_id params on protected routes
+// ---------------------------------------------------------------------------
 
 export function fetchGroceryItems(includePurchased?: boolean): Promise<GroceryItem[]> {
   const params = new URLSearchParams();
@@ -203,26 +260,16 @@ export function fetchPendingReviewItems(): Promise<GroceryItem[]> {
 }
 
 export function createGroceryItem(
-  memberId: string,
   payload: { title: string; quantity?: number; unit?: string; category?: string; preferred_store?: string; notes?: string }
 ): Promise<GroceryItem> {
-  return post(`${familyUrl}/groceries/items?member_id=${memberId}`, payload);
+  return post(`${familyUrl}/groceries/items`, payload);
 }
 
 export function updateGroceryItem(
-  memberId: string,
   itemId: string,
   payload: { title?: string; is_purchased?: boolean; approval_status?: string }
 ): Promise<GroceryItem> {
-  const res = fetch(`${familyUrl}/groceries/items/${itemId}?member_id=${memberId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return res.then(async (r) => {
-    if (!r.ok) { const t = await r.text().catch(() => ""); console.error("API ERROR:", r.status, t); throw new Error("Failed to fetch"); }
-    return r.json();
-  });
+  return patch(`${familyUrl}/groceries/items/${itemId}`, payload);
 }
 
 export function fetchPurchaseRequests(status?: string): Promise<PurchaseRequest[]> {
@@ -233,75 +280,75 @@ export function fetchPurchaseRequests(status?: string): Promise<PurchaseRequest[
 }
 
 export function createPurchaseRequest(
-  memberId: string,
   payload: { title: string; type?: string; details?: string; quantity?: number; unit?: string; preferred_brand?: string; preferred_store?: string; urgency?: string }
 ): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests?member_id=${memberId}`, payload);
+  return post(`${familyUrl}/purchase-requests`, payload);
 }
 
-export function approvePurchaseRequest(reviewerId: string, requestId: string): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/approve?reviewer_id=${reviewerId}`, {});
+export function approvePurchaseRequest(requestId: string): Promise<PurchaseRequest> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/approve`, {});
 }
 
-export function rejectPurchaseRequest(reviewerId: string, requestId: string): Promise<PurchaseRequest> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/reject?reviewer_id=${reviewerId}`, {});
+export function rejectPurchaseRequest(requestId: string): Promise<PurchaseRequest> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/reject`, {});
 }
 
-export function convertPurchaseRequestToGrocery(reviewerId: string, requestId: string): Promise<GroceryItem> {
-  return post(`${familyUrl}/purchase-requests/${requestId}/convert-to-grocery?reviewer_id=${reviewerId}`);
+export function convertPurchaseRequestToGrocery(requestId: string): Promise<GroceryItem> {
+  return post(`${familyUrl}/purchase-requests/${requestId}/convert-to-grocery`);
 }
 
-// ---- Dashboards ----
+// ---------------------------------------------------------------------------
+// Dashboards — auth-derived actor
+// ---------------------------------------------------------------------------
 
-export function fetchPersonalDashboard(memberId: string): Promise<any> {
-  return get(`${familyUrl}/dashboard/personal?member_id=${memberId}`);
+export function fetchPersonalDashboard(): Promise<any> {
+  return get(`${familyUrl}/dashboard/personal`);
 }
 
-export function fetchParentDashboard(memberId: string): Promise<any> {
-  return get(`${familyUrl}/dashboard/parent?member_id=${memberId}`);
+export function fetchParentDashboard(): Promise<any> {
+  return get(`${familyUrl}/dashboard/parent`);
 }
 
-export function fetchChildDashboard(memberId: string): Promise<any> {
-  return get(`${familyUrl}/dashboard/child?member_id=${memberId}`);
+export function fetchChildDashboard(): Promise<any> {
+  return get(`${familyUrl}/dashboard/child`);
 }
 
-export function fetchActionItems(memberId: string, status: string = "pending"): Promise<any[]> {
-  return get(`${familyUrl}/action-items/current?member_id=${memberId}&status=${status}`);
+export function fetchActionItems(status: string = "pending"): Promise<any[]> {
+  return get(`${familyUrl}/action-items/current?status=${status}`);
 }
 
-// ---- AI Chat ----
+// ---------------------------------------------------------------------------
+// AI Chat — auth-derived actor
+// ---------------------------------------------------------------------------
 
 export async function sendChatMessage(
-  memberId: string,
   message: string,
   surface: string = "personal",
   conversationId?: string,
 ): Promise<any> {
   return post(`${API_BASE_URL}/api/ai/chat`, {
     family_id: FAMILY_ID,
-    member_id: memberId,
     surface,
     message,
     conversation_id: conversationId || undefined,
   });
 }
 
-export function fetchDailyBrief(memberId: string): Promise<any> {
+export function fetchDailyBrief(): Promise<any> {
   return post(`${API_BASE_URL}/api/ai/brief/daily`, {
     family_id: FAMILY_ID,
-    member_id: memberId,
   });
 }
 
-// ---- Weekly Meal Plans ----
+// ---------------------------------------------------------------------------
+// Weekly Meal Plans — auth-derived actor
+// ---------------------------------------------------------------------------
 
 export function generateWeeklyMealPlan(
-  memberId: string,
   weekStartDate: string,
   opts?: { constraints?: Record<string, unknown>; answers?: Record<string, unknown> },
 ): Promise<WeeklyMealPlanGenerateResponse> {
   return post(`${familyUrl}/meals/weekly/generate`, {
-    member_id: memberId,
     week_start_date: weekStartDate,
     constraints: opts?.constraints,
     answers: opts?.answers,
@@ -321,40 +368,27 @@ export function fetchWeeklyPlans(includeArchived?: boolean): Promise<WeeklyMealP
   return get(`${familyUrl}/meals/weekly${qs}`);
 }
 
-export async function updateWeeklyPlan(
+export function updateWeeklyPlan(
   planId: string,
-  memberId: string,
   payload: { title?: string; week_plan?: unknown; prep_plan?: unknown; grocery_plan?: unknown; plan_summary?: string },
 ): Promise<WeeklyMealPlan> {
-  const res = await fetch(`${familyUrl}/meals/weekly/${planId}?member_id=${memberId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error("API ERROR:", res.status, text);
-    throw new Error("Failed to update weekly plan");
-  }
-  return res.json();
+  return patch(`${familyUrl}/meals/weekly/${planId}`, payload);
 }
 
-export function approveWeeklyPlan(planId: string, memberId: string): Promise<WeeklyMealPlan> {
-  return post(`${familyUrl}/meals/weekly/${planId}/approve`, { member_id: memberId });
+export function approveWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
+  return post(`${familyUrl}/meals/weekly/${planId}/approve`);
 }
 
-export function archiveWeeklyPlan(planId: string, memberId: string): Promise<WeeklyMealPlan> {
-  return post(`${familyUrl}/meals/weekly/${planId}/archive?member_id=${memberId}`);
+export function archiveWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
+  return post(`${familyUrl}/meals/weekly/${planId}/archive`);
 }
 
 export function regenerateWeeklyPlanDay(
   planId: string,
-  memberId: string,
   day: string,
   mealTypes?: string[],
 ): Promise<WeeklyMealPlan> {
   return post(`${familyUrl}/meals/weekly/${planId}/regenerate-day`, {
-    member_id: memberId,
     day,
     meal_types: mealTypes,
   });
@@ -364,10 +398,11 @@ export function fetchWeeklyPlanGroceries(planId: string): Promise<GroceryItem[]>
   return get(`${familyUrl}/meals/weekly/${planId}/groceries`);
 }
 
-// ---- Meal Reviews ----
+// ---------------------------------------------------------------------------
+// Meal Reviews
+// ---------------------------------------------------------------------------
 
 export function createMealReview(payload: {
-  member_id: string;
   weekly_plan_id?: string | null;
   linked_meal_ref?: string | null;
   meal_title: string;
@@ -379,7 +414,7 @@ export function createMealReview(payload: {
   repeat_decision: "repeat" | "tweak" | "retire";
   notes?: string | null;
 }): Promise<MealReview> {
-  return post(`${familyUrl}/meals/reviews`, payload);
+  return post(`${familyUrl}/meals/reviews`, { ...payload, member_id: "00000000-0000-0000-0000-000000000000" });
 }
 
 export function fetchMealReviews(limit: number = 50): Promise<MealReview[]> {
@@ -390,7 +425,9 @@ export function fetchMealReviewSummary(): Promise<MealReviewSummary> {
   return get(`${familyUrl}/meals/reviews/summary`);
 }
 
-// ---- Integrations (dev/operator only) ----
+// ---------------------------------------------------------------------------
+// Integrations (dev/operator only)
+// ---------------------------------------------------------------------------
 
 export async function ingestGoogleCalendar(
   payload: { external_id: string; title: string; starts_at: string; ends_at: string; description?: string; location?: string }

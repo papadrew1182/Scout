@@ -14,7 +14,6 @@ import {
   View,
 } from "react-native";
 
-import { CURRENT_USER_ID } from "../lib/config";
 import { createGroceryItem, createPurchaseRequest } from "../lib/api";
 import { colors } from "../lib/styles";
 
@@ -33,8 +32,6 @@ export function NeedSomething({ memberId, isChild, onComplete }: Props) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const actorId = memberId ?? CURRENT_USER_ID;
-
   const reset = () => {
     setMode(null);
     setTitle("");
@@ -49,7 +46,7 @@ export function NeedSomething({ memberId, isChild, onComplete }: Props) {
     setBusy(true);
     setMsg(null);
     try {
-      await createGroceryItem(actorId, {
+      await createGroceryItem({
         title: title.trim(),
         quantity: quantity ? Number(quantity) : undefined,
         notes: notes || undefined,
@@ -68,7 +65,7 @@ export function NeedSomething({ memberId, isChild, onComplete }: Props) {
     setBusy(true);
     setMsg(null);
     try {
-      await createPurchaseRequest(actorId, {
+      await createPurchaseRequest({
         title: title.trim(),
         details: details || undefined,
         quantity: quantity ? Number(quantity) : undefined,

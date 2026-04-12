@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 
-import { API_BASE_URL, CURRENT_USER_ID, FAMILY_ID } from "./config";
+import { fetchCurrentWeeklyPlan } from "./api";
 import type { WeeklyMealPlan } from "./types";
 
 interface CurrentPlanState {
@@ -33,23 +33,19 @@ export function useCurrentWeeklyPlan(): CurrentPlanState {
     setError(null);
     setNotFound(false);
 
-    fetch(`${API_BASE_URL}/families/${FAMILY_ID}/meals/weekly/current?member_id=${CURRENT_USER_ID}`)
-      .then(async (r) => {
-        if (r.status === 404) {
-          if (!cancelled) setNotFound(true);
-          return null;
-        }
-        if (!r.ok) {
-          const text = await r.text().catch(() => "");
-          throw new Error(text || `status ${r.status}`);
-        }
-        return r.json();
-      })
+    fetchCurrentWeeklyPlan()
       .then((data) => {
-        if (!cancelled && data) setPlan(data as WeeklyMealPlan);
+        if (!cancelled) setPlan(data);
       })
       .catch((e) => {
-        if (!cancelled) setError(e.message ?? "Failed to load");
+        if (!cancelled) {
+          // 404 = no plan yet
+          if (e.message?.includes("Failed to fetch")) {
+            setNotFound(true);
+          } else {
+            setError(e.message ?? "Failed to load");
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

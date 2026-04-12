@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.grocery import (
     GroceryItemCreate,
@@ -39,10 +40,11 @@ def list_current_grocery_items(
 )
 def list_pending_review(
     family_id: uuid.UUID,
-    actor_member_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.list_pending_review_items(db, family_id, actor_member_id)
+    actor.require_family(family_id)
+    return grocery_service.list_pending_review_items(db, family_id, actor.member_id)
 
 
 @router.post(
@@ -52,11 +54,12 @@ def list_pending_review(
 )
 def create_grocery_item(
     family_id: uuid.UUID,
-    member_id: uuid.UUID = Query(...),
     payload: GroceryItemCreate = ...,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.create_grocery_item(db, family_id, member_id, payload)
+    actor.require_family(family_id)
+    return grocery_service.create_grocery_item(db, family_id, actor.member_id, payload)
 
 
 @router.patch(
@@ -66,11 +69,12 @@ def create_grocery_item(
 def update_grocery_item(
     family_id: uuid.UUID,
     item_id: uuid.UUID,
-    member_id: uuid.UUID = Query(...),
     payload: GroceryItemUpdate = ...,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.update_grocery_item(db, family_id, member_id, item_id, payload)
+    actor.require_family(family_id)
+    return grocery_service.update_grocery_item(db, family_id, actor.member_id, item_id, payload)
 
 
 @router.post(
@@ -80,10 +84,11 @@ def update_grocery_item(
 def approve_grocery_item(
     family_id: uuid.UUID,
     item_id: uuid.UUID,
-    reviewer_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.approve_grocery_item(db, family_id, reviewer_id, item_id)
+    actor.require_family(family_id)
+    return grocery_service.approve_grocery_item(db, family_id, actor.member_id, item_id)
 
 
 @router.post(
@@ -93,10 +98,11 @@ def approve_grocery_item(
 def reject_grocery_item(
     family_id: uuid.UUID,
     item_id: uuid.UUID,
-    reviewer_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.reject_grocery_item(db, family_id, reviewer_id, item_id)
+    actor.require_family(family_id)
+    return grocery_service.reject_grocery_item(db, family_id, actor.member_id, item_id)
 
 
 # ---- Purchase Requests ----
@@ -107,16 +113,15 @@ def reject_grocery_item(
 )
 def list_purchase_requests(
     family_id: uuid.UUID,
-    actor_member_id: uuid.UUID = Query(...),
     status: str | None = Query(None),
     requested_by: uuid.UUID | None = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    from app.services.tenant_guard import require_member_in_family
-    actor = require_member_in_family(db, family_id, actor_member_id)
+    actor.require_family(family_id)
     return grocery_service.list_purchase_requests(
         db, family_id,
-        actor_member_id=actor_member_id,
+        actor_member_id=actor.member_id,
         actor_role=actor.role,
         status_filter=status,
         requested_by=requested_by,
@@ -130,11 +135,12 @@ def list_purchase_requests(
 )
 def create_purchase_request(
     family_id: uuid.UUID,
-    member_id: uuid.UUID = Query(...),
     payload: PurchaseRequestCreate = ...,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.create_purchase_request(db, family_id, member_id, payload)
+    actor.require_family(family_id)
+    return grocery_service.create_purchase_request(db, family_id, actor.member_id, payload)
 
 
 @router.post(
@@ -144,11 +150,12 @@ def create_purchase_request(
 def approve_purchase_request(
     family_id: uuid.UUID,
     request_id: uuid.UUID,
-    reviewer_id: uuid.UUID = Query(...),
     body: ReviewAction = ReviewAction(),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.approve_purchase_request(db, family_id, reviewer_id, request_id, body)
+    actor.require_family(family_id)
+    return grocery_service.approve_purchase_request(db, family_id, actor.member_id, request_id, body)
 
 
 @router.post(
@@ -158,11 +165,12 @@ def approve_purchase_request(
 def reject_purchase_request(
     family_id: uuid.UUID,
     request_id: uuid.UUID,
-    reviewer_id: uuid.UUID = Query(...),
     body: ReviewAction = ReviewAction(),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    return grocery_service.reject_purchase_request(db, family_id, reviewer_id, request_id, body)
+    actor.require_family(family_id)
+    return grocery_service.reject_purchase_request(db, family_id, actor.member_id, request_id, body)
 
 
 @router.post(
@@ -172,10 +180,11 @@ def reject_purchase_request(
 def convert_to_grocery(
     family_id: uuid.UUID,
     request_id: uuid.UUID,
-    reviewer_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     _req, item = grocery_service.convert_purchase_request_to_grocery(
-        db, family_id, reviewer_id, request_id
+        db, family_id, actor.member_id, request_id
     )
     return item

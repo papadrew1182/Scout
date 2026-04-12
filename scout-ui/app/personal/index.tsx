@@ -8,7 +8,8 @@ import {
   View,
 } from "react-native";
 
-import { CURRENT_USER_ID, CURRENT_USER_NAME, DEV_MODE } from "../../lib/config";
+import { DEV_MODE } from "../../lib/config";
+import { useAuth } from "../../lib/auth";
 import { NeedSomething as NeedSomethingWidget } from "../../components/NeedSomething";
 import { shared, colors } from "../../lib/styles";
 import {
@@ -106,6 +107,8 @@ function formatEventSubtitle(iso: string, allDay: boolean): string {
 }
 
 function TodayCard() {
+  const { member: authMember } = useAuth();
+  const myId = authMember?.member_id ?? "";
   const [items, setItems] = useState<PriorityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +124,7 @@ function TodayCard() {
     const todayDateStr = todayStart.toISOString().split("T")[0];
 
     Promise.all([
-      fetchTopPersonalTasks(CURRENT_USER_ID, 20),
+      fetchTopPersonalTasks(myId, 20),
       fetchEvents(now.toISOString(), in24h.toISOString()),
       fetchUnpaidBills(),
     ])
@@ -342,12 +345,14 @@ function CalendarCard() {
 // ============================================================================
 
 function TopTasksCard() {
+  const { member: authMember } = useAuth();
+  const myId = authMember?.member_id ?? "";
   const [tasks, setTasks] = useState<PersonalTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchTopPersonalTasks(CURRENT_USER_ID, 5)
+    fetchTopPersonalTasks(myId, 5)
       .then(setTasks)
       .catch((e) => setError(e.message ?? "Failed to load"))
       .finally(() => setLoading(false));
@@ -570,12 +575,14 @@ function FinanceSnapshot() {
 // ============================================================================
 
 function NotesCard() {
+  const { member: authMember } = useAuth();
+  const myId = authMember?.member_id ?? "";
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchRecentNotes(CURRENT_USER_ID, 3)
+    fetchRecentNotes(myId, 3)
       .then(setNotes)
       .catch((e) => setError(e.message ?? "Failed to load"))
       .finally(() => setLoading(false));
@@ -694,14 +701,17 @@ function DevToolsPanel({ onIngested }: { onIngested: () => void }) {
 // ============================================================================
 
 export default function PersonalDashboard() {
+  const { member } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
   const handleIngested = () => setRefreshKey((k) => k + 1);
+  const myId = member?.member_id ?? "";
+  const myName = member?.first_name ?? "";
 
   return (
     <ScrollView style={styles.pageContainer} contentContainerStyle={styles.pageContent}>
       {/* ---- Header ---- */}
       <View style={styles.headerBlock}>
-        <Text style={styles.headerTitle}>{CURRENT_USER_NAME}'s Dashboard</Text>
+        <Text style={styles.headerTitle}>{myName}'s Dashboard</Text>
         <Text style={styles.headerSubtitle}>{todayStr()}</Text>
       </View>
 

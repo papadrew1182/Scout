@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:8081,http://localhost:19006"
 
+    # Auth
+    auth_required: bool = False  # When True, bearer token required on all protected routes
+    session_ttl_hours: int = 72
+
     # Feature flags
     enable_ai: bool = True
     enable_meal_generation: bool = True
@@ -47,4 +51,6 @@ def validate_startup() -> list[str]:
         warnings.append("AI features disabled via SCOUT_ENABLE_AI=false")
     if not settings.enable_meal_generation:
         warnings.append("Meal generation disabled via SCOUT_ENABLE_MEAL_GENERATION=false")
+    if not settings.auth_required:
+        warnings.append("SCOUT_AUTH_REQUIRED=false; legacy member_id fallback enabled (dev only)")
     return warnings

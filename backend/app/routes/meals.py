@@ -4,6 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.grocery import GroceryItemRead
 from app.schemas.meals import (
@@ -18,7 +19,6 @@ from app.schemas.meals import (
     MealReviewRead,
     MealReviewSummary,
     MealUpdate,
-    WeeklyMealPlanApprove,
     WeeklyMealPlanGenerateRequest,
     WeeklyMealPlanGenerateResponse,
     WeeklyMealPlanRead,
@@ -64,7 +64,6 @@ def delete_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, db: Session = Dep
 
 # ---------------------------------------------------------------------------
 # Weekly meal plans — MUST be registered before /meals/{meal_id} routes
-# to avoid FastAPI matching "weekly" as a UUID parameter.
 # ---------------------------------------------------------------------------
 
 
@@ -72,12 +71,14 @@ def delete_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, db: Session = Dep
 def generate_weekly_plan(
     family_id: uuid.UUID,
     payload: WeeklyMealPlanGenerateRequest,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     result = weekly_meal_plan_service.generate_weekly_meal_plan(
         db,
         family_id,
-        payload.member_id,
+        actor.member_id,
         week_start_date=payload.week_start_date,
         extra_constraints=payload.constraints,
         answers=payload.answers,
@@ -95,22 +96,24 @@ def generate_weekly_plan(
 def list_weekly_plans(
     family_id: uuid.UUID,
     include_archived: bool = Query(False),
-    member_id: uuid.UUID = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.list_weekly_meal_plans(
-        db, family_id, include_archived, actor_member_id=member_id,
+        db, family_id, include_archived, actor_member_id=actor.member_id,
     )
 
 
 @router.get("/meals/weekly/current", response_model=WeeklyMealPlanRead)
 def get_current_weekly_plan(
     family_id: uuid.UUID,
-    member_id: uuid.UUID = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     plan = weekly_meal_plan_service.get_current_weekly_meal_plan(
-        db, family_id, actor_member_id=member_id,
+        db, family_id, actor_member_id=actor.member_id,
     )
     if not plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No weekly meal plan found")
@@ -121,11 +124,12 @@ def get_current_weekly_plan(
 def get_weekly_plan(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
-    member_id: uuid.UUID = Query(None),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.get_weekly_meal_plan(
-        db, family_id, plan_id, actor_member_id=member_id,
+        db, family_id, plan_id, actor_member_id=actor.member_id,
     )
 
 
@@ -133,12 +137,13 @@ def get_weekly_plan(
 def update_weekly_plan(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
-    member_id: uuid.UUID = Query(...),
     payload: WeeklyMealPlanUpdate = ...,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.update_weekly_meal_plan(
-        db, family_id, member_id, plan_id, payload
+        db, family_id, actor.member_id, plan_id, payload
     )
 
 
@@ -146,11 +151,12 @@ def update_weekly_plan(
 def approve_weekly_plan(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
-    payload: WeeklyMealPlanApprove,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.approve_weekly_meal_plan(
-        db, family_id, payload.member_id, plan_id
+        db, family_id, actor.member_id, plan_id
     )
 
 
@@ -158,11 +164,12 @@ def approve_weekly_plan(
 def archive_weekly_plan(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
-    member_id: uuid.UUID = Query(...),
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.archive_weekly_meal_plan(
-        db, family_id, member_id, plan_id
+        db, family_id, actor.member_id, plan_id
     )
 
 
@@ -171,12 +178,14 @@ def regenerate_weekly_plan_day(
     family_id: uuid.UUID,
     plan_id: uuid.UUID,
     payload: WeeklyMealPlanRegenerateDay,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
     return weekly_meal_plan_service.regenerate_day(
         db,
         family_id,
-        payload.member_id,
+        actor.member_id,
         plan_id,
         day=payload.day,
         meal_types=payload.meal_types,
@@ -194,7 +203,7 @@ def list_weekly_plan_groceries(
 
 
 # ---------------------------------------------------------------------------
-# Meal reviews — also before {meal_id} routes
+# Meal reviews
 # ---------------------------------------------------------------------------
 
 
@@ -202,8 +211,12 @@ def list_weekly_plan_groceries(
 def create_meal_review(
     family_id: uuid.UUID,
     payload: MealReviewCreate,
+    actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_family(family_id)
+    # Override member_id with authenticated actor
+    payload.member_id = actor.member_id
     return weekly_meal_plan_service.create_meal_review(db, family_id, payload)
 
 

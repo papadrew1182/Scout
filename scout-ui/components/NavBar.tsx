@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 
+import { useAuth } from "../lib/auth";
 import { useFamilyMembers } from "../lib/hooks";
 import { colors } from "../lib/styles";
 
@@ -12,6 +13,7 @@ interface NavBarProps {
 export function NavBar({ onScoutPress }: NavBarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const { member, logout } = useAuth();
   const [childOpen, setChildOpen] = useState(false);
   const { children, loading } = useFamilyMembers();
 
@@ -20,9 +22,19 @@ export function NavBar({ onScoutPress }: NavBarProps) {
 
   return (
     <View style={styles.bar}>
-      <Pressable onPress={() => router.push("/")}>
-        <Text style={styles.brand}>Scout</Text>
-      </Pressable>
+      <View style={styles.brandRow}>
+        <Pressable onPress={() => router.push("/")}>
+          <Text style={styles.brand}>Scout</Text>
+        </Pressable>
+        {member && (
+          <View style={styles.userInfo}>
+            <Text style={styles.userName}>{member.first_name}</Text>
+            <Pressable onPress={logout}>
+              <Text style={styles.logoutLink}>Sign out</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
 
       <View style={styles.links}>
         {onScoutPress && (
@@ -121,13 +133,33 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
   },
+  brandRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  userInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  userName: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  logoutLink: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "600",
+  },
   brand: {
     color: colors.accent,
     fontSize: 13,
     fontWeight: "800",
     letterSpacing: 2,
     textTransform: "uppercase",
-    marginBottom: 10,
   },
   links: {
     flexDirection: "row",

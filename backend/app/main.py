@@ -8,6 +8,7 @@ from app.config import settings, validate_startup
 from app.routes import (
     ai,
     allowance,
+    auth,
     calendar,
     chores,
     daily_wins,
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(families.router)
 app.include_router(routines.router)
 app.include_router(chores.router)

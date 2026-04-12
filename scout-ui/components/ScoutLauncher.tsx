@@ -15,7 +15,6 @@ import {
 } from "react-native";
 
 import { useRouter } from "expo-router";
-import { CURRENT_USER_ID } from "../lib/config";
 import { sendChatMessage } from "../lib/api";
 import { colors } from "../lib/styles";
 
@@ -47,7 +46,6 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
-  const actorId = memberId ?? CURRENT_USER_ID;
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;
@@ -57,7 +55,7 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
     setLoading(true);
 
     try {
-      const result = await sendChatMessage(actorId, text.trim(), surface, conversationId);
+      const result = await sendChatMessage(text.trim(), surface, conversationId);
       setConversationId(result.conversation_id);
 
       const assistantMsg: ChatMessage = {
@@ -74,7 +72,7 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
     } finally {
       setLoading(false);
     }
-  }, [actorId, surface, conversationId, loading]);
+  }, [surface, conversationId, loading]);
 
   if (!visible) return null;
 
