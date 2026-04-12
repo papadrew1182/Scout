@@ -42,7 +42,19 @@ CONFIRMATION_REQUIRED = {
     "approve_purchase_request",
     "reject_purchase_request",
     "convert_purchase_request_to_grocery_item",
+    "approve_weekly_meal_plan",
+    "regenerate_meal_day",
 }
+
+
+def _handoff(entity_type: str, entity_id: uuid.UUID | str, route_hint: str, summary: str) -> dict:
+    """Build handoff metadata for AI tool results so the UI can deep-link."""
+    return {
+        "entity_type": entity_type,
+        "entity_id": str(entity_id),
+        "route_hint": route_hint,
+        "summary": summary,
+    }
 
 
 def _serialize(obj: Any) -> Any:
@@ -220,7 +232,7 @@ def _create_task(executor: ToolExecutor, args: dict) -> dict:
         due_at=args.get("due_at"),
     )
     task = personal_tasks_service.create_personal_task(executor.db, executor.family_id, payload)
-    return {"created": _serialize(task)}
+    return {"created": _serialize(task), "handoff": _handoff("personal_task", task.id, "/personal", f"Task '{task.title}' created")}
 
 
 def _update_task(executor: ToolExecutor, args: dict) -> dict:
@@ -289,7 +301,7 @@ def _create_event(executor: ToolExecutor, args: dict) -> dict:
         all_day=args.get("all_day", False),
     )
     event = calendar_service.create_event(executor.db, executor.family_id, payload)
-    return {"created": _serialize(event)}
+    return {"created": _serialize(event), "handoff": _handoff("event", event.id, "/personal", f"Event '{event.title}' created")}
 
 
 def _update_event(executor: ToolExecutor, args: dict) -> dict:
@@ -368,7 +380,7 @@ def _create_note(executor: ToolExecutor, args: dict) -> dict:
         category=args.get("category"),
     )
     note = notes_service.create_note(executor.db, executor.family_id, payload)
-    return {"created": _serialize(note)}
+    return {"created": _serialize(note), "handoff": _handoff("note", note.id, "/personal", f"Note '{note.title}' saved")}
 
 
 def _search_notes(executor: ToolExecutor, args: dict) -> dict:
@@ -418,7 +430,7 @@ def _add_grocery_item(executor: ToolExecutor, args: dict) -> dict:
         source=args.get("source", "manual"),
     )
     item = grocery_service.create_grocery_item(executor.db, executor.family_id, executor.actor_member_id, payload)
-    return {"created": _serialize(item)}
+    return {"created": _serialize(item), "handoff": _handoff("grocery_item", item.id, "/grocery", f"'{item.title}' added to grocery list")}
 
 
 def _create_purchase_request(executor: ToolExecutor, args: dict) -> dict:
@@ -435,7 +447,7 @@ def _create_purchase_request(executor: ToolExecutor, args: dict) -> dict:
         urgency=args.get("urgency"),
     )
     req = grocery_service.create_purchase_request(executor.db, executor.family_id, executor.actor_member_id, payload)
-    return {"created": _serialize(req)}
+    return {"created": _serialize(req), "handoff": _handoff("purchase_request", req.id, "/grocery", f"Purchase request '{req.title}' submitted")}
 
 
 def _list_purchase_requests(executor: ToolExecutor, args: dict) -> dict:
@@ -485,6 +497,108 @@ def _send_notification_or_create_action(executor: ToolExecutor, args: dict) -> d
     }
 
 
+# ---- Weekly meal plans --------------------------------------------------
+
+
+def _generate_weekly_meal_plan(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    week_start = date.fromisoformat(args["week_start_date"])
+    result = weekly_meal_plan_service.generate_weekly_meal_plan(
+        executor.db,
+        executor.family_id,
+        executor.actor_member_id,
+        week_start_date=week_start,
+        extra_constraints=args.get("constraints"),
+        answers=args.get("answers"),
+    )
+    if result["status"] == "needs_clarification":
+        return {
+            "status": "needs_clarification",
+            "questions": result["questions"],
+        }
+    plan_id = result["plan_id"]
+    return {
+        "status": "ready",
+        "plan_id": str(plan_id),
+        "summary": result.get("summary"),
+        "handoff": _handoff(
+            "weekly_meal_plan", plan_id, "/meals/this-week",
+            "Weekly meal plan draft saved. Review and approve.",
+        ),
+    }
+
+
+def _get_current_weekly_meal_plan(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    plan = weekly_meal_plan_service.get_current_weekly_meal_plan(
+        executor.db, executor.family_id, actor_member_id=executor.actor_member_id,
+    )
+    if not plan:
+        return {"plan": None}
+    return {"plan": _serialize(plan)}
+
+
+def _approve_weekly_meal_plan(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    plan_id = uuid.UUID(args["plan_id"])
+    plan = weekly_meal_plan_service.approve_weekly_meal_plan(
+        executor.db, executor.family_id, executor.actor_member_id, plan_id
+    )
+    return {
+        "approved": _serialize(plan),
+        "handoff": _handoff(
+            "weekly_meal_plan", plan.id, "/meals/this-week",
+            f"Weekly meal plan for {plan.week_start_date.isoformat()} approved",
+        ),
+    }
+
+
+def _regenerate_meal_day(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    plan_id = uuid.UUID(args["plan_id"])
+    plan = weekly_meal_plan_service.regenerate_day(
+        executor.db,
+        executor.family_id,
+        executor.actor_member_id,
+        plan_id,
+        day=args["day"],
+        meal_types=args.get("meal_types"),
+    )
+    return {"regenerated": _serialize(plan)}
+
+
+def _add_meal_review(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    from app.schemas.meals import MealReviewCreate
+    payload = MealReviewCreate(
+        member_id=executor.actor_member_id,
+        weekly_plan_id=uuid.UUID(args["weekly_plan_id"]) if args.get("weekly_plan_id") else None,
+        linked_meal_ref=args.get("linked_meal_ref"),
+        meal_title=args["meal_title"],
+        rating_overall=int(args["rating_overall"]),
+        kid_acceptance=int(args["kid_acceptance"]) if args.get("kid_acceptance") is not None else None,
+        effort=int(args["effort"]) if args.get("effort") is not None else None,
+        cleanup=int(args["cleanup"]) if args.get("cleanup") is not None else None,
+        leftovers=args.get("leftovers"),
+        repeat_decision=args["repeat_decision"],
+        notes=args.get("notes"),
+    )
+    review = weekly_meal_plan_service.create_meal_review(executor.db, executor.family_id, payload)
+    return {
+        "created": _serialize(review),
+        "handoff": _handoff(
+            "meal_review", review.id, "/meals/reviews",
+            f"Review saved for '{review.meal_title}'",
+        ),
+    }
+
+
+def _get_meal_review_summary(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import weekly_meal_plan_service
+    summary = weekly_meal_plan_service.get_meal_review_summary(executor.db, executor.family_id)
+    return {"summary": summary.model_dump()}
+
+
 # ============================================================================
 # Handler registry
 # ============================================================================
@@ -513,6 +627,12 @@ _TOOL_HANDLERS: dict[str, Any] = {
     "approve_purchase_request": _approve_purchase_request,
     "reject_purchase_request": _reject_purchase_request,
     "convert_purchase_request_to_grocery_item": _convert_purchase_request_to_grocery,
+    "generate_weekly_meal_plan": _generate_weekly_meal_plan,
+    "get_current_weekly_meal_plan": _get_current_weekly_meal_plan,
+    "approve_weekly_meal_plan": _approve_weekly_meal_plan,
+    "regenerate_meal_day": _regenerate_meal_day,
+    "add_meal_review": _add_meal_review,
+    "get_meal_review_summary": _get_meal_review_summary,
 }
 
 
@@ -797,5 +917,78 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
             },
             "required": ["request_id"],
         },
+    ),
+    "generate_weekly_meal_plan": ToolDefinition(
+        name="generate_weekly_meal_plan",
+        description=(
+            "Ask clarifying questions if needed, otherwise generate and save a draft weekly meal plan. "
+            "Adults only. Returns either {status:'needs_clarification',questions:[...]} or "
+            "{status:'ready',plan_id,summary}. No prose."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "week_start_date": {"type": "string", "description": "Monday date YYYY-MM-DD"},
+                "constraints": {"type": "object", "description": "Optional extra constraints (budget, time, cuisines)"},
+                "answers": {"type": "object", "description": "Prior clarifying-question answers keyed by question key"},
+            },
+            "required": ["week_start_date"],
+        },
+    ),
+    "get_current_weekly_meal_plan": ToolDefinition(
+        name="get_current_weekly_meal_plan",
+        description="Get the family's current weekly meal plan (draft or approved, most recent non-archived).",
+        input_schema={"type": "object", "properties": {}, "required": []},
+    ),
+    "approve_weekly_meal_plan": ToolDefinition(
+        name="approve_weekly_meal_plan",
+        description="Approve a draft weekly meal plan. Syncs grocery items and resolves the parent review action. Adults only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["plan_id"],
+        },
+    ),
+    "regenerate_meal_day": ToolDefinition(
+        name="regenerate_meal_day",
+        description="Replace one day's dinner (or listed meal types) in an existing plan. Adults only.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string"},
+                "day": {"type": "string", "enum": list(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])},
+                "meal_types": {"type": "array", "items": {"type": "string"}},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["plan_id", "day"],
+        },
+    ),
+    "add_meal_review": ToolDefinition(
+        name="add_meal_review",
+        description="Submit a structured meal review. Available to adults and children.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "weekly_plan_id": {"type": "string"},
+                "linked_meal_ref": {"type": "string"},
+                "meal_title": {"type": "string"},
+                "rating_overall": {"type": "integer", "minimum": 1, "maximum": 5},
+                "kid_acceptance": {"type": "integer", "minimum": 1, "maximum": 5},
+                "effort": {"type": "integer", "minimum": 1, "maximum": 5},
+                "cleanup": {"type": "integer", "minimum": 1, "maximum": 5},
+                "leftovers": {"type": "string", "enum": ["none", "some", "plenty"]},
+                "repeat_decision": {"type": "string", "enum": ["repeat", "tweak", "retire"]},
+                "notes": {"type": "string"},
+            },
+            "required": ["meal_title", "rating_overall", "repeat_decision"],
+        },
+    ),
+    "get_meal_review_summary": ToolDefinition(
+        name="get_meal_review_summary",
+        description="Get compact review signals: high-rated meals, retired meals, low kid acceptance, good leftover performers, low-effort favorites.",
+        input_schema={"type": "object", "properties": {}, "required": []},
     ),
 }

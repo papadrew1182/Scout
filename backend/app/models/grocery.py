@@ -24,6 +24,8 @@ class GroceryItem(Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     approval_status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     purchase_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("purchase_requests.id", ondelete="SET NULL", use_alter=True, name="fk_grocery_items_purchase_request"))
+    weekly_plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("weekly_meal_plans.id", ondelete="SET NULL"))
+    linked_meal_ref: Mapped[str | None] = mapped_column(Text)
     is_purchased: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     purchased_at: Mapped[datetime | None] = mapped_column()
     purchased_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id", ondelete="SET NULL"))

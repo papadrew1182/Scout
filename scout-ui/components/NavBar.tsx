@@ -5,7 +5,11 @@ import { usePathname, useRouter } from "expo-router";
 import { useFamilyMembers } from "../lib/hooks";
 import { colors } from "../lib/styles";
 
-export function NavBar() {
+interface NavBarProps {
+  onScoutPress?: () => void;
+}
+
+export function NavBar({ onScoutPress }: NavBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [childOpen, setChildOpen] = useState(false);
@@ -21,6 +25,12 @@ export function NavBar() {
       </Pressable>
 
       <View style={styles.links}>
+        {onScoutPress && (
+          <Pressable style={styles.scoutBtn} onPress={onScoutPress}>
+            <Text style={styles.scoutBtnText}>Scout AI</Text>
+          </Pressable>
+        )}
+
         <Pressable
           style={[styles.link, isActive("/personal") && styles.linkActive]}
           onPress={() => router.push("/personal")}
@@ -36,6 +46,15 @@ export function NavBar() {
         >
           <Text style={[styles.linkText, isActive("/parent") && styles.linkTextActive]}>
             Parent
+          </Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.link, isActive("/meals") && styles.linkActive]}
+          onPress={() => router.push("/meals")}
+        >
+          <Text style={[styles.linkText, isActive("/meals") && styles.linkTextActive]}>
+            Meals
           </Text>
         </Pressable>
 
@@ -159,5 +178,17 @@ const styles = StyleSheet.create({
   childEmpty: {
     color: colors.textPlaceholder,
     fontSize: 12,
+  },
+  scoutBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 8,
+  },
+  scoutBtnText: {
+    color: colors.buttonPrimaryText,
+    fontSize: 13,
+    fontWeight: "700",
   },
 });

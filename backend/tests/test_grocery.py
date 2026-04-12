@@ -109,6 +109,29 @@ class TestGroceryItemApproval:
         assert exc.value.status_code == 403
 
 
+class TestGroceryPurchasedToggle:
+    """Children CAN toggle is_purchased (they help with shopping).
+    This is the explicit product rule."""
+
+    def test_child_can_mark_purchased(self, db: Session, family, adults, children):
+        item = create_grocery_item(db, family.id, adults["robert"].id, GroceryItemCreate(title="Bananas"))
+        updated = update_grocery_item(db, family.id, children["sadie"].id, item.id, GroceryItemUpdate(is_purchased=True))
+        assert updated.is_purchased is True
+        assert updated.purchased_by == children["sadie"].id
+
+    def test_child_can_unmark_purchased(self, db: Session, family, adults, children):
+        item = create_grocery_item(db, family.id, adults["robert"].id, GroceryItemCreate(title="Bananas"))
+        update_grocery_item(db, family.id, children["sadie"].id, item.id, GroceryItemUpdate(is_purchased=True))
+        updated = update_grocery_item(db, family.id, children["sadie"].id, item.id, GroceryItemUpdate(is_purchased=False))
+        assert updated.is_purchased is False
+        assert updated.purchased_by is None
+
+    def test_adult_can_mark_purchased(self, db: Session, family, adults):
+        item = create_grocery_item(db, family.id, adults["robert"].id, GroceryItemCreate(title="Milk"))
+        updated = update_grocery_item(db, family.id, adults["robert"].id, item.id, GroceryItemUpdate(is_purchased=True))
+        assert updated.is_purchased is True
+
+
 class TestPurchaseRequestPermissions:
     def test_child_sees_only_own_requests(self, db: Session, family, children):
         sadie = children["sadie"]

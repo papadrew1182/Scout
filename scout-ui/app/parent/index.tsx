@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 
+import { ActionInbox } from "../../components/ActionInbox";
 import { NeedSomething } from "../../components/NeedSomething";
 import {
   fetchMembers,
@@ -419,6 +420,9 @@ export default function ParentDashboard() {
           </View>
         ) : null;
       })()}
+
+      {/* ---- Action Inbox ---- */}
+      <ActionInbox />
 
       {/* ---- 1. Family Schedule ---- */}
       <FamilyScheduleSection />

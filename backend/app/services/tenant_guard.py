@@ -39,6 +39,14 @@ def get_active_children(db: Session, family_id: uuid.UUID) -> list[FamilyMember]
     return list(db.scalars(stmt).all())
 
 
+def require_adult_in_family(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> FamilyMember:
+    """Require an active adult member in the given family. Raises 403 if child."""
+    member = require_member_in_family(db, family_id, member_id)
+    if member.role != "adult":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This action requires an adult role")
+    return member
+
+
 def validate_family_id_matches_member(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> None:
     """Enforce denormalized family_id consistency on write paths."""
     member = db.get(FamilyMember, member_id)

@@ -41,6 +41,8 @@ class GroceryItemRead(BaseModel):
     source: str
     approval_status: str
     purchase_request_id: uuid.UUID | None
+    weekly_plan_id: uuid.UUID | None
+    linked_meal_ref: str | None
     is_purchased: bool
     purchased_at: datetime | None
     purchased_by: uuid.UUID | None

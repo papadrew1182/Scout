@@ -9,10 +9,14 @@ import type {
   Meal,
   Note,
   PersonalTask,
+  MealReview,
+  MealReviewSummary,
   PurchaseRequest,
   Routine,
   StepCompletion,
   TaskInstance,
+  WeeklyMealPlan,
+  WeeklyMealPlanGenerateResponse,
 } from "./types";
 
 const familyUrl = `${API_BASE_URL}/families/${FAMILY_ID}`;
@@ -245,6 +249,145 @@ export function rejectPurchaseRequest(reviewerId: string, requestId: string): Pr
 
 export function convertPurchaseRequestToGrocery(reviewerId: string, requestId: string): Promise<GroceryItem> {
   return post(`${familyUrl}/purchase-requests/${requestId}/convert-to-grocery?reviewer_id=${reviewerId}`);
+}
+
+// ---- Dashboards ----
+
+export function fetchPersonalDashboard(memberId: string): Promise<any> {
+  return get(`${familyUrl}/dashboard/personal?member_id=${memberId}`);
+}
+
+export function fetchParentDashboard(memberId: string): Promise<any> {
+  return get(`${familyUrl}/dashboard/parent?member_id=${memberId}`);
+}
+
+export function fetchChildDashboard(memberId: string): Promise<any> {
+  return get(`${familyUrl}/dashboard/child?member_id=${memberId}`);
+}
+
+export function fetchActionItems(memberId: string, status: string = "pending"): Promise<any[]> {
+  return get(`${familyUrl}/action-items/current?member_id=${memberId}&status=${status}`);
+}
+
+// ---- AI Chat ----
+
+export async function sendChatMessage(
+  memberId: string,
+  message: string,
+  surface: string = "personal",
+  conversationId?: string,
+): Promise<any> {
+  return post(`${API_BASE_URL}/api/ai/chat`, {
+    family_id: FAMILY_ID,
+    member_id: memberId,
+    surface,
+    message,
+    conversation_id: conversationId || undefined,
+  });
+}
+
+export function fetchDailyBrief(memberId: string): Promise<any> {
+  return post(`${API_BASE_URL}/api/ai/brief/daily`, {
+    family_id: FAMILY_ID,
+    member_id: memberId,
+  });
+}
+
+// ---- Weekly Meal Plans ----
+
+export function generateWeeklyMealPlan(
+  memberId: string,
+  weekStartDate: string,
+  opts?: { constraints?: Record<string, unknown>; answers?: Record<string, unknown> },
+): Promise<WeeklyMealPlanGenerateResponse> {
+  return post(`${familyUrl}/meals/weekly/generate`, {
+    member_id: memberId,
+    week_start_date: weekStartDate,
+    constraints: opts?.constraints,
+    answers: opts?.answers,
+  });
+}
+
+export function fetchCurrentWeeklyPlan(): Promise<WeeklyMealPlan> {
+  return get(`${familyUrl}/meals/weekly/current`);
+}
+
+export function fetchWeeklyPlan(planId: string): Promise<WeeklyMealPlan> {
+  return get(`${familyUrl}/meals/weekly/${planId}`);
+}
+
+export function fetchWeeklyPlans(includeArchived?: boolean): Promise<WeeklyMealPlan[]> {
+  const qs = includeArchived ? "?include_archived=true" : "";
+  return get(`${familyUrl}/meals/weekly${qs}`);
+}
+
+export async function updateWeeklyPlan(
+  planId: string,
+  memberId: string,
+  payload: { title?: string; week_plan?: unknown; prep_plan?: unknown; grocery_plan?: unknown; plan_summary?: string },
+): Promise<WeeklyMealPlan> {
+  const res = await fetch(`${familyUrl}/meals/weekly/${planId}?member_id=${memberId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, text);
+    throw new Error("Failed to update weekly plan");
+  }
+  return res.json();
+}
+
+export function approveWeeklyPlan(planId: string, memberId: string): Promise<WeeklyMealPlan> {
+  return post(`${familyUrl}/meals/weekly/${planId}/approve`, { member_id: memberId });
+}
+
+export function archiveWeeklyPlan(planId: string, memberId: string): Promise<WeeklyMealPlan> {
+  return post(`${familyUrl}/meals/weekly/${planId}/archive?member_id=${memberId}`);
+}
+
+export function regenerateWeeklyPlanDay(
+  planId: string,
+  memberId: string,
+  day: string,
+  mealTypes?: string[],
+): Promise<WeeklyMealPlan> {
+  return post(`${familyUrl}/meals/weekly/${planId}/regenerate-day`, {
+    member_id: memberId,
+    day,
+    meal_types: mealTypes,
+  });
+}
+
+export function fetchWeeklyPlanGroceries(planId: string): Promise<GroceryItem[]> {
+  return get(`${familyUrl}/meals/weekly/${planId}/groceries`);
+}
+
+// ---- Meal Reviews ----
+
+export function createMealReview(payload: {
+  member_id: string;
+  weekly_plan_id?: string | null;
+  linked_meal_ref?: string | null;
+  meal_title: string;
+  rating_overall: number;
+  kid_acceptance?: number | null;
+  effort?: number | null;
+  cleanup?: number | null;
+  leftovers?: string | null;
+  repeat_decision: "repeat" | "tweak" | "retire";
+  notes?: string | null;
+}): Promise<MealReview> {
+  return post(`${familyUrl}/meals/reviews`, payload);
+}
+
+export function fetchMealReviews(limit: number = 50): Promise<MealReview[]> {
+  return get(`${familyUrl}/meals/reviews?limit=${limit}`);
+}
+
+export function fetchMealReviewSummary(): Promise<MealReviewSummary> {
+  return get(`${familyUrl}/meals/reviews/summary`);
 }
 
 // ---- Integrations (dev/operator only) ----

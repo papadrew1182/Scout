@@ -16,7 +16,7 @@ from app.models.life_management import (
 from app.models.finance import Bill
 from app.models.grocery import GroceryItem, PurchaseRequest
 from app.models.health_fitness import ActivityRecord, HealthSummary
-from app.models.meals import DietaryPreference, Meal, MealPlan
+from app.models.meals import DietaryPreference, Meal, MealPlan, MealReview, WeeklyMealPlan
 from app.models.notes import Note
 from app.models.personal_tasks import PersonalTask
 
@@ -41,6 +41,8 @@ __all__ = [
     "MealPlan",
     "Meal",
     "DietaryPreference",
+    "WeeklyMealPlan",
+    "MealReview",
     "PersonalTask",
     "Note",
     "Bill",

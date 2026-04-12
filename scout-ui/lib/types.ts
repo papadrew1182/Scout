@@ -119,6 +119,115 @@ export interface Meal {
   notes: string | null;
 }
 
+// ---- Weekly meal plans ----
+
+export interface WeeklyMealPlanDinner {
+  title: string;
+  description?: string;
+  tags?: string[];
+}
+
+export interface WeeklyMealPlanSection {
+  plan?: string;
+  by_day?: Record<string, WeeklyMealPlanDinner>;
+}
+
+export interface WeeklyMealPlanWeek {
+  dinners: Record<string, WeeklyMealPlanDinner>;
+  breakfast?: WeeklyMealPlanSection;
+  lunch?: WeeklyMealPlanSection;
+  snacks?: string[];
+}
+
+export interface WeeklyMealPlanPrepTask {
+  title: string;
+  supports?: string[];
+  duration_min?: number;
+}
+
+export interface WeeklyMealPlanPrepTimelineBlock {
+  block: string;
+  items: string[];
+}
+
+export interface WeeklyMealPlanPrep {
+  tasks: WeeklyMealPlanPrepTask[];
+  timeline?: WeeklyMealPlanPrepTimelineBlock[];
+}
+
+export interface WeeklyMealPlanGroceryItem {
+  title: string;
+  quantity?: number | null;
+  unit?: string | null;
+  category?: string | null;
+  linked_meal_ref?: string | null;
+  notes?: string | null;
+}
+
+export interface WeeklyMealPlanGroceryStore {
+  name: string;
+  items: WeeklyMealPlanGroceryItem[];
+}
+
+export interface WeeklyMealPlanGrocery {
+  stores: WeeklyMealPlanGroceryStore[];
+}
+
+export interface WeeklyMealPlan {
+  id: string;
+  family_id: string;
+  created_by_member_id: string;
+  week_start_date: string;
+  source: "ai" | "manual";
+  status: "draft" | "approved" | "archived";
+  title: string | null;
+  constraints_snapshot: Record<string, unknown>;
+  week_plan: WeeklyMealPlanWeek;
+  prep_plan: WeeklyMealPlanPrep;
+  grocery_plan: WeeklyMealPlanGrocery;
+  plan_summary: string | null;
+  approved_by_member_id: string | null;
+  approved_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WeeklyMealPlanGenerateResponse {
+  status: "needs_clarification" | "ready";
+  questions?: { key: string; question: string; hint?: string | null }[] | null;
+  plan_id?: string | null;
+  summary?: string | null;
+}
+
+// ---- Meal reviews ----
+
+export interface MealReview {
+  id: string;
+  family_id: string;
+  weekly_plan_id: string | null;
+  reviewed_by_member_id: string;
+  linked_meal_ref: string | null;
+  meal_title: string;
+  rating_overall: number;
+  kid_acceptance: number | null;
+  effort: number | null;
+  cleanup: number | null;
+  leftovers: string | null;
+  repeat_decision: "repeat" | "tweak" | "retire";
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MealReviewSummary {
+  total_reviews: number;
+  high_rated: string[];
+  retired: string[];
+  low_kid_acceptance: string[];
+  good_leftovers: string[];
+  low_effort_favorites: string[];
+}
+
 export interface Note {
   id: string;
   family_id: string;
@@ -144,6 +253,8 @@ export interface GroceryItem {
   source: string;
   approval_status: string;
   purchase_request_id: string | null;
+  weekly_plan_id: string | null;
+  linked_meal_ref: string | null;
   is_purchased: boolean;
   purchased_at: string | null;
   purchased_by: string | null;
