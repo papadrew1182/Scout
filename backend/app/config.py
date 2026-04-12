@@ -8,6 +8,7 @@ logger = logging.getLogger("scout.config")
 class Settings(BaseSettings):
     database_url: str = "postgresql://scout:scout@localhost:5432/scout"
     echo_sql: bool = False
+    environment: str = "development"  # "development" or "production"
 
     # AI provider
     anthropic_api_key: str = ""
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "SCOUT_"}
 
     @property
+    def is_production(self) -> bool:
+        return self.environment.lower() == "production"
+
+    @property
     def ai_available(self) -> bool:
         return self.enable_ai and bool(self.anthropic_api_key)
 
@@ -42,20 +47,31 @@ settings = Settings()
 
 
 def validate_startup() -> list[str]:
-    """Validate critical settings at startup. Returns list of warnings."""
+    """Validate settings at startup. Raises on unsafe production config."""
     warnings: list[str] = []
     if not settings.database_url:
         raise RuntimeError("SCOUT_DATABASE_URL is required")
+
+    # Production fail-closed
+    if settings.is_production:
+        if not settings.auth_required:
+            raise RuntimeError("FATAL: SCOUT_AUTH_REQUIRED must be true in production")
+        all_local = all(
+            "localhost" in o or "127.0.0.1" in o
+            for o in settings.cors_origins.split(",")
+        )
+        if all_local:
+            raise RuntimeError("FATAL: SCOUT_CORS_ORIGINS contains only localhost in production")
+        if settings.enable_bootstrap:
+            warnings.append("WARNING: Bootstrap enabled in production. Set SCOUT_ENABLE_BOOTSTRAP=false.")
+
+    # Development warnings
+    if not settings.auth_required:
+        warnings.append("SCOUT_AUTH_REQUIRED=false; legacy member_id fallback enabled (dev only)")
     if not settings.anthropic_api_key:
         warnings.append("SCOUT_ANTHROPIC_API_KEY not set; AI features disabled")
     if not settings.enable_ai:
         warnings.append("AI features disabled via SCOUT_ENABLE_AI=false")
     if not settings.enable_meal_generation:
         warnings.append("Meal generation disabled via SCOUT_ENABLE_MEAL_GENERATION=false")
-    if not settings.auth_required:
-        warnings.append("SCOUT_AUTH_REQUIRED=false; legacy member_id fallback enabled (dev only)")
-    if settings.auth_required and settings.enable_bootstrap:
-        warnings.append("WARNING: Bootstrap enabled in auth-required mode. Set SCOUT_ENABLE_BOOTSTRAP=false for production.")
-    if settings.auth_required and "localhost" in settings.cors_origins:
-        warnings.append("WARNING: CORS allows localhost in auth-required mode. Set SCOUT_CORS_ORIGINS for production.")
     return warnings

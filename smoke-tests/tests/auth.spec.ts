@@ -6,10 +6,13 @@ const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
 
 async function login(page: any, email: string, password: string) {
   await page.goto("/");
+  // Wait for login screen
+  await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
   await page.fill('input[placeholder="Email"]', email);
   await page.fill('input[placeholder="Password"]', password);
   await page.click("text=Sign In");
-  await page.waitForSelector("text=Scout", { timeout: 15000 });
+  // Wait for NavBar to appear (indicates successful login)
+  await page.waitForSelector("text=Personal", { timeout: 15000 });
 }
 
 test.describe("Login", () => {
@@ -20,11 +23,12 @@ test.describe("Login", () => {
 
   test("child can sign in", async ({ page }) => {
     await login(page, CHILD_EMAIL, PASSWORD);
-    await expect(page.locator("text=Scout")).toBeVisible();
+    await expect(page.locator("text=Personal")).toBeVisible();
   });
 
   test("bad password shows error", async ({ page }) => {
     await page.goto("/");
+    await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
     await page.fill('input[placeholder="Email"]', ADULT_EMAIL);
     await page.fill('input[placeholder="Password"]', "wrongpassword");
     await page.click("text=Sign In");
@@ -34,7 +38,7 @@ test.describe("Login", () => {
   test("sign out returns to login", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.click("text=Sign out");
-    await expect(page.locator('input[placeholder="Email"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('input[placeholder="Email"]')).toBeVisible({ timeout: 10000 });
   });
 
   test("invalid token clears to login", async ({ page }) => {

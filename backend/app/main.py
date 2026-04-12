@@ -94,6 +94,7 @@ def ready():
 
     return {
         "status": "ready",
+        "environment": settings.environment,
         "auth_required": settings.auth_required,
         "bootstrap_enabled": settings.enable_bootstrap,
         "accounts_exist": account_count > 0,

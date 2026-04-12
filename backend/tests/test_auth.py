@@ -533,6 +533,7 @@ class TestReady:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "ready"
+        assert "environment" in data
         assert "auth_required" in data
         assert "bootstrap_enabled" in data
         assert "accounts_exist" in data
