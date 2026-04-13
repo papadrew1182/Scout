@@ -19,9 +19,11 @@ import {
 import { useRouter } from "expo-router";
 import {
   sendChatMessage,
+  sendChatMessageStream,
   fetchReady,
   type AIHandoff,
   type AIPendingConfirmation,
+  type StreamEvent,
 } from "../lib/api";
 import { colors } from "../lib/styles";
 
@@ -30,6 +32,8 @@ interface ChatMessage {
   content: string;
   handoff?: AIHandoff;
   pendingConfirmation?: AIPendingConfirmation;
+  streaming?: boolean;            // content is still accumulating
+  toolRunning?: string | null;    // name of a tool currently executing
 }
 
 const QUICK_ACTIONS = [
@@ -101,22 +105,118 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
     async (text: string) => {
       if (!text.trim() || loading) return;
       const userMsg: ChatMessage = { role: "user", content: text.trim() };
-      setMessages((prev) => [...prev, userMsg]);
+      // Also push an empty streaming assistant placeholder; chunks append
+      // onto the LAST message in the array.
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        { role: "assistant", content: "", streaming: true, toolRunning: null },
+      ]);
       setInput("");
       setLoading(true);
+
+      let streamFailed = false;
+
+      const patchLast = (fn: (m: ChatMessage) => ChatMessage) => {
+        setMessages((prev) => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1];
+          if (last.role !== "assistant") return prev;
+          return [...prev.slice(0, -1), fn(last)];
+        });
+      };
+
+      const handleEvent = (ev: StreamEvent) => {
+        switch (ev.type) {
+          case "text":
+            patchLast((m) => ({ ...m, content: m.content + ev.text }));
+            break;
+          case "tool_start":
+            patchLast((m) => ({ ...m, toolRunning: ev.name }));
+            break;
+          case "tool_end":
+            patchLast((m) => ({ ...m, toolRunning: null }));
+            break;
+          case "done":
+            setConversationId(ev.conversation_id);
+            patchLast((m) => ({
+              ...m,
+              // If nothing streamed (short turns can skip text deltas),
+              // fall back to the final response field so the bubble
+              // isn't empty.
+              content: m.content || ev.response || "",
+              streaming: false,
+              toolRunning: null,
+              handoff: ev.handoff ?? undefined,
+              pendingConfirmation: ev.pending_confirmation ?? undefined,
+            }));
+            break;
+          case "error":
+            streamFailed = true;
+            patchLast((m) => ({
+              ...m,
+              content: m.content || "Something went wrong. Please try again.",
+              streaming: false,
+              toolRunning: null,
+            }));
+            break;
+        }
+      };
+
       try {
-        const result = await sendChatMessage(text.trim(), surface, conversationId);
-        applyResult(result);
+        await sendChatMessageStream(
+          text.trim(),
+          { surface, conversationId },
+          {
+            onEvent: handleEvent,
+            onError: (err) => {
+              streamFailed = true;
+              console.error("[ScoutPanel] stream error:", err?.message);
+            },
+          },
+        );
       } catch (e) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: "Something went wrong. Please try again." },
-        ]);
-      } finally {
-        setLoading(false);
+        streamFailed = true;
       }
+
+      // Fallback: if the stream failed before producing any text, try the
+      // non-streaming endpoint once so the user still gets a response.
+      if (streamFailed) {
+        // Only fall back if the bubble is still effectively empty.
+        let shouldFallback = false;
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant" && !last.content) {
+            shouldFallback = true;
+          }
+          return prev;
+        });
+        if (shouldFallback) {
+          try {
+            const result = await sendChatMessage(text.trim(), surface, conversationId);
+            setConversationId(result.conversation_id);
+            patchLast((m) => ({
+              ...m,
+              content: result.response || "Something went wrong. Please try again.",
+              streaming: false,
+              toolRunning: null,
+              handoff: result.handoff ?? undefined,
+              pendingConfirmation: result.pending_confirmation ?? undefined,
+            }));
+          } catch {
+            patchLast((m) => ({
+              ...m,
+              content: "Something went wrong. Please try again.",
+              streaming: false,
+              toolRunning: null,
+            }));
+          }
+        }
+      }
+
+      setLoading(false);
     },
-    [surface, conversationId, loading, applyResult],
+    [surface, conversationId, loading],
   );
 
   const confirmPendingTool = useCallback(
@@ -210,9 +310,27 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
                     msg.role === "user" ? styles.userBubble : styles.assistantBubble,
                   ]}
                 >
-                  <Text style={[styles.msgText, msg.role === "user" && styles.userText]}>
-                    {msg.content}
-                  </Text>
+                  {(msg.content || !msg.streaming) && (
+                    <Text style={[styles.msgText, msg.role === "user" && styles.userText]}>
+                      {msg.content}
+                    </Text>
+                  )}
+
+                  {msg.toolRunning && (
+                    <View style={styles.toolRunningRow}>
+                      <ActivityIndicator size="small" color={colors.accent} />
+                      <Text style={styles.toolRunningText}>
+                        Running {msg.toolRunning}…
+                      </Text>
+                    </View>
+                  )}
+
+                  {msg.streaming && !msg.content && !msg.toolRunning && (
+                    <View style={styles.toolRunningRow}>
+                      <ActivityIndicator size="small" color={colors.accent} />
+                      <Text style={styles.toolRunningText}>Thinking…</Text>
+                    </View>
+                  )}
 
                   {msg.handoff && (
                     <Pressable
@@ -259,12 +377,6 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
                 </View>
               ))}
 
-              {loading && (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color={colors.accent} />
-                  <Text style={styles.loadingText}>Thinking...</Text>
-                </View>
-              )}
             </ScrollView>
 
             <View style={styles.inputRow}>
@@ -446,6 +558,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   loadingText: { color: colors.textMuted, fontSize: 13 },
+  toolRunningRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+  },
+  toolRunningText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontStyle: "italic",
+  },
 
   inputRow: {
     flexDirection: "row",

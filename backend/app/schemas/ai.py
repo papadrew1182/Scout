@@ -93,6 +93,7 @@ class ConversationRead(BaseModel):
     family_member_id: uuid.UUID
     surface: str
     status: str
+    conversation_kind: str = "chat"
     created_at: datetime
     updated_at: datetime
 

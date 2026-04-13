@@ -11,6 +11,7 @@ Handles the full chat loop:
 
 import json
 import uuid
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
@@ -170,6 +171,76 @@ def _count_tool_rows(db: Session, conversation_id: uuid.UUID) -> int:
     )
 
 
+def _create_moderation_alert(
+    db: Session,
+    *,
+    family_id: uuid.UUID,
+    actor_member_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    category: str,
+    role: str,
+    surface: str,
+) -> None:
+    """Drop a parent_action_items row when moderation blocks a child.
+
+    Adults blocking themselves don't create an alert — there's no one
+    higher up the chain to notify. Only child-surface blocks surface
+    as alerts.
+    """
+    is_child = role == "child" or surface == "child"
+    if not is_child:
+        return
+    from app.models.action_items import ParentActionItem
+
+    title = f"Scout blocked a sensitive message ({category})"
+    detail = (
+        "A child's message to Scout AI was blocked by the safety gate. "
+        "Open the conversation to review what happened. Tap to see details."
+    )
+    item = ParentActionItem(
+        family_id=family_id,
+        created_by_member_id=actor_member_id,
+        action_type="moderation_alert",
+        title=title,
+        detail=detail,
+        entity_type="ai_conversation",
+        entity_id=conversation_id,
+    )
+    db.add(item)
+    db.flush()
+
+
+def _tag_conversation_kind(
+    conversation: AIConversation,
+    *,
+    turn_used_tool: bool,
+    turn_moderation_blocked: bool,
+) -> None:
+    """Update ai_conversations.conversation_kind based on what happened
+    in the latest turn. Tracks across the whole conversation history:
+        chat        — every turn was text-only
+        tool        — every turn used at least one tool
+        mixed       — some turns used tools, some didn't
+        moderation  — the most recent turn was blocked by moderation
+    """
+    current = conversation.conversation_kind or "chat"
+    if turn_moderation_blocked:
+        conversation.conversation_kind = "moderation"
+        return
+    if turn_used_tool:
+        if current in ("chat", "moderation"):
+            conversation.conversation_kind = "tool"
+        # 'tool' and 'mixed' stay as-is
+    else:
+        if current == "chat":
+            conversation.conversation_kind = "chat"
+        elif current == "tool":
+            conversation.conversation_kind = "mixed"
+        elif current == "moderation":
+            conversation.conversation_kind = "chat"
+        # 'mixed' stays
+
+
 def chat(
     db: Session,
     family_id: uuid.UUID,
@@ -235,6 +306,9 @@ def chat(
             model="confirmation-direct",
             token_usage={"input": 0, "output": 0},
         )
+        _tag_conversation_kind(
+            conversation, turn_used_tool=True, turn_moderation_blocked=False
+        )
         db.commit()
 
         return _build_chat_result(
@@ -275,6 +349,18 @@ def chat(
             model="moderation-blocked",
             token_usage={"input": 0, "output": 0},
         )
+        _create_moderation_alert(
+            db,
+            family_id=family_id,
+            actor_member_id=member_id,
+            conversation_id=conversation.id,
+            category=mod.category or "unknown",
+            role=role,
+            surface=surface,
+        )
+        _tag_conversation_kind(
+            conversation, turn_used_tool=False, turn_moderation_blocked=True
+        )
         db.commit()
         return _build_chat_result(
             conversation_id=conversation.id,
@@ -293,6 +379,7 @@ def chat(
     final_response: AIResponse | None = None
     handoff: dict | None = None
     pending_confirmation: dict | None = None
+    turn_tool_calls = 0  # incremented each time the executor runs a tool this turn
 
     for _round in range(MAX_TOOL_ROUNDS):
         response = provider.chat(
@@ -316,6 +403,7 @@ def chat(
 
         tc = response.tool_calls[0]
         tool_result = executor.execute(tc.name, tc.input)
+        turn_tool_calls += 1
 
         _persist_message(
             db, conversation.id, "tool",
@@ -383,6 +471,11 @@ def chat(
             "output": final_response.output_tokens if final_response else 0,
         },
     )
+    _tag_conversation_kind(
+        conversation,
+        turn_used_tool=turn_tool_calls > 0,
+        turn_moderation_blocked=False,
+    )
     db.commit()
 
     return _build_chat_result(
@@ -397,6 +490,276 @@ def chat(
         handoff=handoff,
         pending_confirmation=pending_confirmation,
     )
+
+
+def chat_stream(
+    db: Session,
+    family_id: uuid.UUID,
+    member_id: uuid.UUID,
+    surface: str,
+    user_message: str,
+    conversation_id: uuid.UUID | None = None,
+) -> Iterator[dict]:
+    """Streaming version of chat().
+
+    Yields structured events that the route serializes as SSE frames:
+
+      {"type": "text", "text": "..."}          — partial assistant text chunk
+      {"type": "tool_start", "name": "..."}    — tool about to execute
+      {"type": "tool_end", "name": "...", "ok": bool}
+      {"type": "done",                         — final event, always last
+       "conversation_id": "...",
+       "response": "full text",
+       "model": "...",
+       "tool_calls_made": N,
+       "tokens": {"input": N, "output": N},
+       "handoff": {...} | None,
+       "pending_confirmation": {...} | None}
+      {"type": "error", "message": "..."}      — terminal error
+
+    The confirm_tool direct path is not available here: the frontend
+    still POSTs to /api/ai/chat for confirmation resubmits, because
+    those don't need streaming and are one atomic tool call.
+    """
+    context = load_member_context(db, family_id, member_id)
+    system_prompt = build_system_prompt(context, surface)
+    role = context["member"]["role"]
+
+    allowed_tool_names = get_allowed_tools_for_surface(role, surface)
+    tool_defs = [TOOL_DEFINITIONS[t] for t in allowed_tool_names if t in TOOL_DEFINITIONS]
+
+    conversation = get_or_create_conversation(db, family_id, member_id, surface, conversation_id)
+    executor = ToolExecutor(
+        db=db,
+        family_id=family_id,
+        actor_member_id=member_id,
+        actor_role=role,
+        surface=surface,
+        conversation_id=conversation.id,
+        allowed_tools=allowed_tool_names,
+    )
+
+    _persist_message(db, conversation.id, "user", content=user_message)
+
+    # Moderation gate runs first — on block, emit a single text event
+    # with the refusal, create the parent alert, and terminate.
+    mod = check_user_message(user_message, role=role, surface=surface)
+    if not mod.allowed:
+        _audit(
+            db=db,
+            family_id=family_id,
+            actor_id=member_id,
+            conversation_id=conversation.id,
+            tool_name="moderation",
+            arguments={"category": mod.category, "surface": surface, "role": role},
+            result_summary=(mod.user_facing_message or "")[:500],
+            status="moderation_blocked",
+            error_message=mod.category,
+        )
+        refusal_text = mod.user_facing_message or "I can't help with that."
+        _persist_message(
+            db, conversation.id, "assistant",
+            content=refusal_text,
+            model="moderation-blocked",
+            token_usage={"input": 0, "output": 0},
+        )
+        _create_moderation_alert(
+            db,
+            family_id=family_id,
+            actor_member_id=member_id,
+            conversation_id=conversation.id,
+            category=mod.category or "unknown",
+            role=role,
+            surface=surface,
+        )
+        _tag_conversation_kind(
+            conversation, turn_used_tool=False, turn_moderation_blocked=True
+        )
+        db.commit()
+
+        yield {"type": "text", "text": refusal_text}
+        yield {
+            "type": "done",
+            "conversation_id": str(conversation.id),
+            "response": refusal_text,
+            "model": "moderation-blocked",
+            "tool_calls_made": _count_tool_rows(db, conversation.id),
+            "tokens": {"input": 0, "output": 0},
+            "handoff": None,
+            "pending_confirmation": None,
+        }
+        return
+
+    messages = _load_conversation_messages(db, conversation.id)
+    provider = get_provider()
+
+    accumulated_text = ""
+    last_model = ""
+    total_in = 0
+    total_out = 0
+    handoff: dict | None = None
+    pending_confirmation: dict | None = None
+    turn_tool_calls = 0
+
+    for _round in range(MAX_TOOL_ROUNDS):
+        # Collect this round's streamed events from Anthropic.
+        round_text = ""
+        round_tool_calls: list[dict] = []
+        stop_reason = ""
+        round_model = ""
+        round_in = 0
+        round_out = 0
+        round_error: str | None = None
+
+        for ev in provider.chat_stream(
+            messages=messages,
+            system=system_prompt,
+            tools=tool_defs if tool_defs else None,
+        ):
+            t = ev.get("type")
+            if t == "text_delta":
+                chunk = ev.get("text", "") or ""
+                round_text += chunk
+                accumulated_text += chunk
+                yield {"type": "text", "text": chunk}
+            elif t == "round_end":
+                stop_reason = ev.get("stop_reason", "")
+                round_tool_calls = ev.get("tool_calls", [])
+                round_model = ev.get("model", "")
+                round_in = ev.get("input_tokens", 0)
+                round_out = ev.get("output_tokens", 0)
+            elif t == "error":
+                round_error = ev.get("message", "upstream error")
+
+        if round_error:
+            yield {"type": "error", "message": round_error}
+            # Best-effort persist what we have so the conversation isn't lost.
+            if accumulated_text:
+                _persist_message(
+                    db, conversation.id, "assistant",
+                    content=accumulated_text,
+                    model=last_model or None,
+                    token_usage={"input": total_in, "output": total_out},
+                )
+            db.commit()
+            return
+
+        last_model = round_model or last_model
+        total_in += round_in
+        total_out += round_out
+
+        if not round_tool_calls:
+            # Pure text round — this was the final narration.
+            _persist_message(
+                db, conversation.id, "assistant",
+                content=round_text,
+                model=round_model,
+                token_usage={"input": round_in, "output": round_out},
+            )
+            break
+
+        # Tool-use round: persist the assistant message with the tool_calls,
+        # execute ONE tool (matching the non-streaming loop), persist the
+        # result, and emit tool_start/tool_end frames so the UI can show a
+        # "running tool..." indicator during the silent execution phase.
+        _persist_message(
+            db, conversation.id, "assistant",
+            content=round_text or None,
+            tool_calls=round_tool_calls,
+            model=round_model,
+            token_usage={"input": round_in, "output": round_out},
+        )
+
+        tc = round_tool_calls[0]
+        yield {"type": "tool_start", "name": tc.get("name", "")}
+        tool_result = executor.execute(tc.get("name", ""), tc.get("input", {}) or {})
+        turn_tool_calls += 1
+
+        _persist_message(
+            db, conversation.id, "tool",
+            tool_results={"tool_use_id": tc.get("id", ""), "result": tool_result},
+        )
+
+        ok = not (isinstance(tool_result, dict) and tool_result.get("error"))
+        yield {"type": "tool_end", "name": tc.get("name", ""), "ok": ok}
+
+        # Confirmation-required gate: break early and emit a done event.
+        if isinstance(tool_result, dict) and tool_result.get("confirmation_required"):
+            pending_confirmation = {
+                "tool_name": str(tool_result.get("tool_name") or tc.get("name", "")),
+                "arguments": dict(tool_result.get("arguments") or tc.get("input", {}) or {}),
+                "message": str(
+                    tool_result.get("message")
+                    or "Please confirm this action before I run it."
+                ),
+            }
+            # Ensure the user sees something — if Claude streamed no pre-tool
+            # text for this turn, use the confirmation message.
+            if not accumulated_text.strip():
+                accumulated_text = pending_confirmation["message"]
+                yield {"type": "text", "text": pending_confirmation["message"]}
+            # Persist an assistant message for the turn so history replays.
+            _persist_message(
+                db, conversation.id, "assistant",
+                content=accumulated_text,
+                model=round_model,
+                token_usage={"input": round_in, "output": round_out},
+            )
+            break
+
+        # Capture handoff metadata for the final done event.
+        detected = _detect_handoff(tool_result)
+        if detected is not None:
+            handoff = detected
+
+        # Append to history for the next streamed round.
+        assistant_content: list[dict] = []
+        if round_text:
+            assistant_content.append({"type": "text", "text": round_text})
+        assistant_content.append({
+            "type": "tool_use",
+            "id": tc.get("id", ""),
+            "name": tc.get("name", ""),
+            "input": tc.get("input", {}),
+        })
+        messages.append({"role": "assistant", "content": assistant_content})
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tc.get("id", ""),
+                    "content": json.dumps(tool_result),
+                }
+            ],
+        })
+    else:
+        # Hit MAX_TOOL_ROUNDS without a clean end_turn. Persist whatever
+        # we have and let the client see 'done' with the accumulated text.
+        _persist_message(
+            db, conversation.id, "assistant",
+            content=accumulated_text,
+            model=last_model or None,
+            token_usage={"input": total_in, "output": total_out},
+        )
+
+    _tag_conversation_kind(
+        conversation,
+        turn_used_tool=turn_tool_calls > 0,
+        turn_moderation_blocked=False,
+    )
+    db.commit()
+
+    yield {
+        "type": "done",
+        "conversation_id": str(conversation.id),
+        "response": accumulated_text,
+        "model": last_model,
+        "tool_calls_made": _count_tool_rows(db, conversation.id),
+        "tokens": {"input": total_in, "output": total_out},
+        "handoff": handoff,
+        "pending_confirmation": pending_confirmation,
+    }
 
 
 def generate_daily_brief(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> dict:

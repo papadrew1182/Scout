@@ -33,6 +33,7 @@ function actionTypeLabel(type: string): string {
     case "grocery_review": return "Grocery";
     case "purchase_request": return "Request";
     case "meal_plan_review": return "Meal Plan";
+    case "moderation_alert": return "Scout Safety";
     default: return "Action";
   }
 }
@@ -42,6 +43,7 @@ function actionTypeColor(type: string): string {
     case "grocery_review": return colors.positive;
     case "purchase_request": return colors.warning;
     case "meal_plan_review": return colors.accent;
+    case "moderation_alert": return colors.negative;
     default: return colors.textMuted;
   }
 }
@@ -71,6 +73,10 @@ export function ActionInbox() {
       router.push("/grocery");
     } else if (item.entity_type === "weekly_meal_plan") {
       router.push("/meals/this-week");
+    } else if (item.action_type === "moderation_alert") {
+      // Safety alerts route to Settings → Scout AI so a parent can
+      // review the audit trail and adjust the flags if needed.
+      router.push("/settings");
     }
   };
 

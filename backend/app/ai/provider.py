@@ -1,7 +1,7 @@
 """AI provider abstraction. Anthropic-first with clean interface for swapping."""
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -93,6 +93,84 @@ class AnthropicProvider:
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
         )
+
+    def chat_stream(
+        self,
+        *,
+        messages: list[dict],
+        system: str = "",
+        tools: list[ToolDefinition] | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[dict]:
+        """Stream a single chat round from Anthropic.
+
+        Yields structured events. The orchestrator forwards most of
+        these as SSE frames to the client, and consumes the final
+        ``{"type": "round_end", ...}`` event to decide whether to run
+        a tool and start another round.
+
+        Event shapes:
+          {"type": "text_delta", "text": "..."}     — partial text chunk
+          {"type": "round_end",
+           "stop_reason": "end_turn" | "tool_use" | ...,
+           "content": "full text so far",
+           "tool_calls": [{"id": ..., "name": ..., "input": ...}],
+           "model": "...",
+           "input_tokens": N, "output_tokens": N}
+          {"type": "error", "message": "..."}
+        """
+        kwargs: dict[str, Any] = {
+            "model": model or settings.ai_chat_model,
+            "max_tokens": max_tokens or settings.ai_max_tokens,
+            "temperature": temperature if temperature is not None else settings.ai_temperature,
+            "messages": messages,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.input_schema,
+                }
+                for t in tools
+            ]
+
+        try:
+            with self._client.messages.stream(**kwargs) as stream:
+                for event in stream.text_stream:
+                    if event:
+                        yield {"type": "text_delta", "text": event}
+
+                # After the text stream finishes, the final message is
+                # available with the full accumulated content and stop reason.
+                final = stream.get_final_message()
+        except Exception as e:  # Anthropic API errors, network, etc.
+            yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+            return
+
+        content_text = ""
+        tool_calls: list[dict] = []
+        for block in final.content:
+            if block.type == "text":
+                content_text += block.text
+            elif block.type == "tool_use":
+                tool_calls.append(
+                    {"id": block.id, "name": block.name, "input": block.input}
+                )
+
+        yield {
+            "type": "round_end",
+            "stop_reason": final.stop_reason or "",
+            "content": content_text,
+            "tool_calls": tool_calls,
+            "model": final.model or "",
+            "input_tokens": getattr(final.usage, "input_tokens", 0),
+            "output_tokens": getattr(final.usage, "output_tokens", 0),
+        }
 
 
 def get_provider() -> AnthropicProvider:

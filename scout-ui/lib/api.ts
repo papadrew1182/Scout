@@ -407,6 +407,111 @@ export async function sendChatMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Streaming chat — Server-Sent Events variant of sendChatMessage.
+// ---------------------------------------------------------------------------
+
+export type StreamEvent =
+  | { type: "text"; text: string }
+  | { type: "tool_start"; name: string }
+  | { type: "tool_end"; name: string; ok: boolean }
+  | { type: "done"; conversation_id: string; response: string; model: string;
+      tool_calls_made: number; tokens: { input?: number; output?: number };
+      handoff?: AIHandoff | null; pending_confirmation?: AIPendingConfirmation | null }
+  | { type: "error"; message: string };
+
+export interface StreamHandlers {
+  onEvent: (event: StreamEvent) => void;
+  onError?: (err: Error) => void;
+}
+
+/**
+ * Stream an AI chat turn via /api/ai/chat/stream. The backend emits SSE
+ * frames of the form `data: <json>\n\n`. This reader uses fetch +
+ * ReadableStream (RN Web has no EventSource, but fetch's body reader
+ * works). On network or parse failure the caller's onError fires and
+ * no further events are dispatched.
+ */
+export async function sendChatMessageStream(
+  message: string,
+  opts: { surface?: string; conversationId?: string },
+  handlers: StreamHandlers,
+): Promise<void> {
+  const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const body = {
+    surface: opts.surface ?? "personal",
+    message,
+    conversation_id: opts.conversationId || undefined,
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/ai/chat/stream`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "X-Scout-Trace-Id": traceId,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    handlers.onError?.(e as Error);
+    return;
+  }
+
+  if (res.status === 401) {
+    _handleUnauthorized();
+    handlers.onError?.(new Error("Session expired"));
+    return;
+  }
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    console.error(`[Scout AI stream] trace=${traceId} status=${res.status} error=${text.slice(0, 200)}`);
+    handlers.onError?.(new Error(`AI stream failed (${res.status})`));
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are separated by a blank line (`\n\n`).
+      let sepIdx: number;
+      while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        if (!frame.trim()) continue;
+
+        // Each frame may have multiple `data:` lines; we join them.
+        const dataLines: string[] = [];
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trimStart());
+          }
+        }
+        if (dataLines.length === 0) continue;
+        const payload = dataLines.join("\n");
+        try {
+          const event = JSON.parse(payload) as StreamEvent;
+          handlers.onEvent(event);
+        } catch (e) {
+          console.warn(`[Scout AI stream] trace=${traceId} bad frame: ${payload.slice(0, 120)}`);
+        }
+      }
+    }
+  } catch (e) {
+    handlers.onError?.(e as Error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Platform readiness probe — used by ScoutPanel to render a disabled state
 // when the backend reports ai_available=false.
 // ---------------------------------------------------------------------------

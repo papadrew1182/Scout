@@ -16,6 +16,9 @@ class AIConversation(Base):
     family_member_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False)
     surface: Mapped[str] = mapped_column(String(20), nullable=False, default="personal")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    conversation_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="chat", server_default="chat"
+    )
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 

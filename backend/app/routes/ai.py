@@ -1,9 +1,11 @@
 """AI orchestration routes."""
 
+import json
 import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -69,6 +71,67 @@ def ai_chat(
         raise
 
 
+@router.post("/chat/stream")
+def ai_chat_stream(
+    body: ChatRequest,
+    request: Request,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Server-Sent Events version of /api/ai/chat.
+
+    Streams the assistant's response incrementally. Confirm-tool resubmits
+    are still sent to /api/ai/chat (non-streaming) because they are a
+    single synchronous tool execution with no Claude round.
+    """
+    trace_id = request.headers.get("x-scout-trace-id", "")
+    if body.family_id:
+        actor.require_family(body.family_id)
+    if body.confirm_tool is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirm_tool is not supported on the streaming endpoint. "
+                   "POST to /api/ai/chat instead.",
+        )
+
+    logger.info(
+        "ai_chat_stream_start trace=%s member=%s surface=%s",
+        trace_id, actor.member_id, body.surface,
+    )
+
+    def frames():
+        try:
+            for event in orchestrator.chat_stream(
+                db=db,
+                family_id=actor.family_id,
+                member_id=actor.member_id,
+                surface=body.surface,
+                user_message=body.message,
+                conversation_id=body.conversation_id,
+            ):
+                # One SSE frame per orchestrator event. Both lines are
+                # required by the SSE spec — "data: <json>\n\n".
+                yield f"data: {json.dumps(event)}\n\n"
+            logger.info(
+                "ai_chat_stream_success trace=%s",
+                trace_id,
+            )
+        except Exception as e:
+            logger.error("ai_chat_stream_fail trace=%s error=%s", trace_id, str(e)[:200])
+            err = json.dumps({"type": "error", "message": str(e)[:400]})
+            yield f"data: {err}\n\n"
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # Nginx/proxy hint to not buffer SSE
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.post("/brief/daily", response_model=BriefResponse)
 def daily_brief(
     body: BriefRequest,
@@ -108,6 +171,12 @@ def staple_meals(
 @router.get("/conversations", response_model=list[ConversationRead])
 def list_conversations(
     family_id: uuid.UUID = Query(...),
+    kind: str | None = Query(
+        None,
+        pattern="^(chat|tool|mixed|moderation)$",
+        description="Filter by conversation_kind",
+    ),
+    limit: int = Query(20, ge=1, le=100),
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
@@ -117,8 +186,10 @@ def list_conversations(
         .where(AIConversation.family_id == family_id)
         .where(AIConversation.family_member_id == actor.member_id)
         .order_by(AIConversation.updated_at.desc())
-        .limit(20)
+        .limit(limit)
     )
+    if kind:
+        stmt = stmt.where(AIConversation.conversation_kind == kind)
     return list(db.scalars(stmt).all())
 
 
