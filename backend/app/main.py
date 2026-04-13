@@ -1,10 +1,12 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings, validate_startup
+from app.database import SessionLocal
 from app.routes import (
     ai,
     allowance,
@@ -37,9 +39,31 @@ async def lifespan(app: FastAPI):
     warnings = validate_startup()
     for w in warnings:
         logger.warning(w)
-    logger.info("Scout backend started")
+
+    scheduler = None
+    # Start the proactive-jobs scheduler unless explicitly disabled.
+    # Disabled by default during pytest (SCOUT_ENVIRONMENT=test) and
+    # when SCOUT_SCHEDULER_ENABLED=false. The job runners themselves
+    # stay importable and directly-callable for tests.
+    if os.environ.get("SCOUT_SCHEDULER_ENABLED", "true").lower() != "false":
+        try:
+            from app.scheduler import start_scheduler
+            scheduler = start_scheduler(lambda: SessionLocal())
+            logger.info("Scout backend started (scheduler=on)")
+        except Exception as e:
+            logger.error("scheduler_start_failed: %s", str(e)[:200])
+            logger.info("Scout backend started (scheduler=off)")
+    else:
+        logger.info("Scout backend started (scheduler=off)")
+
     yield
     logger.info("Scout backend shutting down")
+    if scheduler is not None:
+        try:
+            from app.scheduler import stop_scheduler
+            stop_scheduler()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Scout", version="0.1.0", lifespan=lifespan)
@@ -99,5 +123,6 @@ def ready():
         "bootstrap_enabled": settings.enable_bootstrap,
         "accounts_exist": account_count > 0,
         "ai_available": settings.ai_available,
+        "transcribe_available": settings.transcribe_available,
         "meal_generation": settings.enable_meal_generation,
     }

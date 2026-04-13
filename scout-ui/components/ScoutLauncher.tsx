@@ -5,7 +5,7 @@
  * disabled-state fallback when the backend reports ai_available=false.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -25,6 +25,8 @@ import {
   type AIPendingConfirmation,
   type StreamEvent,
 } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { VoiceInputButton } from "./VoiceInputButton";
 import { colors } from "../lib/styles";
 
 interface ChatMessage {
@@ -56,12 +58,14 @@ type ReadyState = "checking" | "ok" | "disabled" | "error";
 
 export function ScoutPanel({ visible, onClose, surface = "personal", memberId }: Props) {
   const router = useRouter();
+  const { member } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [readyState, setReadyState] = useState<ReadyState>("checking");
   const [readyReason, setReadyReason] = useState<string | null>(null);
+  const [transcribeAvailable, setTranscribeAvailable] = useState(false);
 
   // Probe backend /ready whenever the panel becomes visible so we never mount
   // the chat UI on top of a known-broken AI path. Cheap and cached-by-open.
@@ -73,6 +77,7 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
     fetchReady()
       .then((r) => {
         if (cancelled) return;
+        setTranscribeAvailable(!!r.transcribe_available);
         if (r.ai_available) {
           setReadyState("ok");
         } else {
@@ -89,6 +94,42 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
       cancelled = true;
     };
   }, [visible]);
+
+  // Read-aloud: when a child member has read_aloud_enabled, speak each
+  // newly-finalized assistant bubble via window.speechSynthesis. Skip
+  // moderation-blocked content by default. Skip while streaming — we
+  // want the full sentence so the voice isn't choppy. Skip on adult
+  // surfaces so adults don't randomly get TTS.
+  const shouldReadAloud =
+    member?.role === "child" &&
+    !!member?.read_aloud_enabled &&
+    surface === "child";
+  const lastSpokenRef = useRef<string>("");
+  useEffect(() => {
+    if (!shouldReadAloud) return;
+    if (typeof window === "undefined") return;
+    if (!("speechSynthesis" in window)) return;
+    if (messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== "assistant") return;
+    if (last.streaming) return;
+    if (!last.content) return;
+    // Use the content as the dedupe key so we don't re-speak on rerender.
+    if (lastSpokenRef.current === last.content) return;
+    // Don't read moderation-blocked content aloud by default.
+    if (/I can't help with that/i.test(last.content) && !last.handoff) return;
+    try {
+      const utter = new window.SpeechSynthesisUtterance(last.content);
+      utter.rate = 1.0;
+      utter.pitch = 1.0;
+      utter.volume = 1.0;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+      lastSpokenRef.current = last.content;
+    } catch {
+      // silently ignore speechSynthesis errors
+    }
+  }, [messages, shouldReadAloud]);
 
   const applyResult = useCallback((result: any) => {
     setConversationId(result.conversation_id);
@@ -389,6 +430,17 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
                 onSubmitEditing={() => sendMessage(input)}
                 returnKeyType="send"
               />
+              {transcribeAvailable && (
+                <VoiceInputButton
+                  disabled={loading}
+                  onTranscribed={(text) => {
+                    setInput(text);
+                    // Auto-send so the kid/parent doesn't have to tap twice.
+                    sendMessage(text);
+                  }}
+                  onError={(msg) => console.warn("[ScoutPanel voice]", msg)}
+                />
+              )}
               <Pressable
                 style={[styles.sendBtn, (!input.trim() || loading) && styles.sendBtnDisabled]}
                 onPress={() => sendMessage(input)}

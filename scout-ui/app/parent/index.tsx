@@ -18,6 +18,7 @@ import {
   fetchMeals,
   fetchUnpaidBills,
   createWeeklyPayout,
+  fetchParentDashboardInsight,
   PayoutError,
 } from "../../lib/api";
 import { calculatePayout, sortMealsByType } from "../../lib/constants";
@@ -283,6 +284,7 @@ export default function ParentDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ text: string; isError: boolean } | null>(null);
   const [payoutRan, setPayoutRan] = useState(false);
+  const [aiInsight, setAiInsight] = useState<{ narrative: string; status: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -335,6 +337,26 @@ export default function ParentDashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Parallel fetch for the AI-generated off-track narrative. Does not
+  // block the main dashboard render — if it fails or takes a while,
+  // the banner simply doesn't appear.
+  useEffect(() => {
+    let cancelled = false;
+    fetchParentDashboardInsight()
+      .then((res) => {
+        if (cancelled) return;
+        if (res && res.narrative) {
+          setAiInsight({ narrative: res.narrative, status: res.status });
+        }
+      })
+      .catch(() => {
+        /* silent — fallback is the deterministic banner above */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleRunPayouts = async () => {
     setActionMsg(null);
@@ -420,6 +442,18 @@ export default function ParentDashboard() {
           </View>
         ) : null;
       })()}
+
+      {/* ---- AI-generated off-track narrative (from /dashboard/parent/insight) ---- */}
+      {aiInsight && aiInsight.narrative && (
+        <View
+          style={[
+            s.insightCard,
+            { borderLeftColor: aiInsight.status === "on_track" ? colors.positive : colors.accent },
+          ]}
+        >
+          <Text style={s.insightText}>{aiInsight.narrative}</Text>
+        </View>
+      )}
 
       {/* ---- Action Inbox ---- */}
       <ActionInbox />

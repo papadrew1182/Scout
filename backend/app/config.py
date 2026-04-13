@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     ai_request_timeout: int = 60
     ai_max_requests_per_minute: int = 30
 
+    # Audio transcription (voice input). When unset, the transcribe
+    # endpoint returns 501 and the frontend hides the mic button.
+    # Provider options: "groq" (default, cheap Whisper) or "openai".
+    transcribe_provider: str = "groq"
+    transcribe_api_key: str = ""
+    transcribe_model: str = "whisper-large-v3"
+    transcribe_max_upload_bytes: int = 10 * 1024 * 1024  # 10 MB
+
     cors_origins: str = "http://localhost:8081,http://localhost:19006"
 
     # Auth
@@ -41,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def ai_available(self) -> bool:
         return self.enable_ai and bool(self.anthropic_api_key)
+
+    @property
+    def transcribe_available(self) -> bool:
+        return bool(self.transcribe_api_key)
 
 
 settings = Settings()

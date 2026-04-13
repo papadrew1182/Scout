@@ -34,6 +34,7 @@ function actionTypeLabel(type: string): string {
     case "purchase_request": return "Request";
     case "meal_plan_review": return "Meal Plan";
     case "moderation_alert": return "Scout Safety";
+    case "daily_brief": return "Morning brief";
     default: return "Action";
   }
 }
@@ -44,6 +45,7 @@ function actionTypeColor(type: string): string {
     case "purchase_request": return colors.warning;
     case "meal_plan_review": return colors.accent;
     case "moderation_alert": return colors.negative;
+    case "daily_brief": return colors.accent;
     default: return colors.textMuted;
   }
 }
@@ -69,7 +71,9 @@ export function ActionInbox() {
   useEffect(() => { load(); }, [load]);
 
   const handleTap = (item: ActionItem) => {
-    if (item.entity_type === "grocery_item" || item.entity_type === "purchase_request") {
+    if (item.action_type === "daily_brief") {
+      router.push(`/brief/${item.id}` as any);
+    } else if (item.entity_type === "grocery_item" || item.entity_type === "purchase_request") {
       router.push("/grocery");
     } else if (item.entity_type === "weekly_meal_plan") {
       router.push("/meals/this-week");

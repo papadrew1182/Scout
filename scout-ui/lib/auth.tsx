@@ -16,6 +16,7 @@ export interface AuthMember {
   last_name: string | null;
   role: "adult" | "child";
   family_name: string;
+  read_aloud_enabled?: boolean;
 }
 
 interface AuthState {

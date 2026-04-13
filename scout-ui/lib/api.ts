@@ -326,12 +326,30 @@ export function fetchParentDashboard(): Promise<any> {
   return get(`${familyUrl()}/dashboard/parent`);
 }
 
+export function fetchParentDashboardInsight(): Promise<{
+  status: string;
+  narrative: string;
+  model: string | null;
+  as_of: string;
+  source: string;
+}> {
+  return get(`${familyUrl()}/dashboard/parent/insight`);
+}
+
 export function fetchChildDashboard(): Promise<any> {
   return get(`${familyUrl()}/dashboard/child`);
 }
 
 export function fetchActionItems(status: string = "pending"): Promise<any[]> {
   return get(`${familyUrl()}/action-items/current?status=${status}`);
+}
+
+export function fetchActionItem(id: string): Promise<any> {
+  return get(`${familyUrl()}/action-items/${id}`);
+}
+
+export function resolveActionItem(id: string): Promise<any> {
+  return post(`${familyUrl()}/action-items/${id}/resolve`);
 }
 
 // ---------------------------------------------------------------------------
@@ -519,9 +537,28 @@ export async function sendChatMessageStream(
 export interface ReadyState {
   status: string;
   ai_available: boolean;
+  transcribe_available?: boolean;
   auth_required?: boolean;
   environment?: string;
   reason?: string;
+}
+
+export async function transcribeAudio(blob: Blob): Promise<{ text: string; provider: string }> {
+  const form = new FormData();
+  form.append("audio", blob, "voice.webm");
+  const res = await fetch(`${API_BASE_URL}/api/ai/transcribe`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+  });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    throw new Error(`Transcription failed (${res.status})`);
+  }
+  return (await res.json()) as { text: string; provider: string };
 }
 
 export async function fetchReady(): Promise<ReadyState> {
@@ -664,7 +701,11 @@ export function updateAISettings(
 
 export function updateMemberLearning(
   memberId: string,
-  payload: { grade_level?: string | null; learning_notes?: string | null },
+  payload: {
+    grade_level?: string | null;
+    learning_notes?: string | null;
+    read_aloud_enabled?: boolean;
+  },
 ): Promise<FamilyMember> {
   return patch(`${familyUrl()}/members/${memberId}/learning`, payload);
 }

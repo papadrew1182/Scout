@@ -7,6 +7,7 @@ export interface FamilyMember {
   birthdate: string | null;
   grade_level: string | null;
   learning_notes: string | null;
+  read_aloud_enabled: boolean;
   is_active: boolean;
 }
 

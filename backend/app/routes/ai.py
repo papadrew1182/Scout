@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -130,6 +130,61 @@ def ai_chat_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/transcribe")
+async def ai_transcribe(
+    audio: UploadFile = File(...),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Transcribe an uploaded audio blob (voice-input mic path).
+
+    The frontend records via MediaRecorder (webm/opus on most browsers),
+    POSTs the blob here, and feeds the returned text into the existing
+    /api/ai/chat/stream endpoint. If no transcription key is configured
+    this returns 501 so the frontend hides the mic button cleanly.
+    """
+    from app.ai.transcribe import transcribe_audio
+    from app.config import settings
+
+    if not settings.transcribe_available:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Transcription provider not configured.",
+        )
+
+    data = await audio.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Empty audio upload.",
+        )
+    if len(data) > settings.transcribe_max_upload_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Audio upload exceeds {settings.transcribe_max_upload_bytes} bytes.",
+        )
+
+    try:
+        result = transcribe_audio(data, audio.content_type or "audio/webm")
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error("transcribe_fail actor=%s err=%s", actor.member_id, str(e)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Transcription provider failed.",
+        )
+
+    return {
+        "text": result.text,
+        "provider": result.provider,
+        "model": result.model,
+        "duration_ms": result.duration_ms,
+    }
 
 
 @router.post("/brief/daily", response_model=BriefResponse)

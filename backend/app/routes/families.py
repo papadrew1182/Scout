@@ -125,6 +125,8 @@ def update_member_learning(
         member.grade_level = payload.grade_level.strip() or None
     if payload.learning_notes is not None:
         member.learning_notes = payload.learning_notes.strip() or None
+    if payload.read_aloud_enabled is not None:
+        member.read_aloud_enabled = bool(payload.read_aloud_enabled)
     db.commit()
     db.refresh(member)
     return member

@@ -37,6 +37,7 @@ class MeResponse(BaseModel):
     last_name: str | None
     role: str
     family_name: str
+    read_aloud_enabled: bool = False
 
 
 class CreateAccountRequest(BaseModel):
@@ -105,6 +106,7 @@ def get_me(actor: Actor = Depends(get_current_actor)):
         last_name=actor.member.last_name,
         role=actor.role,
         family_name=actor.family.name,
+        read_aloud_enabled=bool(getattr(actor.member, "read_aloud_enabled", False)),
     )
 
 

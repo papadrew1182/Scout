@@ -492,6 +492,23 @@ function AIChatSection() {
     }
   };
 
+  const toggleKidReadAloud = async (childId: string) => {
+    const current = children.find((c) => c.id === childId);
+    if (!current) return;
+    try {
+      const updated = await updateMemberLearning(childId, {
+        read_aloud_enabled: !current.read_aloud_enabled,
+      });
+      setChildren((prev) => prev.map((c) => (c.id === childId ? updated : c)));
+      setMsg({
+        text: `Read-aloud ${updated.read_aloud_enabled ? "on" : "off"} for ${updated.first_name}.`,
+        error: false,
+      });
+    } catch {
+      setMsg({ text: "Failed to update read-aloud.", error: true });
+    }
+  };
+
   if (loading) {
     return (
       <View style={shared.card}>
@@ -624,6 +641,22 @@ function AIChatSection() {
                   onPress={() => saveKid(kid.id)}
                 >
                   <Text style={shared.buttonSmallText}>Save {kid.first_name}</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[s.toggleRow, !kid.read_aloud_enabled && s.toggleRowOff]}
+                  onPress={() => toggleKidReadAloud(kid.id)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.toggleLabel}>Read answers aloud</Text>
+                    <Text style={shared.cardSubtle}>
+                      Scout speaks replies with the browser voice on this
+                      child&apos;s surface. Early readers love it.
+                    </Text>
+                  </View>
+                  <Text style={s.toggleState}>
+                    {kid.read_aloud_enabled ? "ON" : "OFF"}
+                  </Text>
                 </Pressable>
               </View>
             );

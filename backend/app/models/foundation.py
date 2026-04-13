@@ -34,6 +34,9 @@ class FamilyMember(Base):
     birthdate: Mapped[date | None] = mapped_column(Date)
     grade_level: Mapped[str | None] = mapped_column(Text)
     learning_notes: Mapped[str | None] = mapped_column(Text)
+    read_aloud_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
