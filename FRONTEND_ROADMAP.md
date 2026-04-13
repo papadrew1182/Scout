@@ -1,240 +1,380 @@
 # Scout Frontend Roadmap
 
-Last reconciled: 2026-04-12 against commit `9481f8f` on `main`.
+Last reconciled: 2026-04-13 against commit `9481f8f` on `main`.
 
-This is the first frontend roadmap for Scout. The frontend lives in `scout-ui/`
-(Expo / React Native Web, served via `expo export --platform web`). This doc is
-the planning layer — for the cross-surface reconciliation see
-`docs/ROADMAP_RECONCILIATION.md`.
+This is the frontend roadmap for Scout. The frontend lives in `scout-ui/`
+(Expo / React Native Web, deployed via `expo export --platform web`).
 
 A screen-data readiness audit is not the same thing as a frontend roadmap.
-This document tracks UX maturity and remaining polish, not just whether data
-is plumbed.
+This document tracks UX maturity and remaining polish, not just "did the
+data reach the screen." For the cross-surface reconciliation see
+`docs/ROADMAP_RECONCILIATION.md`.
 
 ## Status Legend
 
-- **VERIFIED** — code exists and is exercised by Playwright smoke or manual
-  deployed verification.
-- **IMPLEMENTED** — code exists but not covered by smoke.
+- **VERIFIED** — code exists and is exercised by Playwright smoke or
+  documented deploy verification.
+- **IMPLEMENTED** — code exists but is not covered by smoke.
 - **PARTIAL** — only part of the intended surface exists.
 - **DEFERRED** — intentionally later.
-- **UNKNOWN** — not enough evidence.
+- **UNKNOWN** — not enough evidence to judge.
 
-## 1. App Shell, Nav, Scout Launcher
-Status: **VERIFIED**
+"VERIFIED" means *private-launch ready*, not *strategically complete*. The
+two summary sections at the bottom separate those.
 
-- `scout-ui/app/_layout.tsx` — root layout, `AuthProvider`, `NavBar`, Scout panel
-- `scout-ui/components/NavBar.tsx` — Personal / Parent / Meals / Grocery /
-  Settings tabs + Scout AI button + child-member dropdown
-- `scout-ui/components/ScoutLauncher.tsx` — modal AI chat panel (see AI Roadmap §4)
-- `scout-ui/app/index.tsx` — root redirect / quick home
+## 1. App Shell / Nav / Scout Launcher
 
-Evidence: smoke tests exercise shell/nav via every surface test in
-`smoke-tests/tests/surfaces.spec.ts`.
+**Status:** VERIFIED
 
-Gaps: none for private launch.
+**What exists:**
+- `scout-ui/app/_layout.tsx` — root layout, `AuthProvider`, `NavBar`, Scout panel wrapper
+- `scout-ui/components/NavBar.tsx` — Personal / Parent / Meals / Grocery / Settings tabs, Scout AI button, child-member dropdown
+- `scout-ui/components/ScoutLauncher.tsx` — slide-up modal AI chat panel
+- `scout-ui/app/index.tsx` — root redirect / home
+
+**Evidence:** every surface test in `smoke-tests/tests/surfaces.spec.ts` traverses the shell.
+
+**Missing verification:** none for private launch.
+
+**Missing UX/product work:** no top-bar notification badge for Action Inbox count.
+
+**Recommended next step:** leave as-is for launch; revisit badge after Action Inbox gains filters.
 
 ## 2. Auth UX
-Status: **VERIFIED**
 
-- `scout-ui/lib/auth.tsx` — `AuthProvider` with localStorage token persistence,
-  `/api/auth/me` revalidation, login/logout, member context
-- `scout-ui/components/LoginScreen.tsx` — email/password form, error + loading states
-- `scout-ui/app/settings/index.tsx` — password change, session list, revoke-others
+**Status:** VERIFIED
 
-Smoke: `smoke-tests/tests/auth.spec.ts` — 5 tests (adult login, child login,
-bad password, sign-out, invalid-token recovery).
+**What exists:**
+- `scout-ui/lib/auth.tsx` — `AuthProvider` with localStorage token persistence, `/api/auth/me` revalidation, login/logout, member context
+- `scout-ui/components/LoginScreen.tsx` — email/password with error + loading states
+- `scout-ui/app/settings/index.tsx` — password change, session list, "revoke other sessions"
 
-Gaps:
-- No explicit "switch to another member" UI within a single logged-in session.
-  Currently each member signs in individually. Fine for v1; debt captured below.
+**Evidence:** `smoke-tests/tests/auth.spec.ts` — 5 tests (adult login, child login, bad password, sign-out, invalid-token recovery).
+
+**Missing verification:** none.
+
+**Missing UX/product work:**
+- No "switch to another member" UI within a single logged-in session. Each member signs in individually.
+- No password-strength meter on password change.
+- No email-based password reset (admin-initiated only).
+
+**Recommended next step:** ship launch as-is. Revisit multi-member switching if usage shows frequent sign-in churn.
 
 ## 3. Personal Surface
-Status: **VERIFIED**
 
-- `scout-ui/app/personal/index.tsx` — today priority layer (urgent tasks, events,
-  overdue bills), combined calendar, top-5 personal tasks, Scout snapshot,
-  finance snapshot, recent notes, dev-mode ingestion buttons
+**Status:** VERIFIED
 
-Smoke: `surfaces.spec.ts` loads the dashboard and waits for "Dashboard" text.
+**What exists:**
+- `scout-ui/app/personal/index.tsx` — today priority layer (urgent tasks, events, overdue bills), combined calendar (next 3 days), top-5 personal tasks, Scout snapshot, finance snapshot, recent notes, dev-mode ingestion buttons
+- RexOS + Exxir collapsible panels (placeholder copy only)
 
-Gaps:
-- **RexOS** and **Exxir** collapsible panels are placeholder stubs only (copy
-  only, no wiring). Captured as deferred UX debt.
-- Dev-mode Google Calendar / YNAB ingestion buttons are gated by `DEV_MODE`;
-  production build behavior needs a product decision (hide vs gate server-side).
+**Evidence:** `surfaces.spec.ts` loads the dashboard and waits for "Dashboard" text.
+
+**Missing verification:** smoke does not assert any specific tile's data — only that the page renders.
+
+**Missing UX/product work:**
+- RexOS / Exxir panels are stubs. Product decision needed: build, remove, or re-label as "coming soon".
+- Dev-mode Google Calendar / YNAB ingestion buttons are gated by `DEV_MODE` but production behavior has not been audited.
+- No loading skeleton; initial render is a spinner.
+
+**Recommended next step:** decide RexOS/Exxir fate; audit DEV_MODE gate before next prod deploy.
 
 ## 4. Parent Surface
-Status: **VERIFIED**
 
+**Status:** VERIFIED
+
+**What exists:**
 - `scout-ui/app/parent/index.tsx` — full parent dashboard:
-  - Household insight banner (rule-based on_track / at_risk / off_track / complete)
-  - Action Inbox component (grocery, purchase request, meal plan reviews)
+  - Household insight banner (rule-based `on_track` / `at_risk` / `off_track` / `complete`)
+  - Action Inbox component
   - Family schedule (next 3 days)
   - Kids today status (per-child task completion)
-  - Weekly progress (wins / 5 days)
+  - Weekly progress (wins / 5 days, status pill)
   - Meals + Bills sections
-  - Weekly payout with per-child baseline and earned amount
-  - "Run Weekly Payout" button wired to backend
+  - Household overview stats
+  - Weekly payout with per-child baseline + earned amount
+  - "Run Weekly Payout" button
 
-Smoke: parent surface touched via `surfaces.spec.ts` + role visibility test.
+**Evidence:** parent surface touched via `surfaces.spec.ts` + role visibility test ("Accounts & Access" assertion).
 
-Gaps:
-- **Bonus / penalty** buttons on the payout card are visually present but the
-  handlers are "not implemented yet". Matches backend gap (see Backend Roadmap §2).
+**Missing verification:** smoke does not actually run a weekly payout or exercise the insight banner variants.
+
+**Missing UX/product work:**
+- **Bonus / penalty** buttons on the payout card are rendered but "not implemented yet" — matches backend gap.
+- Household insight banner is rule-based, not AI-driven.
+- No drill-in from "kids today status" to individual child detail page.
+
+**Recommended next step:** wire bonus/penalty once backend endpoint lands; add drill-in link to child surface.
 
 ## 5. Child Surface
-Status: **VERIFIED**
 
-- `scout-ui/app/child/[memberId].tsx` — per-child view:
-  - Progress summary with encouragement copy
-  - Schedule filtered by `is_hearth_visible`
-  - Responsibilities grouped by routine vs chore
-  - Meals for today
-  - Weekly wins M–F dot display + earned payout
-  - `NeedSomething` widget (grocery / purchase request entry)
+**Status:** VERIFIED
 
-Smoke: child login path exercised in `auth.spec.ts`; child does NOT see
-"Accounts & Access" asserted in `surfaces.spec.ts`.
+**What exists:**
+- `scout-ui/app/child/[memberId].tsx` — per-child view: progress summary, schedule filtered by `is_hearth_visible`, responsibilities grouped by routine vs chore, today's meals, weekly wins M–F dot display, earned payout, `NeedSomething` widget
 
-Gaps:
-- Task completion step-tracking relies on `TaskCard` component; no Playwright
-  coverage for actually completing a task end-to-end. Debt captured below.
+**Evidence:** child login path exercised in `auth.spec.ts`; child does NOT see "Accounts & Access" asserted in `surfaces.spec.ts`.
+
+**Missing verification:**
+- No E2E for actually completing a task (step-tracking via `TaskCard`).
+- No E2E for using `NeedSomething` as a child.
+
+**Missing UX/product work:**
+- No celebration / confetti on "last task done" day.
+- No way for a child to view their own history beyond the current week.
+
+**Recommended next step:** add task-completion E2E first; polish celebration state later.
 
 ## 6. Meals UX
-Status: **IMPLEMENTED** (happy path partially smoked)
 
-- `scout-ui/app/meals/this-week.tsx` — current-week plan display, AI generation
-  flow (questions → answers → regenerate → approve), plan archive, regenerate-day
-- `scout-ui/app/meals/groceries.tsx` — plan-specific groceries grouped by store
-- `scout-ui/app/meals/prep.tsx` — exists; content not re-verified
-- `scout-ui/app/meals/reviews.tsx` — exists; content not re-verified
+**Status:** VERIFIED (core) / IMPLEMENTED (subpages)
+
+**What exists:**
 - `scout-ui/app/meals/_layout.tsx` — tab layout
+- `scout-ui/app/meals/index.tsx` — redirect to `/meals/this-week`
+- `scout-ui/app/meals/this-week.tsx` — current-week plan display, AI questions → answers → regenerate → approve workflow, plan archive, regenerate-day actions
+- `scout-ui/app/meals/groceries.tsx` — plan-specific groceries grouped by store
+- `scout-ui/app/meals/prep.tsx` (122 lines) — Sunday prep view with tasks + timeline from `plan.prep_plan`, retry + empty states
+- `scout-ui/app/meals/reviews.tsx` (417 lines) — per-meal reviews with rating (1–5), leftover options (none/some/plenty), repeat/tweak/retire decisions, summary view
 
-Smoke: `surfaces.spec.ts` loads `meals/this-week` and asserts "This Week".
+**Evidence:** `surfaces.spec.ts` loads `meals/this-week` and asserts "This Week".
 
-Gaps:
-- AI meal-plan generation flow is not smoke-tested (questions → approve path).
-- `prep.tsx` and `reviews.tsx` content was not verified in this reconciliation
-  pass — listed as **UNKNOWN** until re-audited.
+**Missing verification:**
+- AI generation loop (questions → approve) is not smoke-tested.
+- `prep.tsx` and `reviews.tsx` have never been exercised by a smoke test.
+- No test for plan archive or day-regenerate actions.
+
+**Missing UX/product work:**
+- No history view for past weekly plans beyond the approved/archived distinction.
+- Reviews page cannot filter by member or rating.
+
+**Recommended next step:** add a smoke test that loads `this-week` after a plan exists and asserts the generation buttons render. Skip generating through AI in smoke (slow + flaky).
 
 ## 7. Grocery / Purchase Request UX
-Status: **VERIFIED**
 
-- `scout-ui/app/grocery/index.tsx` — active items (by store), purchased items,
-  pending-review section, purchase-request section with urgency badges,
-  approve / reject / convert actions
-- `scout-ui/components/NeedSomething.tsx` — shared add-to-list / request form
+**Status:** VERIFIED
 
-Smoke: `surfaces.spec.ts` loads `grocery` page.
+**What exists:**
+- `scout-ui/app/grocery/index.tsx` — active items (grouped by store), purchased items, pending-review, purchase-requests with urgency badges, approve / reject / convert actions
+- `scout-ui/components/NeedSomething.tsx` — shared reusable form across personal / parent / child surfaces
 
-Gaps:
-- No smoke path for actually approving a pending item. Covered by backend
-  `test_grocery.py` (26 tests) but not at UI level.
+**Evidence:** `surfaces.spec.ts` loads the grocery page and confirms body renders.
+
+**Missing verification:** no smoke path for approving a pending item or converting a request. Backend `test_grocery.py` (26 tests) covers it at the service layer.
+
+**Missing UX/product work:**
+- No bulk actions (approve all, move all to purchased).
+- No history tab for recently-purchased items.
+
+**Recommended next step:** add E2E for the approve-pending flow — it's the highest-value missing smoke.
 
 ## 8. Settings — Accounts & Access
-Status: **VERIFIED**
 
-- `scout-ui/app/settings/index.tsx`:
-  - My Account: password change, active session list, revoke others
-  - Accounts & Access (adults only): create / reset password / activate /
-    deactivate / revoke sessions per member
+**Status:** VERIFIED
 
-Smoke: `surfaces.spec.ts` — adult sees "Accounts & Access", child does not.
+**What exists:**
+- `scout-ui/app/settings/index.tsx` — My Account (password change, session list, revoke others) + Accounts & Access (adults only: create / reset password / activate-deactivate / revoke sessions / last-login display)
 
-Gaps: none for private launch.
+**Evidence:** `surfaces.spec.ts` asserts role visibility — adult sees "Accounts & Access", child does not.
+
+**Missing verification:** no E2E for actually creating a new account or resetting a password.
+
+**Missing UX/product work:**
+- No confirmation dialog before deactivating an account.
+- No audit log visible to the user.
+
+**Recommended next step:** add a confirmation dialog for destructive actions; E2E for account creation.
 
 ## 9. Parent Action Inbox
-Status: **VERIFIED**
 
-- `scout-ui/components/ActionInbox.tsx` — color-coded cards for
-  `grocery_review`, `purchase_request`, `meal_plan_review`; auto-routes to
-  the right page on tap
+**Status:** VERIFIED
+
+**What exists:**
+- `scout-ui/components/ActionInbox.tsx` — modal with color-coded badges for `grocery_review`, `purchase_request`, `meal_plan_review`; auto-routes to the right page on tap; load / error / empty states; retry button.
 - Rendered on parent dashboard.
 
-Gaps:
-- No pagination / filter; single flat list. Fine for family-scale volume.
+**Evidence:** parent surface smoke hits the page that mounts the inbox.
 
-## 10. Error / Loading / Retry States
-Status: **IMPLEMENTED**
+**Missing verification:** no smoke asserts the inbox actually displays items, or that tapping routes correctly.
 
-- Every data-fetching component has `ActivityIndicator` + error text +
-  empty-state messaging.
-- `ActionInbox.tsx` includes a retry button on error.
+**Missing UX/product work:**
+- No pagination / filter; single flat list. Fine at family-scale volume.
+- No "mark as read" semantics — items disappear when acted on, but if a parent ignores an item it stays forever.
 
-Gaps:
-- No global error boundary. Expo Router / React Native Web does not use
-  Next.js `error.tsx` / `loading.tsx` conventions, so there is no top-level
-  fallback if a render crashes. Debt captured below.
+**Recommended next step:** none for launch. Revisit filtering when the list consistently exceeds ~15 items.
 
-## 11. Playwright Smoke Coverage
-Status: **VERIFIED** (for launch gate), **thin** (for feature depth)
+## 10. AI Panel UX and Handoff
 
-- `smoke-tests/tests/auth.spec.ts` — 5 tests
-- `smoke-tests/tests/surfaces.spec.ts` — 7 tests (dashboards, meals, grocery,
-  settings, role visibility)
-- `smoke-tests/tests/ai-panel.spec.ts` — 1 test (quick-action + AI chat)
+**Status:** IMPLEMENTED (thinly smoked)
 
-Total: ~12 Playwright tests, all passing in `ci.yml :: smoke-web` and in
-deployed verification.
+**What exists:**
+- `scout-ui/components/ScoutLauncher.tsx` — slide-up chat modal with:
+  - Quick-action chips (6 pre-canned prompts)
+  - Message history (user bubbles right, assistant left)
+  - `X-Scout-Trace-Id` header for backend correlation (new in `9481f8f`)
+  - Handoff buttons rendered from `result.handoff` — tap deep-links into created entity
+- `scout-ui/lib/api.ts :: sendChatMessage()` — single POST to `/api/ai/chat`, awaits full JSON response
 
-Gaps:
-- Write-path coverage is weak (no task-completion, meal-approval, or
-  grocery-approval E2E tests).
-- AI panel smoke covers entry-point only, not tool calling or confirmation.
+**Evidence:** `smoke-tests/tests/ai-panel.spec.ts` (94 lines) — one test: `/ready` check, login, open panel, fire quick action, assert 200 + absence of "Something went wrong".
 
-## 12. Deployment / Web Readiness
-Status: **VERIFIED**
+**Missing verification:**
+- No test covers tool execution, confirmation flow, conversation resume, different surfaces, or handoff button taps.
+- No test covers the child-surface allowlist (children should only see read tools + grocery/purchase-request/meal-review).
 
-- `scout-ui/Dockerfile` — Node 20 slim, `expo export --platform web`, serve `dist`
-- `scout-ui/vercel.json` — `npm run build:web`, SPA rewrite
-- `scout-ui/railway.json` — same build, serve `dist`
-- `scout-ui/app.json` — Expo config with metro web bundler
+**Missing UX/product work:**
+- **No streaming.** The panel shows a spinner until the whole response arrives. Biggest perceived-latency issue in the product.
+- No confirmation-flow UI. Backend returns `confirmation_required: true` on gated writes, but the panel does not surface a confirm button — user has to re-ask in plain English.
+- No conversation resume — server persists conversations but the panel starts blank each open.
+- No typing indicator (because no streaming).
+- No per-surface quick-action overrides (same 6 chips everywhere).
 
-Verified in deployed smoke at `https://scout-ui-gamma.vercel.app`.
+**Recommended next step:** (1) deepen smoke to cover at least one write tool round-trip; (2) streaming response pipeline is the single biggest UX win for AI.
 
-Gaps:
-- Bundle size / performance budget is unmeasured. No Lighthouse or Web Vitals
-  tracking wired up.
+## 11. Loading / Empty / Error / Retry States
+
+**Status:** IMPLEMENTED
+
+**What exists:**
+- Per-component `ActivityIndicator` (loading)
+- Error text with retry button on data-fetching components (`ActionInbox.tsx`, `meals/prep.tsx`, parent dashboard)
+- Empty-state messaging on every list view
+
+**Missing verification:** no test forces an error state (backend 5xx, network drop) to assert the retry UI actually shows.
+
+**Missing UX/product work:**
+- **No global error boundary.** Expo Router / React Native Web does not use Next.js `error.tsx` / `loading.tsx` conventions, so a render crash produces a blank screen with no recovery path.
+- No skeleton loaders — everything is `ActivityIndicator` spinners.
+- No offline / stale-data banner.
+
+**Recommended next step:** add a single top-level error boundary component. Even a "Something went wrong — reload?" fallback removes the worst-case failure mode.
+
+## 12. Smoke Coverage
+
+**Status:** VERIFIED (as launch gate) / PARTIAL (for feature depth)
+
+**What exists:**
+- `smoke-tests/tests/auth.spec.ts` — 5 tests (auth happy path + error paths)
+- `smoke-tests/tests/surfaces.spec.ts` — 7 tests (read-path load on every main surface + role visibility)
+- `smoke-tests/tests/ai-panel.spec.ts` — 1 test (AI panel entry + error handling)
+
+Total: ~13 Playwright tests. All pass in `ci.yml :: smoke-web` and in deployed verification.
+
+**Missing verification — explicit list of UNCOVERED flows:**
+- Complete a task / routine step (child)
+- Run weekly payout (parent)
+- Approve a pending grocery item (parent)
+- Approve a purchase request (parent)
+- Generate a weekly meal plan via AI (parent)
+- Approve a weekly meal plan (parent)
+- Submit a meal review (child or parent)
+- AI tool execution round-trip
+- AI confirmation flow
+- Account create / password reset (adult settings)
+
+**Missing UX/product work:** not applicable — this is testing debt.
+
+**Recommended next step:** prioritize *write-path smoke*. Approve-grocery and complete-task are the two highest-leverage targets.
+
+## 13. Deployment / Web Readiness
+
+**Status:** VERIFIED
+
+**What exists:**
+- `scout-ui/Dockerfile` — Node 20 slim, `expo export --platform web`, serves `dist` on port 3000
+- `scout-ui/vercel.json` — `buildCommand: npm run build:web`, `outputDirectory: dist`, SPA rewrite
+- `scout-ui/railway.json` — same build, serve `dist`, healthcheck `/`
+- `scout-ui/app.json` — Expo config with metro web bundler, single output
+
+**Evidence:** deployed at `https://scout-ui-gamma.vercel.app`; 9/9 deployed smoke pass per `docs/release_candidate_report.md`.
+
+**Missing verification:**
+- No bundle-size budget or CI gate.
+- No Web Vitals / Lighthouse tracking.
+- No production error reporting (Sentry / equivalent).
+
+**Missing UX/product work:**
 - No service worker / offline story.
+- No PWA install metadata.
+
+**Recommended next step:** add minimal bundle-size reporting to CI; decide on error reporting provider.
 
 ## Shared UX / Platform Systems Already Built
 
 - `lib/auth.tsx` session context + `lib/api.ts` typed API client with trace IDs
-- Consistent error / loading / empty-state pattern per component
-- `NeedSomething` reusable widget across personal / parent / child surfaces
+- Consistent loading / error / empty / retry pattern per component
+- `NeedSomething` reusable widget across personal / parent / child
 - Color-coded `ActionInbox` with route handoff
-- Role-gated navigation (adult vs child) via `NavBar.tsx`
+- Role-gated nav (adult vs child) in `NavBar.tsx`
+- `meal_plan_hooks.ts` shared across meals pages
 
 ## Recommended Next Frontend Sequence
 
-1. **Write-path smoke coverage**: task completion, meal plan approval, grocery
-   approval. Converts current read-only smoke into a launch-blocking regression
-   net.
-2. **Global error boundary** — even a single top-level boundary component
-   removes the worst-case "blank screen" failure mode.
-3. **Meals `prep.tsx` / `reviews.tsx` audit + smoke** — these pages exist but
-   are currently **UNKNOWN** in this reconciliation.
-4. **Bonus / penalty UX wiring** — once backend gains the endpoints, the parent
-   payout card is already the right home.
-5. **Dev-mode ingestion buttons**: decide prod behavior (hide, gate server-side,
-   or remove).
-6. **RexOS / Exxir placeholder panels** — product decision: build, remove, or
-   re-label as "coming soon".
+1. **Write-path smoke** — task completion, approve pending grocery, run weekly payout. Converts read-only smoke into a real regression net.
+2. **Global error boundary** — cheapest fix for the worst-case blank-screen failure.
+3. **AI panel depth** — one tool round-trip smoke + streaming pipeline + confirmation UI.
+4. **Bonus / penalty parent payout** — blocked on backend endpoint; UI is already the right home.
+5. **DEV_MODE ingestion gate audit** — decide prod behavior before next deploy.
+6. **RexOS / Exxir product decision** — build, remove, or re-label.
 
-## Deferred Frontend UX / Polish Ledger
+---
+
+## Front-end VERIFIED Today
+
+Surfaces with code **and** evidence (smoke or deployed verification):
+
+- App shell / nav / Scout launcher
+- Auth UX (including bad-password, invalid-token recovery, role visibility)
+- Personal surface (page render)
+- Parent surface (page render)
+- Child surface (page render + role visibility)
+- Meals "this week" (page render)
+- Grocery page render
+- Settings page render + role-gated Accounts & Access
+- Action Inbox render (via parent surface)
+- AI panel entry point
+- Deployment (Railway + Vercel, post-deploy smoke)
+
+## Front-end Launch-Sufficient But Not Complete
+
+Passed the launch gate; not strategically done:
+
+- **AI panel** — one happy-path test covers entry; tool execution, confirmation, history, streaming all absent.
+- **Meals subpages (`prep.tsx`, `reviews.tsx`)** — real implementations but no smoke.
+- **Write-path coverage across the app** — every main surface is read-path only in smoke.
+- **Error states** — per-component only; no global boundary.
+- **Bonus / penalty parent UX** — buttons rendered, handlers are stubs.
+- **Dev-mode ingestion buttons** — behind a flag that hasn't been audited for prod.
+- **RexOS / Exxir panels** — placeholder copy only.
+- **Household insight banner** — rule-based, not AI-driven (may be fine permanently).
+- **Notification badge for Action Inbox** — does not exist.
+- **Bundle / Web Vitals / accessibility** — unmeasured.
+
+## Front-end Deferred Ledger
 
 | Item | Why deferred | Launch impact | Next window |
 |---|---|---|---|
-| Global error boundary / fallback screen | Component-level handling covers 99% of cases | Low — worst case is a blank surface | Next sprint |
-| Write-path E2E smoke (tasks, meals, grocery) | Read-path smoke + backend tests gave adequate confidence | Medium — regressions in write flows wouldn't be caught by CI | Next sprint |
-| Bonus / penalty parent payout UX | Backend not yet built; UI stubs only | None — parents can still run payout | Next sprint |
+| Write-path E2E smoke (task complete, grocery approve, payout, meal-plan approve) | Read-path smoke + backend tests gave adequate confidence | Medium — regressions in write flows wouldn't be caught by CI | Next sprint |
+| Global error boundary | Component-level handling covers 99% of cases | Low — worst case is a blank surface | Next sprint |
+| AI streaming responses | Request/response works; streaming is UX debt | Perceived latency on long replies | See AI Roadmap Phase A |
+| AI panel smoke depth (tools, confirmation, resume) | Happy-path smoke was the launch bar | Medium | Next sprint |
+| Confirmation flow UI inside ScoutPanel | Backend returns `confirmation_required` but UI has no affordance | Write tools requiring confirmation currently awkward | AI Roadmap Phase B |
+| Bonus / penalty parent payout UX | Backend not yet built | None — parents can still run payout | Next sprint |
 | RexOS / Exxir personal-surface panels | Placeholder copy only | None — not exposed as a feature | Later |
-| Dev-mode ingestion buttons in prod builds | DEV_MODE gate exists but not audited for prod | Low — only visible if `DEV_MODE` leaks | Next sprint |
-| Multi-member session switching | Each member signs in individually | None at family scale | Later |
-| Bundle / Web Vitals measurement | Untested at launch scale | None today | Later |
-| Offline / service worker | Expo Web export does not ship one | None for home use | Later |
-| `meals/prep.tsx` + `meals/reviews.tsx` audit | Not re-verified in this pass | UNKNOWN — treat as risk until audited | Next sprint |
-| Task-step completion Playwright coverage | Backend tested; UI not | Low | Next sprint |
-| Accessibility / a11y audit | Not run | Unknown | Later |
+| Dev-mode ingestion button audit | Gate exists but not prod-validated | Low — only visible if `DEV_MODE` leaks | Next sprint |
+| `meals/prep.tsx` + `meals/reviews.tsx` smoke | Not covered in current suite | Low | Next sprint |
+| Task-step completion E2E | Backend tested; UI not | Low | Next sprint |
+| Error reporting / Sentry | No provider chosen | Unknown — blind to prod JS errors | Next sprint |
+| Bundle-size CI gate + Web Vitals | No measurement yet | None today | Later |
+| Accessibility audit | Not run | Unknown | Later |
 | Responsive / mobile-web verification beyond smoke | Smoke runs desktop viewport only | Unknown | Next sprint |
+| Skeleton loaders (replace spinners) | Functional but not polished | None | Later |
+| Multi-member session switching | Each member signs in individually | None at family scale | Later |
+| Service worker / offline / PWA | Expo Web does not ship one | None for home use | Later |
+
+## Front-end Unknowns
+
+- Does the current prod build actually hide dev-mode ingestion buttons, or is the flag being set at runtime in production? Needs manual verification.
+- Do meals `prep.tsx` and `reviews.tsx` handle the empty-plan / error paths correctly at UI level? Code is present and structured, but not smoked.
+- Does `ScoutLauncher` render the AI `result.handoff` button correctly for every entity type? Only the chat response has been smoke-checked.
+- Is the parent household insight banner's `off_track` / `at_risk` logic reviewed by a product owner, or is it a rough heuristic nobody has validated?
+- Does `sendChatMessage` gracefully handle a 60s timeout without tearing the panel state? No test forces this.
