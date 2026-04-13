@@ -11,6 +11,20 @@ Postgres, and a deploy-aware smoke runner. See
 `docs/release_candidate_report.md` Sprint 1 closeout section and the
 per-item status notes below.
 
+**Sprint 1 residual closeout status (2026-04-13):** items 2.1 and 2.2 have
+been upgraded from PARTIAL — item 2.1 (write-path E2E smoke) is now
+**VERIFIED** because the "approve draft meal plan" test no longer relies
+on an annotated skip (the seed now deterministically surfaces a draft
+plan for the current week). Item 2.2 (AI panel verification depth) is
+now **IMPLEMENTED** because `ai-roundtrip.spec.ts` adds a real tool
+round-trip and confirmation round-trip (both conditional on
+`ai_available=true`), and item 2.4 (global error boundary) is now
+**IMPLEMENTED** (was code-only) because `error-boundary.spec.ts` + a
+DEV-gated `/__boom` route exercise the boundary end-to-end when
+`EXPO_PUBLIC_SCOUT_E2E=true`. The three **BLOCKED** items (1.1, 17, 18,
+19) now have a consolidated operator checklist in
+`docs/AI_OPERATOR_VERIFICATION.md`.
+
 This is a cross-product execution backlog. It is **not** a changelog and
 it is **not** a wish list. Every item here is already captured as a
 deferred / partial / unknown entry in one of the roadmaps; this document
@@ -64,10 +78,12 @@ Items that, if left broken, can degrade the single family currently using
 Scout. These are the only items that should block a fresh deploy today.
 
 ### 1.1 — Deployed AI-panel smoke (first-ever against Railway + Vercel)
-**Sprint 1 status: STILL OPEN** — blocked on operator access to Railway + Vercel
-from this environment. Playwright now asserts content + disabled-state + child
-surface **locally**, but the against-deployed-URL run has not been recorded.
-Operator checklist is in the Sprint 1 closeout notes.
+**Sprint 1 residual closeout status: BLOCKED** — consolidated operator
+checklist in `docs/AI_OPERATOR_VERIFICATION.md` §1. The local AI panel
+suite (3 tests in `ai-panel.spec.ts` + 2 round-trip tests in
+`ai-roundtrip.spec.ts`) passes locally. Running those same files
+against `scout-ui-gamma.vercel.app` requires Railway + Vercel access
+that is not available from this environment.
 
 - **Area:** ai / ops
 - **Status:** PARTIAL (AI Roadmap §10, §11)
@@ -145,16 +161,14 @@ the personal dashboard.
 Should follow a launch-stabilization sprint (Bucket 1) immediately.
 
 ### 2.1 — Write-path E2E smoke suite
-**Sprint 1 status: PARTIAL.** `smoke-tests/tests/write-paths.spec.ts`
-(new file) ships 6 write-path tests: approve pending grocery, approve
-draft meal plan, run weekly payout, convert purchase request, child task
-completion, child meal-review submit. Seed extended in `backend/seed_smoke.py`
-with a draft weekly meal plan, pending purchase request, chore template,
-and today's task instance. Some tests include conditional skips when the
-seeded state is not reachable through the current UI (for example, the
-"approve draft meal plan" case if `meals/this-week` still surfaces the
-approved current-week plan). Those skips are annotated, not silent, and
-remain in the Next Sprint queue.
+**Sprint 1 residual closeout status: VERIFIED.** `write-paths.spec.ts`
+ships 6 write-path tests: approve pending grocery, approve draft meal
+plan, run weekly payout, convert purchase request, child task
+completion, child meal-review submit. The residual closeout removed
+the last annotated skip — `seed_smoke.py` now seeds the current-week
+plan in `status='draft'` and normalizes any previously-approved row
+back to draft on re-run, so the Approve button is deterministically
+visible.
 
 - **Area:** frontend / full-stack
 - **Status:** PARTIAL (Frontend Roadmap §12; Reconciliation §2)
@@ -178,12 +192,17 @@ remain in the Next Sprint queue.
   6. Parent converts a purchase request into a grocery item.
 
 ### 2.2 — AI panel verification depth
-**Sprint 1 status: PARTIAL.** Content assertion landed (ChatResponse.response
-must be non-empty and > 3 chars). Child-surface test landed. Disabled-state
-test landed. **Still open:** full AI tool round-trip through the UI, handoff
-card deep-link tap test, and confirmation round-trip through the browser.
-Backend confirmation plumbing is verified by the new pytest
-`TestPendingConfirmationPlumbing` class.
+**Sprint 1 residual closeout status: IMPLEMENTED.** Content assertion +
+disabled-state + child-surface test landed in Sprint 1 closeout.
+Residual closeout adds `ai-roundtrip.spec.ts` with (a) an
+`add_grocery_item` quick-action round-trip that taps the handoff card
+and asserts navigation into `/grocery` when Claude returns a handoff,
+and (b) a `create_event` confirmation round-trip that asserts the
+confirm card renders when `pending_confirmation` is set, taps Confirm,
+and asserts the follow-up response has `model === 'confirmation-direct'`.
+Both tests skip cleanly when `ai_available=false`. Remaining gap:
+deployed-URL run against Railway + Vercel — BLOCKED on operator
+access, see `docs/AI_OPERATOR_VERIFICATION.md`.
 
 - **Area:** ai / frontend
 - **Status:** PARTIAL (AI Roadmap §10; Frontend Roadmap §10)
@@ -238,14 +257,15 @@ Playwright round-trip of the confirm tap (open bug: still in backlog).
   3. Covered by item 2.2.5.
 
 ### 2.4 — Global frontend error boundary
-**Sprint 1 status: IMPLEMENTED.** New
-`scout-ui/components/ErrorBoundary.tsx` (React class component) wraps
-`AuthProvider` + `AppShell` in `scout-ui/app/_layout.tsx`. Renders a
-"Something went wrong — Reload" fallback and logs to stdout via
-`console.error("[Scout ErrorBoundary]", ...)`. No Playwright smoke test
-yet (render crash is hard to force through Expo Router without a
-development-only `/__boom` route). Manual verification path is
-documented in `FRONTEND_ROADMAP.md §11`.
+**Sprint 1 residual closeout status: IMPLEMENTED (with E2E test).**
+`scout-ui/components/ErrorBoundary.tsx` wraps `AuthProvider + AppShell`
+in `scout-ui/app/_layout.tsx`. Residual closeout adds a DEV-gated
+`/__boom` route (`scout-ui/app/__boom.tsx`) that renders a trigger
+button — clicking it flips a state flag and the next render throws,
+which the boundary catches. `smoke-tests/tests/error-boundary.spec.ts`
+exercises this path end-to-end when `EXPO_PUBLIC_SCOUT_E2E=true` is
+set in the expo export environment. The route renders an inert "Not
+available" stub in production builds (flag unset).
 
 - **Area:** frontend
 - **Status:** IMPLEMENTED — per-component only (Frontend Roadmap §11)

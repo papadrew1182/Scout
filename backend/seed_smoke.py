@@ -95,12 +95,18 @@ def seed_smoke():
     ensure_account(sadie, CHILD_EMAIL)
     db.commit()
 
-    # --- Approved weekly meal plan ---
+    # --- Current-week meal plan (kept in DRAFT state for smoke tests) ---
+    #
+    # This plan is intentionally kept in "draft" status so the
+    # write-paths smoke test can click "Approve Plan" and observe the
+    # state transition. The seed is idempotent: on re-run, if the plan
+    # has already been approved by a previous smoke run, we reset it
+    # back to draft so the next run is deterministic again.
     monday = date.today() - timedelta(days=date.today().weekday())  # current week Monday
     existing_plan = db.scalars(
         select(WeeklyMealPlan)
         .where(WeeklyMealPlan.family_id == family.id)
-        .where(WeeklyMealPlan.status == "approved")
+        .where(WeeklyMealPlan.week_start_date == monday)
     ).first()
     if not existing_plan:
         plan = WeeklyMealPlan(
@@ -108,7 +114,7 @@ def seed_smoke():
             created_by_member_id=andrew.id,
             week_start_date=monday,
             source="ai",
-            status="approved",
+            status="draft",
             title="Smoke Test Week",
             constraints_snapshot={},
             week_plan={
@@ -144,12 +150,10 @@ def seed_smoke():
                 ]
             },
             plan_summary="Five weeknight dinners with Sunday batch cook",
-            approved_by_member_id=andrew.id,
-            approved_at=datetime.now(timezone.utc),
         )
         db.add(plan)
         db.flush()
-        print(f"  Created approved meal plan: {plan.id}")
+        print(f"  Created draft meal plan (current week): {plan.id}")
 
         # Sync grocery items from plan
         for store in plan.grocery_plan.get("stores", []):
@@ -164,8 +168,14 @@ def seed_smoke():
                 db.add(gi)
         db.flush()
         print(f"  Created {len([i for s in plan.grocery_plan['stores'] for i in s['items']])} grocery items")
+    elif existing_plan.status != "draft":
+        existing_plan.status = "draft"
+        existing_plan.approved_by_member_id = None
+        existing_plan.approved_at = None
+        db.flush()
+        print(f"  Reset existing plan to draft: {existing_plan.id}")
     else:
-        print(f"  Meal plan already exists: {existing_plan.id}")
+        print(f"  Draft meal plan already exists: {existing_plan.id}")
 
     # --- Parent action item (from child grocery submission) ---
     existing_action = db.scalars(
@@ -193,41 +203,6 @@ def seed_smoke():
         print(f"  Created parent action item: {action.id}")
     else:
         print(f"  Action item already exists: {existing_action.id}")
-
-    # --- Draft weekly meal plan (next week) — supports 'Approve Plan' smoke ---
-    next_monday = monday + timedelta(days=7)
-    existing_draft = db.scalars(
-        select(WeeklyMealPlan)
-        .where(WeeklyMealPlan.family_id == family.id)
-        .where(WeeklyMealPlan.week_start_date == next_monday)
-    ).first()
-    if not existing_draft:
-        draft_plan = WeeklyMealPlan(
-            family_id=family.id,
-            created_by_member_id=andrew.id,
-            week_start_date=next_monday,
-            source="ai",
-            status="draft",
-            title="Next Week (Draft)",
-            constraints_snapshot={},
-            week_plan={
-                "dinners": {
-                    "monday": {"title": "Grilled salmon", "description": "with rice and greens"},
-                    "tuesday": {"title": "Chicken fajitas", "description": "pepper and onion"},
-                    "wednesday": {"title": "Meatball subs", "description": "family favorite"},
-                    "thursday": {"title": "Veggie curry", "description": "mild coconut"},
-                    "friday": {"title": "Breakfast for dinner", "description": "pancakes and eggs"},
-                },
-            },
-            prep_plan={"tasks": [], "timeline": []},
-            grocery_plan={"stores": []},
-            plan_summary="Draft week pending parent approval",
-        )
-        db.add(draft_plan)
-        db.flush()
-        print(f"  Created draft meal plan (next week): {draft_plan.id}")
-    else:
-        print(f"  Draft meal plan already exists: {existing_draft.id}")
 
     # --- Pending purchase request — supports 'Convert/Approve request' smoke ---
     existing_req = db.scalars(

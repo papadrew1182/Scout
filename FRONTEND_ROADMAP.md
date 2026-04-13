@@ -211,24 +211,25 @@ two summary sections at the bottom separate those.
 - `scout-ui/components/ScoutLauncher.tsx` — slide-up chat modal with:
   - Quick-action chips (6 pre-canned prompts)
   - Message history (user bubbles right, assistant left)
-  - `X-Scout-Trace-Id` header for backend correlation (new in `9481f8f`)
-  - Handoff buttons rendered from `result.handoff` — tap deep-links into created entity
-- `scout-ui/lib/api.ts :: sendChatMessage()` — single POST to `/api/ai/chat`, awaits full JSON response
+  - `X-Scout-Trace-Id` header for backend correlation (commit `9481f8f`)
+  - Handoff cards rendered from `result.handoff` — tap deep-links into the created entity
+  - **Confirmation card** rendered from `result.pending_confirmation` — confirm/cancel affordance that re-invokes `/api/ai/chat` with a structured `confirm_tool` payload (Sprint 1 closeout, `5f11821`)
+  - **Disabled-state card** when `/ready.ai_available=false` — probed via `fetchReady()` on panel open; the chat UI never mounts in the disabled state (Sprint 1 closeout, `5f11821`)
+- `scout-ui/lib/api.ts :: sendChatMessage()` — single POST to `/api/ai/chat`, awaits full JSON response. Options signature now accepts `{ confirmTool }` for the confirmation resubmit path.
 
-**Evidence:** `smoke-tests/tests/ai-panel.spec.ts` (94 lines) — one test: `/ready` check, login, open panel, fire quick action, assert 200 + absence of "Something went wrong".
+**Evidence:** `smoke-tests/tests/ai-panel.spec.ts` — **3 tests**: content assertion (non-empty response), disabled-state (stub `/ready` via `page.route()`), child-surface open-without-crash. Plus new round-trip tests in `ai-roundtrip.spec.ts` when AI is enabled (see §12).
 
 **Missing verification:**
-- No test covers tool execution, confirmation flow, conversation resume, different surfaces, or handoff button taps.
-- No test covers the child-surface allowlist (children should only see read tools + grocery/purchase-request/meal-review).
+- No test covers conversation resume across panel opens (conversations persist server-side).
+- AI round-trip + confirmation round-trip run only when `ai_available=true` at test start (they skip otherwise).
 
 **Missing UX/product work:**
 - **No streaming.** The panel shows a spinner until the whole response arrives. Biggest perceived-latency issue in the product.
-- No confirmation-flow UI. Backend returns `confirmation_required: true` on gated writes, but the panel does not surface a confirm button — user has to re-ask in plain English.
 - No conversation resume — server persists conversations but the panel starts blank each open.
 - No typing indicator (because no streaming).
 - No per-surface quick-action overrides (same 6 chips everywhere).
 
-**Recommended next step:** (1) deepen smoke to cover at least one write tool round-trip; (2) streaming response pipeline is the single biggest UX win for AI.
+**Recommended next step:** streaming response pipeline is the single biggest UX win for AI; tracked as AI Roadmap Phase A item.
 
 ## 11. Loading / Empty / Error / Retry States
 
@@ -251,17 +252,19 @@ two summary sections at the bottom separate those.
 
 ## 12. Smoke Coverage
 
-**Status:** VERIFIED (Sprint 1 closeout, 2026-04-13 — suite expanded from 13 to 25+ tests)
+**Status:** VERIFIED (Sprint 1 residual closeout, 2026-04-13 — suite expanded from 13 to 28 tests)
 
 **What exists:**
 - `smoke-tests/tests/auth.spec.ts` — 5 tests (auth happy path + error paths)
 - `smoke-tests/tests/surfaces.spec.ts` — 7 tests (read-path load on every main surface + role visibility)
 - `smoke-tests/tests/ai-panel.spec.ts` — **3 tests** (content assertion, disabled-state stub via `page.route()`, child surface open)
-- `smoke-tests/tests/write-paths.spec.ts` **(new)** — 6 write-path tests: approve pending grocery, approve draft meal plan, run weekly payout, convert purchase request, child task completion, child meal-review submit.
-- `smoke-tests/tests/meals-subpages.spec.ts` **(new)** — 3 meals tests: `this-week` renders seeded plan, `prep` loads (header or empty state), `reviews` loads with Save Review form.
-- `smoke-tests/tests/dev-mode.spec.ts` **(new)** — 1 test asserting `DevToolsPanel` ingestion buttons are NOT rendered on the personal surface (guarantees DEV_MODE gate is safe in CI/prod-shaped builds).
+- `smoke-tests/tests/write-paths.spec.ts` — 6 write-path tests: approve pending grocery, approve draft meal plan (no longer annotated-skip — the seed now deterministically surfaces a draft), run weekly payout, convert purchase request, child task completion, child meal-review submit.
+- `smoke-tests/tests/meals-subpages.spec.ts` — 3 meals tests: `this-week` renders seeded draft plan, `prep` loads (header or empty state), `reviews` loads with Save Review form.
+- `smoke-tests/tests/dev-mode.spec.ts` — 1 test asserting `DevToolsPanel` ingestion buttons are NOT rendered on the personal surface.
+- `smoke-tests/tests/ai-roundtrip.spec.ts` **(residual closeout)** — 2 conditional AI tests: `add_grocery_item` quick-action round-trip with optional handoff tap; `create_event` confirmation round-trip (assert `pending_confirmation` renders, tap Confirm, assert `confirm_tool` direct-path response). Both skip cleanly when `ai_available=false`.
+- `smoke-tests/tests/error-boundary.spec.ts` **(residual closeout)** — 1 test exercising the global `ErrorBoundary`. Navigates to `/__boom`, clicks the trigger, asserts the boundary fallback renders. Gated on `EXPO_PUBLIC_SCOUT_E2E=true` at build time; skips cleanly otherwise.
 
-Total: **~25 Playwright tests** (was 13). Some individual write-path tests may skip if seeded state can't be reached through the UI — those skips are annotated, not silent.
+Total: **28 Playwright tests** (was 13). The only skips now are intentional capability gates (AI enabled / E2E hooks flag), not coverage holes.
 
 **Missing verification — remaining UNCOVERED flows:**
 - AI tool execution full round-trip through the UI (create task via AI → verify on Personal).
@@ -415,11 +418,11 @@ Ranked by evidence strength and launch-readiness:
 
 Ranked by verification gap and product risk:
 
-1. **AI Panel / ScoutLauncher** (§10) — only 1 smoke test (entry point + error branch). No tool execution, confirmation, conversation resume, handoff button, child-allowlist, or streaming coverage. Highest-risk surface per test-coverage-per-line-of-code.
-2. **Meals subpages `prep.tsx` + `reviews.tsx`** (§6) — 122 + 417 lines of real code but zero smoke coverage. Both marked UNKNOWN.
-3. **Write paths across Parent / Grocery / Child surfaces** (§4, §5, §7) — every main surface has read-path smoke but zero write-path smoke. Task completion, payout run, grocery approve, purchase-request convert, meal-plan approve are all blind spots.
-4. **Loading / Error / Retry states** (§11) — per-component handling exists but there is **no global error boundary**. A render crash anywhere produces a blank screen with no recovery path.
-5. **Personal surface placeholder panels** (§3) — RexOS + Exxir panels are stub copy, dev-mode ingestion buttons are ungated for prod. Not broken, but carries product-decision debt.
+1. **AI Panel / ScoutLauncher** (§10) — 3 local smoke tests + conditional AI round-trip + confirmation round-trip when enabled. Still no conversation resume coverage, no streaming. Biggest remaining risk is deploy drift (local-only smoke; deployed-URL run is operator-only).
+2. **Write paths across Parent / Grocery / Child surfaces** (§4, §5, §7) — 6 write-path tests now cover approve grocery, approve meal plan, run payout, convert purchase request, child task completion, child meal-review. Any new write flow added after this still lacks smoke until added explicitly.
+3. **Meals subpages `prep.tsx` + `reviews.tsx`** (§6) — page-load smoke landed; generation-loop still not smoke-tested.
+4. **Loading / Error / Retry states** (§11) — per-component handling + global `ErrorBoundary` in `_layout.tsx`. Error reporting provider not wired (Sentry-equivalent is Sprint 2 item).
+5. **Personal surface placeholder panels** (§3) — RexOS + Exxir panels are stub copy; dev-mode ingestion verified safe in prod (`DEV_MODE = !EXPO_PUBLIC_API_URL`, baked at compile time, asserted by `dev-mode.spec.ts`).
 
 ---
 

@@ -1,9 +1,47 @@
 # GitHub Issue Drafts
 
-Last built: 2026-04-13. Source: `docs/EXECUTION_BACKLOG.md`.
+Last built: 2026-04-13. Last reconciled after Sprint 1 residual closeout.
+Source: `docs/EXECUTION_BACKLOG.md`.
 
 Copy-paste ready. One section per top-priority backlog item. Ordered by
 the ranked Top 25.
+
+## Sprint 1 closeout status (do not re-open these)
+
+Issues that have already landed in `feat/sprint1-verification-closeout`
+(`5f11821`) or `feat/sprint1-residual-closeout` (follow-up):
+
+- **#4 Render confirmation-flow UI inside ScoutPanel** — RESOLVED.
+  Backend: `orchestrator.chat()` surfaces `pending_confirmation`
+  structurally; new `confirm_tool` direct path. Frontend: confirm/cancel
+  card in `ScoutLauncher.tsx`. Backend pytest: 2 new
+  `TestPendingConfirmationPlumbing` tests. Browser pytest:
+  `ai-roundtrip.spec.ts` covers the round-trip when AI is enabled.
+- **#5 Add global frontend error boundary** — RESOLVED.
+  `scout-ui/components/ErrorBoundary.tsx` wraps the shell. Residual
+  closeout added a Playwright test gated on `EXPO_PUBLIC_SCOUT_E2E=true`.
+- **#6 ScoutPanel disabled-state handling** — RESOLVED.
+  `fetchReady()` + readyState machine + disabled-state card.
+  `ai-panel.spec.ts` stubs `/ready` to prove it.
+- **#8 Meals `prep.tsx` + `reviews.tsx` smoke coverage** — RESOLVED.
+  `meals-subpages.spec.ts` (3 tests).
+- **#10 Dev-mode ingestion button prod behavior** — RESOLVED.
+  Audit + `dev-mode.spec.ts` assertion.
+- **#2 Write-path E2E smoke suite (6 tests)** — PARTIAL.
+  `write-paths.spec.ts` landed with 6 tests. The residual closeout
+  tightened the draft-plan approve test so it no longer relies on a
+  loud skip.
+
+Issues that are **still open and the checklist below is current**:
+
+- **#1** Deployed AI-panel smoke against Railway + Vercel — BLOCKED on
+  operator access. See `docs/AI_OPERATOR_VERIFICATION.md`.
+- **#3** Deepen AI panel smoke further — RESIDUAL (round-trip test
+  landed; deeper coverage possible).
+- **#7** Production error reporting (Sentry-equivalent) — unchanged.
+- **#9** Wire `dietary_preferences` into generator — unchanged.
+
+---
 
 ---
 

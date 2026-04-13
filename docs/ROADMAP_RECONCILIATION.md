@@ -73,12 +73,16 @@ Code exists but smoke / E2E coverage is thin or absent:
 ## 3. Launch-sufficient but not actually "done"
 
 These items passed the private-launch bar but should not be called "done"
-outside of that context:
+outside of that context. Items **resolved** after Sprint 1 closeout and
+residual closeout are marked; items still true are unmarked.
 
 - **AI streaming** — we shipped request/response. That is launch-sufficient,
   not "AI chat done".
-- **AI smoke coverage** — one test file covers AI. Launch-sufficient, not
-  "AI verified".
+- ~~**AI smoke coverage**~~ — **RESOLVED in Sprint 1 closeout / residual
+  closeout.** `ai-panel.spec.ts` now has 3 tests (content + disabled +
+  child); `ai-roundtrip.spec.ts` adds full tool + confirmation round-trip
+  when AI is enabled. Deployed-URL run is still BLOCKED on operator
+  access — see `docs/AI_OPERATOR_VERIFICATION.md`.
 - **AI notification delivery** — the tool logs but does not deliver. The
   Action Inbox covers the product need; the tool itself is a stub.
 - **Rate limiting** — in-memory, per-process. Correct for a single Railway
@@ -86,15 +90,19 @@ outside of that context:
 - **Connector framework** — the upsert helper, mapping table, and Google /
   YNAB payload ingestion work, but there is no real OAuth, no live API
   client, no webhook, no scheduler. Dev-mode ingestion is the only trigger.
-- **Global frontend error boundary** — does not exist. Component-level
-  handling was enough for launch; a worst-case render crash has no fallback.
+- ~~**Global frontend error boundary**~~ — **RESOLVED in Sprint 1 closeout
+  `5f11821`.** `scout-ui/components/ErrorBoundary.tsx` wraps the
+  AppShell in `app/_layout.tsx`. Verified in residual closeout by
+  `error-boundary.spec.ts` (gated on `EXPO_PUBLIC_SCOUT_E2E=true`).
 - **Bundle / Web Vitals / accessibility measurement** — unmeasured.
 - **`dietary_preferences`** — table exists but the weekly meal plan generator
   ignores it.
 - **RexOS / Exxir placeholder panels** on the personal surface — copy only,
   no wiring. Not exposed as a feature but present in code.
-- **Dev-mode ingestion buttons in production builds** — gated by a flag that
-  has not been audited for prod behavior.
+- ~~**Dev-mode ingestion buttons in production builds**~~ — **RESOLVED
+  in Sprint 1 closeout `5f11821`.** `DEV_MODE = !EXPO_PUBLIC_API_URL` is
+  compile-time; any prod build sets the env var so `DevToolsPanel` never
+  renders. Asserted by `smoke-tests/tests/dev-mode.spec.ts`.
 
 ## 4. Deferred debt that still matters
 

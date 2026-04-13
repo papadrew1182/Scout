@@ -448,10 +448,14 @@ audit table, conversation persistence, handoff cards, daily brief, and
 weekly plan all exist in code with backend tests.
 
 **Is the AI panel verified through the real browser UI?**
-Partially. There is one thin Playwright test (`ai-panel.spec.ts`) that runs
-**locally** and passes the happy path. It was **not** part of the 9/9 deployed
-smoke run recorded in `release_candidate_report.md`. Deployed-browser
-verification is UNKNOWN.
+Partially. After Sprint 1 closeout (`5f11821`), `ai-panel.spec.ts` has
+**3 tests** — content assertion, disabled-state (stub `/ready`), and
+child-surface open-without-crash. A separate `ai-roundtrip.spec.ts`
+(residual closeout) adds a tool round-trip and a confirmation round-trip
+when `ai_available=true`. **All of this runs locally.** The deployed-URL
+run against Railway + Vercel is still BLOCKED on operator access; the
+9/9 deployed smoke run recorded in `release_candidate_report.md` does
+not yet include any AI tests.
 
 **Is the AI request/response or streaming?**
 Request/response only. `AnthropicProvider.chat()` returns a single
@@ -460,13 +464,12 @@ Request/response only. `AnthropicProvider.chat()` returns a single
 no typing indicator.
 
 **Which AI behavior is launch-sufficient but not strategically complete?**
-- Single thin AI-panel smoke (good enough for launch, weak for regressions).
 - Request/response (usable, feels slow on long replies).
 - On-demand daily brief / weekly plan (works, but nobody sees them without
   tapping a button).
 - Logging to stdout (works, no dashboards).
-- Confirmation flow at the API (works, but the UI never triggers it).
 - `send_notification_or_create_action` audits but does not deliver.
+- Deployed-URL smoke of the AI panel — still BLOCKED on operator access.
 
 **Which AI regressions are now protected by tests, and which are still
 weakly protected?**
@@ -480,44 +483,54 @@ Well protected:
 - Audit row creation on success, denial, and confirmation-required paths
   (`test_ai_tools.py`).
 
+Well protected (Sprint 1 residual closeout):
+- ScoutPanel content + disabled-state (stubbed `/ready`) + child-surface
+  open (`ai-panel.spec.ts` 3 tests).
+- ScoutPanel full tool round-trip + handoff tap + confirmation round-trip
+  (`ai-roundtrip.spec.ts`, conditional on `ai_available=true`).
+- Global ErrorBoundary render path (`error-boundary.spec.ts`, gated on
+  `EXPO_PUBLIC_SCOUT_E2E=true`).
+
 Weakly protected:
-- ScoutPanel UX (one happy-path test, no assertions on content).
-- Handoff deep-links (not exercised by any test).
 - Streaming (no implementation to test).
-- Role restrictions through the real UI (no child smoke).
-- `confirmation_required` round-trip through the UI.
-- Weekly meal plan generation loop through the UI.
+- Conversation resume across panel opens.
+- Weekly meal plan generation loop through the UI (long-running AI call;
+  not smoked deliberately).
 - Daily brief / weekly plan endpoints through the UI.
-- Deployed browser behavior for any AI path.
+- **Deployed browser behavior** for any AI path — BLOCKED (operator
+  checklist in `docs/AI_OPERATOR_VERIFICATION.md`).
 
 ---
 
 ## AI Panel Hardening Still Needed
 
-Only items that are **still true** after reading the current repo:
+Items that remain **true** after Sprint 1 residual closeout (`feat/sprint1-residual-closeout`):
 
-- **Assertion strength in `ai-panel.spec.ts`.** The test currently only
-  checks "no 5xx and no error banner." It should assert the assistant
-  bubble contains non-empty text and, ideally, perform a full tool round
-  trip (create a task → verify the task exists).
-- **Deploy drift between main and Railway/Vercel.** The deployed 9/9 smoke
-  run did not include `ai-panel.spec.ts`. Run it against the deployed URLs
-  and record the result.
+- **Deploy drift between main and Railway/Vercel.** No AI test has been
+  recorded against deployed URLs. BLOCKED on operator access —
+  checklist in `docs/AI_OPERATOR_VERIFICATION.md`.
 - **Observability gaps.** `ai_chat_start` / `ai_chat_success` /
   `ai_chat_fail` logs exist but no dashboard, no alert, and no automated
   confirmation that they surface in Railway logs with a real trace id.
-- **Disabled-state handling in the UI.** `ScoutPanel` does not probe
-  `/ready.ai_available` before opening; if the key is ever absent the user
-  hits a live request that fails. The smoke test gracefully skips in this
-  state, but the app itself does not.
-- **No confirmation-flow UI.** Backend returns `confirmation_required`; the
-  panel has no affordance for it, so any shared-write tool essentially
-  dead-ends.
-- **No child/parent surface coverage.** The one smoke test only logs in
-  as an adult on the personal surface. Parent and child surfaces are
-  completely untested through the browser.
-- **No handoff deep-link test.** The handoff cards are wired to
-  `router.push`, but no test asserts the target screen loads.
+  BLOCKED on operator access to Railway logs.
+- **Production audit-row confirmation.** No proof any tool has been
+  invoked in production since deploy. BLOCKED on operator access to
+  production Postgres.
+- **Streaming.** AsyncIterator is imported but unimplemented — Sprint 2.
+- **Conversation resume in UI.** Conversations persist server-side but
+  the panel always opens blank — Phase C item.
+
+Previously-listed items now **resolved** (do not re-open):
+- Assertion strength in `ai-panel.spec.ts` — content assertion landed.
+- Disabled-state handling in the UI — `fetchReady()` + `ScoutPanel`
+  readyState machine.
+- Confirmation-flow UI — structural `pending_confirmation` + confirm
+  card + `confirm_tool` resubmit path.
+- Child/parent surface coverage — `ai-panel.spec.ts` includes a
+  child-surface open test; `ai-roundtrip.spec.ts` exercises the
+  tool round-trip on the personal surface.
+- Handoff deep-link test — covered by `ai-roundtrip.spec.ts` handoff
+  tap assertion.
 
 ---
 
@@ -534,23 +547,33 @@ Only items that are **still true** after reading the current repo:
 | Frontend panel | `scout-ui/components/ScoutLauncher.tsx` | 272 | Slide-up chat panel |
 | Frontend API | `scout-ui/lib/api.ts` (AI block) | ~25 | `sendChatMessage` + trace id |
 | Backend tests | `backend/tests/test_ai_context.py` | 101 | 10 tests |
-| Backend tests | `backend/tests/test_ai_routes.py` | 77 | 5 tests |
+| Backend tests | `backend/tests/test_ai_routes.py` | ~220 | 7 tests (includes 2 `TestPendingConfirmationPlumbing`) |
 | Backend tests | `backend/tests/test_ai_tools.py` | 205 | 14 tests |
-| Smoke test | `smoke-tests/tests/ai-panel.spec.ts` | 94 | 1 thin happy-path test |
+| Smoke test | `smoke-tests/tests/ai-panel.spec.ts` | ~150 | 3 tests: content, disabled-state, child surface |
+| Smoke test | `smoke-tests/tests/ai-roundtrip.spec.ts` | ~200 | Tool + confirmation round-trip when AI enabled |
+| Smoke test | `smoke-tests/tests/error-boundary.spec.ts` | ~60 | ErrorBoundary fallback render (gated on `EXPO_PUBLIC_SCOUT_E2E`) |
 
-Total AI backend tests: **29** (matches the "AI (29)" bucket in
-`release_candidate_report.md`).
+Total AI backend tests: **31** (29 existing AI bucket + 2
+`TestPendingConfirmationPlumbing` tests in `test_ai_routes.py` added in
+Sprint 1 closeout).
 
 ---
 
-## Top 10 AI Deferred Items
+## Top 10 AI Deferred Items (after Sprint 1 residual closeout)
 
 1. **Streaming responses.** `AsyncIterator` is imported but no SSE endpoint
    exists. Biggest perceived-latency cost.
-2. **Deployed AI-panel smoke.** `ai-panel.spec.ts` has never been recorded
-   as run against the Railway + Vercel deployment.
-3. **Confirmation-flow UI.** Backend returns `confirmation_required`; no UI
-   affordance renders the prompt.
+2. **Deployed AI-panel smoke.** No AI test has been recorded against
+   the Railway + Vercel deployment. BLOCKED on operator access.
+3. **~~Confirmation-flow UI.~~** RESOLVED — Sprint 1 closeout `5f11821`.
+4. **~~Assertion depth in the AI smoke test.~~** RESOLVED — content
+   assertion + disabled-state + child surface (`ai-panel.spec.ts` 3
+   tests), tool + confirmation round-trip (`ai-roundtrip.spec.ts`).
+   The historical numbering below is kept for reference; see "Sprint 1
+   residual closeout resolved items" further down.
+
+Original numbering preserved below:
+
 4. **Assertion depth in the AI smoke test.** Currently only checks for
    absence of error, not presence of a real response.
 5. **Child / parent surface smoke coverage.** No browser test exercises

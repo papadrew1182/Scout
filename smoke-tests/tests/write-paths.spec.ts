@@ -58,28 +58,16 @@ test.describe("Write paths — parent", () => {
   });
 
   test("parent approves the draft weekly meal plan", async ({ page }) => {
+    // Seed now creates the current-week plan in 'draft' status and
+    // normalizes it back to draft on re-run, so /meals/this-week
+    // always surfaces a draft with an "Approve Plan" button for the
+    // adult. The test approves, asserts the success toast, and asserts
+    // the button disappears (status → 'approved').
     await page.click("text=Meals");
     await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
 
-    // Navigate to the draft plan: "This Week" shows current approved plan, so
-    // the draft lives in the next-week view OR in plan archive. The repo's
-    // `/meals/this-week` shows the most recent plan — after our seed there is
-    // both an approved current-week and a draft next-week. The UI currently
-    // surfaces the most-recent "current" plan via useCurrentWeeklyPlan(),
-    // which returns the highest-precedence match. If the Approve button isn't
-    // available on /meals/this-week, skip with a diagnostic — this is the
-    // path the backlog item is tracking.
     const approveBtn = page.getByRole("button", { name: "Approve Plan" }).first();
-    const isVisible = await approveBtn.isVisible().catch(() => false);
-    if (!isVisible) {
-      test.info().annotations.push({
-        type: "known-gap",
-        description:
-          "Approve Plan button not surfaced — /meals/this-week shows approved plan only. Seed includes a draft plan; a UI affordance to target it is backlog item (next sprint).",
-      });
-      test.skip(true, "Draft plan not reachable via /meals/this-week UI — see annotation");
-      return;
-    }
+    await expect(approveBtn).toBeVisible({ timeout: 8000 });
 
     const approvePromise = page.waitForResponse(
       (r) => r.url().includes("/meals/weekly/") && r.url().includes("/approve"),
@@ -89,6 +77,9 @@ test.describe("Write paths — parent", () => {
     const resp = await approvePromise;
     expect(resp.status()).toBeLessThan(400);
     await expect(page.locator("text=Plan approved")).toBeVisible({ timeout: 5000 });
+
+    // Post-approve: the button must no longer be visible (plan is now approved)
+    await expect(approveBtn).not.toBeVisible({ timeout: 5000 });
   });
 
   test("parent runs weekly payout", async ({ page }) => {

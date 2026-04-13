@@ -24,10 +24,11 @@ test.describe("Meals subpages", () => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
-  test("/meals/this-week renders seeded approved plan", async ({ page }) => {
+  test("/meals/this-week renders seeded draft plan", async ({ page }) => {
     await page.click("text=Meals");
     await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
-    // Seeded plan title is "Smoke Test Week"; empty state should NOT be shown.
+    // Seeded plan is "Smoke Test Week" in draft status; empty state
+    // should NOT be shown. Adults see drafts.
     await expect(
       page.locator("text=No plan yet").first(),
     ).not.toBeVisible({ timeout: 2000 }).catch(() => {});
