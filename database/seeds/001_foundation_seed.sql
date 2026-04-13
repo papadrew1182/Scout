@@ -2,7 +2,7 @@
 -- Realistic fake data for local development and testing.
 -- Requires: 001_foundation_connectors.sql applied first.
 --
--- Family: the Whitfield household
+-- Family: the Roberts household
 -- Adults: Andrew (dad), Sally (mom), Tyler (adult, non-parent)
 -- Children: Sadie (13), Townes (10), River (8)
 
@@ -13,7 +13,7 @@ BEGIN;
 -- ============================================================================
 
 INSERT INTO families (id, name, timezone)
-VALUES ('a1b2c3d4-0000-4000-8000-000000000001', 'Whitfield', 'America/Chicago');
+VALUES ('a1b2c3d4-0000-4000-8000-000000000001', 'Roberts', 'America/Chicago');
 
 -- ============================================================================
 -- family_members
@@ -24,30 +24,30 @@ INSERT INTO family_members (id, family_id, first_name, last_name, role, birthdat
 VALUES
     ('b1000000-0000-4000-8000-000000000001',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'Andrew', 'Whitfield', 'adult', '1985-06-14'),
+     'Andrew', 'Roberts', 'adult', '1985-06-14'),
 
     ('b1000000-0000-4000-8000-000000000002',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'Sally', 'Whitfield', 'adult', '1987-03-22'),
+     'Sally', 'Roberts', 'adult', '1987-03-22'),
 
     ('b1000000-0000-4000-8000-000000000006',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'Tyler', 'Whitfield', 'adult', '1990-01-15');
+     'Tyler', 'Roberts', 'adult', '1990-01-15');
 
 -- children
 INSERT INTO family_members (id, family_id, first_name, last_name, role, birthdate)
 VALUES
     ('b1000000-0000-4000-8000-000000000003',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'Sadie', 'Whitfield', 'child', '2012-09-10'),
+     'Sadie', 'Roberts', 'child', '2012-09-10'),
 
     ('b1000000-0000-4000-8000-000000000004',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'Townes', 'Whitfield', 'child', '2015-11-28'),
+     'Townes', 'Roberts', 'child', '2015-11-28'),
 
     ('b1000000-0000-4000-8000-000000000005',
      'a1b2c3d4-0000-4000-8000-000000000001',
-     'River', 'Whitfield', 'child', '2017-07-04');
+     'River', 'Roberts', 'child', '2017-07-04');
 
 -- ============================================================================
 -- user_accounts (adults only)
@@ -236,6 +236,6 @@ VALUES
      'ynab', 'families',
      'a1b2c3d4-0000-4000-8000-000000000001',
      'budget-fake-uuid-here',
-     '{"resource_type": "budget", "budget_name": "Whitfield Family"}');
+     '{"resource_type": "budget", "budget_name": "Roberts Family"}');
 
 COMMIT;

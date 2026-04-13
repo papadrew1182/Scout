@@ -1,5 +1,5 @@
 -- Seed 003: Calendar / Scheduling
--- Realistic fake events for the Whitfield household.
+-- Realistic fake events for the Roberts household.
 -- Requires: 003_calendar.sql migration applied first.
 --
 -- UUID reference (from foundation seed):

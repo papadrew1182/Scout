@@ -4,7 +4,7 @@ Idempotent. Run after migrations:
     python seed_smoke.py
 
 Creates:
-- Whitfield family
+- Roberts family
 - Adult: Andrew (adult@test.com / testpass123)
 - Child: Sadie (child@test.com / testpass123)
 - 3 more members (Sally, Townes, Tyler)
@@ -47,9 +47,9 @@ def seed_smoke():
     db = DB()
 
     # --- Family ---
-    family = db.scalars(select(Family).where(Family.name == "Whitfield")).first()
+    family = db.scalars(select(Family).where(Family.name == "Roberts")).first()
     if not family:
-        family = Family(name="Whitfield", timezone="America/Chicago")
+        family = Family(name="Roberts", timezone="America/Chicago")
         db.add(family)
         db.flush()
         print(f"Created family: {family.name} (id={family.id})")
@@ -70,11 +70,11 @@ def seed_smoke():
             print(f"  Created member: {first} ({role})")
         return m
 
-    andrew = ensure_member("Andrew", "Whitfield", "adult", date(1985, 6, 14))
-    sally = ensure_member("Sally", "Whitfield", "adult", date(1987, 3, 22))
-    sadie = ensure_member("Sadie", "Whitfield", "child", date(2012, 9, 10))
-    townes = ensure_member("Townes", "Whitfield", "child", date(2015, 11, 28))
-    tyler = ensure_member("Tyler", "Whitfield", "child", date(2017, 7, 4))
+    andrew = ensure_member("Andrew", "Roberts", "adult", date(1985, 6, 14))
+    sally = ensure_member("Sally", "Roberts", "adult", date(1987, 3, 22))
+    sadie = ensure_member("Sadie", "Roberts", "child", date(2012, 9, 10))
+    townes = ensure_member("Townes", "Roberts", "child", date(2015, 11, 28))
+    tyler = ensure_member("Tyler", "Roberts", "child", date(2017, 7, 4))
     db.commit()
 
     # --- Accounts ---

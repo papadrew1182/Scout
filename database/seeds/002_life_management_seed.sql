@@ -4,7 +4,7 @@
 --           001_foundation_seed.sql applied first.
 --
 -- Seeds one representative school week: Mon 2026-03-30 through Fri 2026-04-03.
--- Family: Whitfield (from foundation seed)
+-- Family: Roberts (from foundation seed)
 -- Adults: Andrew (dad), Sally (mom), Tyler (viewer)
 -- Children: Sadie, Townes, River
 --

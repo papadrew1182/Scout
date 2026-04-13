@@ -71,7 +71,7 @@ def db() -> Generator[Session, None, None]:
 
 @pytest.fixture()
 def family(db: Session) -> Family:
-    f = Family(name="Whitfield", timezone="America/Chicago")
+    f = Family(name="Roberts", timezone="America/Chicago")
     db.add(f)
     db.flush()
     return f
@@ -79,8 +79,8 @@ def family(db: Session) -> Family:
 
 @pytest.fixture()
 def adults(db: Session, family: Family) -> dict[str, FamilyMember]:
-    robert = FamilyMember(family_id=family.id, first_name="Robert", last_name="Whitfield", role="adult", birthdate=date(1985, 6, 14))
-    megan = FamilyMember(family_id=family.id, first_name="Megan", last_name="Whitfield", role="adult", birthdate=date(1987, 3, 22))
+    robert = FamilyMember(family_id=family.id, first_name="Robert", last_name="Roberts", role="adult", birthdate=date(1985, 6, 14))
+    megan = FamilyMember(family_id=family.id, first_name="Megan", last_name="Roberts", role="adult", birthdate=date(1987, 3, 22))
     db.add_all([robert, megan])
     db.flush()
     return {"robert": robert, "megan": megan}

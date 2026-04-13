@@ -181,7 +181,7 @@ class TestMe:
         data = r.json()
         assert data["first_name"] == "Robert"
         assert data["role"] == "adult"
-        assert data["family_name"] == "Whitfield"
+        assert data["family_name"] == "Roberts"
 
     def test_me_no_token_401(self, client, db, family):
         r = client.get("/api/auth/me")

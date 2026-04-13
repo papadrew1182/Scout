@@ -1,5 +1,5 @@
 -- Seed 008: Finance
--- Realistic household bills for the Whitfield family.
+-- Realistic household bills for the Roberts family.
 -- Requires: 008_finance.sql migration applied first.
 --
 -- UUID reference (from foundation seed):

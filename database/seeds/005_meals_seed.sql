@@ -1,5 +1,5 @@
 -- Seed 005: Meals
--- Realistic fake meal data for the Whitfield household.
+-- Realistic fake meal data for the Roberts household.
 -- Requires: 005_meals.sql migration applied first.
 --
 -- UUID reference (from foundation seed):

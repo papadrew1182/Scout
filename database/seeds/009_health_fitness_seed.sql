@@ -1,5 +1,5 @@
 -- Seed 009: Health / Fitness
--- Realistic health summaries and activity records for the Whitfield family.
+-- Realistic health summaries and activity records for the Roberts family.
 -- Requires: 009_health_fitness.sql migration applied first.
 --
 -- UUID reference (from foundation seed):
