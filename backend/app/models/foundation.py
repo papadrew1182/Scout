@@ -14,6 +14,9 @@ class Family(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     timezone: Mapped[str] = mapped_column(Text, nullable=False, default="America/Chicago")
+    allow_general_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    allow_homework_help: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    home_location: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
@@ -29,6 +32,8 @@ class FamilyMember(Base):
     last_name: Mapped[str | None] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(10), nullable=False)
     birthdate: Mapped[date | None] = mapped_column(Date)
+    grade_level: Mapped[str | None] = mapped_column(Text)
+    learning_notes: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())

@@ -26,8 +26,9 @@ Thumbs.db
 # Build artifacts
 *.egg-info/
 
-# Scout test artifacts
-settings/
+# (Removed stale "settings/" rule — it was catching scout-ui/app/settings/
+# as well, which meant the real settings page was never tracked. The
+# original intent was probably a long-gone test-output directory.)
 
 # Playwright
 smoke-tests/node_modules/

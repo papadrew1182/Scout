@@ -4,6 +4,7 @@ import type {
   ChoreTemplate,
   DailyWin,
   Event,
+  FamilyAISettings,
   FamilyMember,
   GroceryItem,
   Meal,
@@ -540,4 +541,25 @@ export async function ingestYnabBill(
     family_id: _familyId,
     payload,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Family AI settings + per-child learning context
+// ---------------------------------------------------------------------------
+
+export function fetchAISettings(): Promise<FamilyAISettings> {
+  return get(`${familyUrl()}/ai-settings`);
+}
+
+export function updateAISettings(
+  payload: Partial<FamilyAISettings>,
+): Promise<FamilyAISettings> {
+  return patch(`${familyUrl()}/ai-settings`, payload);
+}
+
+export function updateMemberLearning(
+  memberId: string,
+  payload: { grade_level?: string | null; learning_notes?: string | null },
+): Promise<FamilyMember> {
+  return patch(`${familyUrl()}/members/${memberId}/learning`, payload);
 }

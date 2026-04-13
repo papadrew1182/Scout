@@ -21,8 +21,9 @@ from app.ai.context import (
     get_allowed_tools_for_surface,
     load_member_context,
 )
+from app.ai.moderation import check_user_message
 from app.ai.provider import AIResponse, AnthropicProvider, ToolDefinition, get_provider
-from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor
+from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor, _audit
 from app.models.ai import AIConversation, AIMessage
 
 
@@ -249,6 +250,42 @@ def chat(
     # --- Normal LLM-driven turn.
     # Persist user message first so the history load includes it.
     _persist_message(db, conversation.id, "user", content=user_message)
+
+    # Moderation gate: deterministic reject list that runs before any
+    # Anthropic call. On block, we write an audit row, persist a canned
+    # assistant reply to the conversation, and return immediately with
+    # model='moderation-blocked'. No tokens spent, no LLM reasoning.
+    mod = check_user_message(user_message, role=role, surface=surface)
+    if not mod.allowed:
+        _audit(
+            db=db,
+            family_id=family_id,
+            actor_id=member_id,
+            conversation_id=conversation.id,
+            tool_name="moderation",
+            arguments={"category": mod.category, "surface": surface, "role": role},
+            result_summary=(mod.user_facing_message or "")[:500],
+            status="moderation_blocked",
+            error_message=mod.category,
+        )
+        refusal_text = mod.user_facing_message or "I can't help with that."
+        _persist_message(
+            db, conversation.id, "assistant",
+            content=refusal_text,
+            model="moderation-blocked",
+            token_usage={"input": 0, "output": 0},
+        )
+        db.commit()
+        return _build_chat_result(
+            conversation_id=conversation.id,
+            response_text=refusal_text,
+            model="moderation-blocked",
+            tokens={"input": 0, "output": 0},
+            tool_calls_made=_count_tool_rows(db, conversation.id),
+            handoff=None,
+            pending_confirmation=None,
+        )
+
     messages = _load_conversation_messages(db, conversation.id)
 
     provider = get_provider()

@@ -5,7 +5,15 @@ export interface FamilyMember {
   last_name: string | null;
   role: "adult" | "child";
   birthdate: string | null;
+  grade_level: string | null;
+  learning_notes: string | null;
   is_active: boolean;
+}
+
+export interface FamilyAISettings {
+  allow_general_chat: boolean;
+  allow_homework_help: boolean;
+  home_location: string | null;
 }
 
 export interface TaskInstance {

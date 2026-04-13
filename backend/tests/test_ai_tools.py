@@ -203,3 +203,128 @@ class TestAuditLogging:
         assert len(audits) == 1
         assert audits[0].status == "success"
         assert audits[0].duration_ms is not None
+
+
+# ---------------------------------------------------------------------------
+# Weather tool (monkeypatched Open-Meteo)
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class TestWeatherTool:
+    def test_get_weather_in_registry_and_definitions(self):
+        assert "get_weather" in TOOL_DEFINITIONS
+        d = TOOL_DEFINITIONS["get_weather"]
+        assert d.name == "get_weather"
+        assert "weather" in d.description.lower()
+        assert "location" in d.input_schema["properties"]
+        assert "days" in d.input_schema["properties"]
+
+    def test_get_weather_handler_returns_forecast(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        import json
+        from app.ai import tools as tools_mod
+
+        family.home_location = "76126"
+        db.flush()
+
+        # Canned Open-Meteo geocoding + forecast responses
+        geocode_body = json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "Fort Worth",
+                        "admin1": "Texas",
+                        "country_code": "US",
+                        "latitude": 32.7,
+                        "longitude": -97.4,
+                    }
+                ]
+            }
+        ).encode()
+        forecast_body = json.dumps(
+            {
+                "daily": {
+                    "time": ["2026-04-14", "2026-04-15", "2026-04-16"],
+                    "temperature_2m_max": [78.4, 82.1, 75.0],
+                    "temperature_2m_min": [55.0, 60.2, 58.8],
+                    "precipitation_probability_max": [10, 60, 30],
+                    "weather_code": [1, 61, 2],
+                }
+            }
+        ).encode()
+
+        calls: list[str] = []
+
+        def fake_urlopen(url, timeout=8):
+            calls.append(url if isinstance(url, str) else url.full_url)
+            if "geocoding-api" in calls[-1]:
+                return _FakeResponse(geocode_body)
+            return _FakeResponse(forecast_body)
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen", fake_urlopen, raising=True
+        )
+
+        andrew = adults["robert"]
+        executor = ToolExecutor(
+            db=db,
+            family_id=family.id,
+            actor_member_id=andrew.id,
+            actor_role="adult",
+            surface="personal",
+            allowed_tools=["get_weather"],
+        )
+        result = executor.execute("get_weather", {})
+
+        assert "error" not in result
+        assert result["units"] == "fahrenheit"
+        assert result["location"].startswith("Fort Worth")
+        assert len(result["days"]) == 3
+        day0 = result["days"][0]
+        assert day0["high_f"] == 78.4
+        assert day0["low_f"] == 55.0
+        assert day0["precip_probability_pct"] == 10
+        assert day0["weather"] == "mostly clear"
+        # Day 1 should map WMO 61 → 'light rain'
+        assert result["days"][1]["weather"] == "light rain"
+        # Geocoding was called; so was forecast
+        assert any("geocoding-api" in c for c in calls)
+        assert any("api.open-meteo.com/v1/forecast" in c for c in calls)
+
+    def test_get_weather_no_location_and_no_home_returns_error(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        family.home_location = None
+        db.flush()
+
+        def should_not_call(*a, **k):
+            raise AssertionError("should not hit the network")
+
+        monkeypatch.setattr("urllib.request.urlopen", should_not_call, raising=True)
+
+        andrew = adults["robert"]
+        executor = ToolExecutor(
+            db=db,
+            family_id=family.id,
+            actor_member_id=andrew.id,
+            actor_role="adult",
+            surface="personal",
+            allowed_tools=["get_weather"],
+        )
+        result = executor.execute("get_weather", {})
+        assert "error" in result
+        assert "location" in result["error"].lower()

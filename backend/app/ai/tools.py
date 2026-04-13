@@ -599,6 +599,129 @@ def _get_meal_review_summary(executor: ToolExecutor, args: dict) -> dict:
     return {"summary": summary.model_dump()}
 
 
+def _get_weather(executor: ToolExecutor, args: dict) -> dict:
+    """Fetch a short-range forecast via Open-Meteo (free, no API key).
+
+    Resolves `location` (zip, city, or city, state) via Open-Meteo's
+    geocoding API, then hits the forecast API for daily high/low,
+    precip probability, and a WMO weather code. If no location is
+    given, falls back to the family's `home_location`.
+    """
+    import json
+    import urllib.parse
+    import urllib.request
+    from app.models.foundation import Family
+
+    location = (args.get("location") or "").strip()
+    days = args.get("days")
+    if not isinstance(days, int) or days < 1 or days > 7:
+        days = 3
+
+    if not location:
+        fam = executor.db.get(Family, executor.family_id)
+        location = (fam.home_location or "") if fam else ""
+    if not location:
+        return {
+            "error": (
+                "No location provided and no home_location set on the family. "
+                "Ask the user for a zip code or city."
+            )
+        }
+
+    try:
+        geo_url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            + urllib.parse.urlencode({"name": location, "count": 1, "language": "en", "format": "json"})
+        )
+        with urllib.request.urlopen(geo_url, timeout=8) as resp:
+            geo = json.loads(resp.read().decode())
+        results = geo.get("results") or []
+        if not results:
+            return {"error": f"Could not find a location for '{location}'."}
+        top = results[0]
+        lat = top["latitude"]
+        lon = top["longitude"]
+        resolved_name = ", ".join(
+            filter(None, [top.get("name"), top.get("admin1"), top.get("country_code")])
+        )
+    except Exception as e:
+        return {"error": f"Geocoding failed for '{location}': {type(e).__name__}"}
+
+    try:
+        forecast_url = (
+            "https://api.open-meteo.com/v1/forecast?"
+            + urllib.parse.urlencode(
+                {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+                    "temperature_unit": "fahrenheit",
+                    "timezone": "auto",
+                    "forecast_days": days,
+                }
+            )
+        )
+        with urllib.request.urlopen(forecast_url, timeout=8) as resp:
+            forecast = json.loads(resp.read().decode())
+    except Exception as e:
+        return {"error": f"Forecast fetch failed: {type(e).__name__}"}
+
+    daily = forecast.get("daily") or {}
+    dates = daily.get("time") or []
+    highs = daily.get("temperature_2m_max") or []
+    lows = daily.get("temperature_2m_min") or []
+    precip = daily.get("precipitation_probability_max") or []
+    codes = daily.get("weather_code") or []
+
+    # WMO weather code → short human label (subset; anything unknown → "weather")
+    wmo = {
+        0: "clear",
+        1: "mostly clear",
+        2: "partly cloudy",
+        3: "cloudy",
+        45: "fog",
+        48: "rime fog",
+        51: "light drizzle",
+        53: "drizzle",
+        55: "heavy drizzle",
+        61: "light rain",
+        63: "rain",
+        65: "heavy rain",
+        66: "freezing rain",
+        67: "heavy freezing rain",
+        71: "light snow",
+        73: "snow",
+        75: "heavy snow",
+        77: "snow grains",
+        80: "rain showers",
+        81: "heavy rain showers",
+        82: "violent rain showers",
+        85: "snow showers",
+        86: "heavy snow showers",
+        95: "thunderstorm",
+        96: "thunderstorm with hail",
+        99: "severe thunderstorm with hail",
+    }
+
+    out_days = []
+    for i, day in enumerate(dates):
+        out_days.append(
+            {
+                "date": day,
+                "high_f": highs[i] if i < len(highs) else None,
+                "low_f": lows[i] if i < len(lows) else None,
+                "precip_probability_pct": precip[i] if i < len(precip) else None,
+                "weather": wmo.get(codes[i] if i < len(codes) else -1, "weather"),
+            }
+        )
+
+    return {
+        "location": resolved_name or location,
+        "units": "fahrenheit",
+        "days": out_days,
+    }
+
+
 # ============================================================================
 # Handler registry
 # ============================================================================
@@ -633,6 +756,7 @@ _TOOL_HANDLERS: dict[str, Any] = {
     "regenerate_meal_day": _regenerate_meal_day,
     "add_meal_review": _add_meal_review,
     "get_meal_review_summary": _get_meal_review_summary,
+    "get_weather": _get_weather,
 }
 
 
@@ -990,5 +1114,36 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         name="get_meal_review_summary",
         description="Get compact review signals: high-rated meals, retired meals, low kid acceptance, good leftover performers, low-effort favorites.",
         input_schema={"type": "object", "properties": {}, "required": []},
+    ),
+    "get_weather": ToolDefinition(
+        name="get_weather",
+        description=(
+            "Get a short-range weather forecast (today through up to 7 days). "
+            "Call this whenever the user asks about weather, rain, temperature, "
+            "or outdoor plans. Defaults to the family's home location if no "
+            "location is provided."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "Optional. A zip code, city name, or 'city, state' — "
+                        "e.g. '76126', 'Fort Worth', 'Fort Worth, TX'. If "
+                        "omitted, uses the family's home_location."
+                    ),
+                },
+                "days": {
+                    "type": "integer",
+                    "description": (
+                        "How many days to forecast (1-7). Defaults to 3."
+                    ),
+                    "minimum": 1,
+                    "maximum": 7,
+                },
+            },
+            "required": [],
+        },
     ),
 }
