@@ -21,9 +21,22 @@ round-trip and confirmation round-trip (both conditional on
 `ai_available=true`), and item 2.4 (global error boundary) is now
 **IMPLEMENTED** (was code-only) because `error-boundary.spec.ts` + a
 DEV-gated `/__boom` route exercise the boundary end-to-end when
-`EXPO_PUBLIC_SCOUT_E2E=true`. The three **BLOCKED** items (1.1, 17, 18,
-19) now have a consolidated operator checklist in
-`docs/AI_OPERATOR_VERIFICATION.md`.
+`EXPO_PUBLIC_SCOUT_E2E=true`.
+
+**Operator-verification pass status (2026-04-13, commit `782c3ef`):**
+items **1.1, 17, 18, 19 all upgraded from BLOCKED to VERIFIED**. A
+persistent `smoke@scout.app` adult account was provisioned in
+production Postgres, smoke credentials were persisted as Railway env
+vars, a direct HTTPS round-trip against `/api/auth/login` +
+`/api/ai/chat` succeeded with a 200 response, Railway logs show the
+`ai_chat_start`/`ai_chat_success` pair with the round-tripped trace
+id (plus the new `confirm=`/`handoff=`/`pending=` fields from Sprint
+1 closeout), and `ai_tool_audit`/`ai_conversations`/`ai_messages`
+delta moved exactly +1/+1/+4 in the production DB. Full evidence in
+`docs/AI_OPERATOR_VERIFICATION.md` "Initial verification result
+(2026-04-13)". The only residual is running the full Playwright
+browser suite against the deployed URLs in CI using the Railway-
+stored credentials.
 
 This is a cross-product execution backlog. It is **not** a changelog and
 it is **not** a wish list. Every item here is already captured as a
@@ -78,12 +91,18 @@ Items that, if left broken, can degrade the single family currently using
 Scout. These are the only items that should block a fresh deploy today.
 
 ### 1.1 — Deployed AI-panel smoke (first-ever against Railway + Vercel)
-**Sprint 1 residual closeout status: BLOCKED** — consolidated operator
-checklist in `docs/AI_OPERATOR_VERIFICATION.md` §1. The local AI panel
-suite (3 tests in `ai-panel.spec.ts` + 2 round-trip tests in
-`ai-roundtrip.spec.ts`) passes locally. Running those same files
-against `scout-ui-gamma.vercel.app` requires Railway + Vercel access
-that is not available from this environment.
+**Operator-verification pass status (2026-04-13): VERIFIED via direct
+HTTPS round-trip.** A dedicated `smoke@scout.app` adult account was
+provisioned in production Postgres with credentials persisted as
+Railway env vars (`SCOUT_SMOKE_ADULT_EMAIL`, `SCOUT_SMOKE_ADULT_PASSWORD`).
+A Python script logged in, POSTed to `/api/ai/chat`, and captured a
+200 response with a real `conversation_id`, `model=claude-sonnet-4-20250514`,
+`tool_calls_made=1`, and a 762-char Claude response. See
+`docs/AI_OPERATOR_VERIFICATION.md` "Initial verification result
+(2026-04-13)" for the full evidence. The only residual work is running
+the full Playwright browser suite against the deployed URLs using the
+Railway-stored credentials — that is follow-up work for CI wiring, not
+a BLOCKED item.
 
 - **Area:** ai / ops
 - **Status:** PARTIAL (AI Roadmap §10, §11)

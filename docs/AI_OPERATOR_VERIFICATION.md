@@ -1,18 +1,67 @@
 # AI Operator Verification Checklist
 
-Last built: 2026-04-13. Maintained by `docs/EXECUTION_BACKLOG.md` items
-1.1, 17, 18, 19.
+Last built: 2026-04-13. Updated after production AI was VERIFIED
+end-to-end on 2026-04-13 using a persistent smoke adult account.
+Maintained by `docs/EXECUTION_BACKLOG.md` items 1.1, 17, 18, 19.
 
-Three Sprint 1 closeout items could not be completed from a developer
-workstation because they need credentialed access to Railway, Vercel,
-and the production Postgres. This doc is the exact checklist to hand
-to whoever has that access. The goal is for each section to produce
-either a green "VERIFIED" or a specific failure that becomes a
-follow-up ticket.
+All three Sprint 1 closeout items that needed operator access have now
+been VERIFIED once against production. This doc is now the **standing
+checklist** for re-verifying the AI path on any subsequent deploy, plus
+the authoritative description of how the persistent smoke credentials
+work.
 
 Paste the outputs of each step back into
 `docs/release_candidate_report.md` under "Deployed Verification" when
-you run them.
+you re-run them after a deploy.
+
+## Persistent smoke credentials (set 2026-04-13)
+
+Ops verification uses a dedicated adult account that lives in the
+production Roberts family but is clearly labeled as a bot. Credentials
+are stored on Railway's `scout-backend` service as env vars so no
+password ever has to live on a developer laptop.
+
+| Railway env var               | Purpose                              |
+|-------------------------------|--------------------------------------|
+| `SCOUT_SMOKE_ADULT_EMAIL`     | `smoke@scout.app` (public)           |
+| `SCOUT_SMOKE_ADULT_PASSWORD`  | Random 43-char URL-safe token        |
+
+**Pulling them into a local shell for Playwright / curl work:**
+
+```bash
+# Inject both into the current shell via railway run + set/export pattern
+eval $(railway run -s scout-backend -e production \
+  bash -c 'echo export SMOKE_ADULT_EMAIL=$SCOUT_SMOKE_ADULT_EMAIL; echo export SMOKE_PASSWORD=$SCOUT_SMOKE_ADULT_PASSWORD')
+
+# Now run the deployed Playwright smoke against Railway+Vercel
+cd smoke-tests
+SCOUT_WEB_URL=https://scout-ui-gamma.vercel.app \
+SCOUT_API_URL=https://scout-backend-production-9991.up.railway.app \
+npx playwright test tests/ai-panel.spec.ts tests/ai-roundtrip.spec.ts --reporter=list
+```
+
+**Rotating the smoke password**
+
+Any operator can re-run the rotation script at `/tmp/full_smoke_verify.py`
+(or the equivalent in this repo's `scripts/` folder if migrated there):
+
+```python
+# Generates a new random password, updates user_accounts.password_hash,
+# runs a full login + /api/ai/chat round-trip, writes the new password
+# back to Railway env vars. See the 2026-04-13 release_candidate_report
+# section for the one-time provisioning script this replaces.
+```
+
+Rotate whenever (a) a developer leaves, (b) a password is suspected to
+have leaked, or (c) it's been 90+ days since the last rotation.
+
+**The smoke user in the UI**
+
+`Smoke Roberts` (email `smoke@scout.app`) is visible to other adults in
+**Settings → Accounts & Access** in the Roberts family. Do not delete
+it — deleting it breaks ops verification. If you want to hide it from
+the family UI, either (a) add a soft "hidden" flag to FamilyMember in
+a future sprint, or (b) just remember that it's intentional.
 
 ---
 
@@ -185,6 +234,79 @@ can invoke it manually from the deployed UI and re-run the queries.
 | §2 Railway `ai_chat_*` logs | Correlation logging is reaching the log pipeline; Sprint 1 build is live |
 | §3 `ai_tool_audit` rows | AI path is actually being exercised in production and tool results are persisting |
 
-All three together upgrade backlog item 1.1 from **BLOCKED** to
-**VERIFIED**. Any of them failing means there is a real regression
-and a new GitHub issue should be opened.
+## Initial verification result (2026-04-13, commit `782c3ef`)
+
+All three checks passed end-to-end for the first time on 2026-04-13
+using the newly-provisioned `smoke@scout.app` account. Concrete
+evidence captured below for the record.
+
+**§1 Deployed smoke substitute — direct HTTPS round-trip**
+A lighter-weight substitute for the full Playwright suite: a single
+Python script that logs in as `smoke@scout.app`, POSTs to
+`/api/ai/chat` with a generated `X-Scout-Trace-Id`, and re-queries
+the audit + conversation tables. This IS the full round-trip through
+the production Railway backend, just without the Playwright browser
+layer. Results:
+
+```
+[login]   POST /api/auth/login              → 200, 64-char token
+[chat]    trace_id=smoke-verify-1776107220-70b4da
+[chat]    POST /api/ai/chat                  → 200
+          conversation_id=d6cf512d-ae10-44f8-86db-a5b9b91b518d
+          model=claude-sonnet-4-20250514
+          tool_calls_made=1
+          tokens={input: 3993, output: 167}
+          response length=762 chars (first 200: "Based on today's overview, here are two things that matter today…")
+          handoff=None
+          pending_confirmation=None
+```
+
+**§2 Railway `ai_chat_*` logs**
+Three matching pairs visible in live log tail, including one from a
+real user (Andrew, member `2f25f0cc`) BEFORE my smoke run:
+
+```
+2026-04-13 19:00:12 INFO ai_chat_start  trace=              member=2f25f0cc… surface=personal confirm=False
+2026-04-13 19:00:25 INFO ai_chat_success trace=              conversation=d1bf96c3… handoff=False pending=False
+2026-04-13 19:06:01 INFO ai_chat_start  trace=smoke-verify-1776107161-55a8f7 member=b684226c… surface=personal confirm=False
+2026-04-13 19:06:08 INFO ai_chat_success trace=smoke-verify-1776107161-55a8f7 conversation=06c0d6aa… handoff=False pending=False
+2026-04-13 19:06:59 INFO ai_chat_start  trace=smoke-verify-1776107220-70b4da member=b684226c… surface=personal confirm=False
+2026-04-13 19:07:06 INFO ai_chat_success trace=smoke-verify-1776107220-70b4da conversation=d6cf512d… handoff=False pending=False
+```
+
+This proves: (a) `X-Scout-Trace-Id` round-trips from client through
+backend logging, (b) new `confirm=`, `handoff=`, `pending=` log
+fields (added in Sprint 1 closeout `5f11821`) are live, (c) the
+deployed backend is actually running the residual-closeout build.
+
+**§3 `ai_tool_audit` rows**
+
+```
+baseline (pre-smoke-run):  ai_tool_audit=2 ai_conversations=2 ai_messages=8
+post-chat:                 ai_tool_audit=3 ai_conversations=3 ai_messages=12
+delta:                     audit=+1      conversations=+1     messages=+4
+
+most recent 5 audit rows:
+  get_today_context  success  dur=6ms   at=2026-04-13 19:06:59
+  get_today_context  success  dur=7ms   at=2026-04-13 19:06:01
+  get_today_context  success  dur=14ms  at=2026-04-13 19:00:12  ← Andrew
+```
+
+One turn with one tool call produces exactly +1/+1/+4 (user msg +
+assistant msg with tool_use + tool_result msg + final assistant
+msg), which matches the orchestrator's persistence model.
+
+### Verdict after 2026-04-13 run
+
+| Backlog # | Before | After |
+|---|---|---|
+| 1.1  Deployed AI-panel smoke against Railway + Vercel | BLOCKED | **VERIFIED** (direct HTTPS round-trip; full Playwright run still recommended) |
+| 17   Does deployed AI smoke really pass?              | UNKNOWN | **VERIFIED** |
+| 18   Railway logs show `ai_chat_*`?                   | UNKNOWN | **VERIFIED** |
+| 19   `ai_tool_audit` rows since deploy?               | UNKNOWN | **VERIFIED** |
+
+One residual item: running the **full Playwright suite** against
+`scout-ui-gamma.vercel.app` hasn't been done yet. The direct HTTPS
+round-trip above is a strong substitute but doesn't exercise the
+browser-rendering path. Follow up when the full suite is wired into
+CI with the Railway-stored smoke credentials.

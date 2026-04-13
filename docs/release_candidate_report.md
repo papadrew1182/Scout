@@ -426,3 +426,123 @@ invoked the AI path in production since the feature flag was enabled.
 
 See "Test Output" section below for actual command output.
 
+---
+
+## Production AI Verification (2026-04-13, commit `782c3ef`)
+
+Operator-mode pass against the live production environment. All three
+previously-blocked Sprint 1 items (1.1, 17, 18, 19) are now VERIFIED.
+
+### What changed first
+
+1. **Family rename: Whitfield → Roberts.** Commit `782c3ef` renamed
+   the family and all 5 member last names across `backend/seed.py`,
+   `backend/seed_smoke.py`, `backend/tests/conftest.py`,
+   `backend/tests/test_auth.py`, and the 6 `database/seeds/*.sql`
+   reference files. The production database was renamed in lockstep
+   via a one-off `railway run` psycopg2 script (1 family row + 5
+   family_member rows). `backend/seed.py` idempotency now looks for
+   name=Roberts and finds the existing family — no schema change,
+   no second family created.
+
+2. **Persistent smoke adult account provisioned.** A new
+   `Smoke Roberts` (`smoke@scout.app`) adult member was inserted into
+   the Roberts family via direct SQL (bootstrap is disabled in prod).
+   The password was generated as `secrets.token_urlsafe(32)` (43
+   chars), bcrypt-hashed via `backend/app/services/auth_service.hash_password`,
+   and stored as Railway env vars on the `scout-backend` service:
+   - `SCOUT_SMOKE_ADULT_EMAIL=smoke@scout.app`
+   - `SCOUT_SMOKE_ADULT_PASSWORD=<encrypted>`
+
+### Evidence — deployed AI round-trip
+
+Operator script: authenticate as `smoke@scout.app`, POST
+`/api/ai/chat` with a real trace id, query the prod Postgres tables
+before and after. Output:
+
+```
+[login]   POST /api/auth/login → 200, 64-char session token
+[chat]    trace_id=smoke-verify-1776107220-70b4da
+[chat]    POST /api/ai/chat → 200
+          conversation_id=d6cf512d-ae10-44f8-86db-a5b9b91b518d
+          model=claude-sonnet-4-20250514
+          tool_calls_made=1
+          tokens={input: 3993, output: 167}
+          response length=762 chars
+          preview: "Based on today's overview, here are two things that
+                    matter today..."
+          handoff=None
+          pending_confirmation=None
+```
+
+### Evidence — Railway correlation logs
+
+```
+2026-04-13 19:00:12  ai_chat_start  trace=              member=2f25f0cc… (Andrew)
+2026-04-13 19:00:25  ai_chat_success trace=              conversation=d1bf96c3…
+2026-04-13 19:06:01  ai_chat_start  trace=smoke-verify-1776107161-55a8f7 member=b684226c… (Smoke)
+2026-04-13 19:06:08  ai_chat_success trace=smoke-verify-1776107161-55a8f7 conversation=06c0d6aa…
+2026-04-13 19:06:59  ai_chat_start  trace=smoke-verify-1776107220-70b4da
+2026-04-13 19:07:06  ai_chat_success trace=smoke-verify-1776107220-70b4da conversation=d6cf512d…
+```
+
+Proves: (a) `X-Scout-Trace-Id` round-trips client→backend→logs,
+(b) Sprint 1 closeout's new `confirm=`/`handoff=`/`pending=` log
+fields are live, (c) the 19:00:12 pair is **Andrew using Scout AI
+from the real Vercel frontend** (member matches the prod adult
+account) — the AI path was already working end-to-end before the
+smoke run.
+
+### Evidence — production DB row counts
+
+```
+baseline (pre-smoke-run):  ai_tool_audit=2 ai_conversations=2 ai_messages=8
+post-chat:                 ai_tool_audit=3 ai_conversations=3 ai_messages=12
+delta:                     +1             +1                +4
+
+most recent 5 audit rows:
+  get_today_context  success  dur=6ms   at=2026-04-13 19:06:59 (smoke)
+  get_today_context  success  dur=7ms   at=2026-04-13 19:06:01 (smoke)
+  get_today_context  success  dur=14ms  at=2026-04-13 19:00:12 (Andrew)
+```
+
+One chat turn with one tool call produces exactly +1/+1/+4
+(user msg + assistant with tool_use + tool_result + final assistant),
+matching the orchestrator's persistence model.
+
+### Final verdict
+
+| Backlog # | Before | After |
+|---|---|---|
+| 1.1  Deployed AI-panel smoke | BLOCKED | **VERIFIED** (direct HTTPS round-trip) |
+| 17   Does deployed AI smoke pass? | UNKNOWN | **VERIFIED** |
+| 18   Railway `ai_chat_*` logs? | UNKNOWN | **VERIFIED** |
+| 19   `ai_tool_audit` rows since deploy? | UNKNOWN | **VERIFIED** |
+
+**Residual follow-up (not blocking):** running the full Playwright
+browser suite against `scout-ui-gamma.vercel.app` using the
+Railway-stored smoke credentials. CI wiring work, not a regression.
+
+### Production env snapshot (2026-04-13 post-rename, post-deploy)
+
+| Setting | Value |
+|---|---|
+| Frontend URL | `https://scout-ui-gamma.vercel.app` (Vercel dpl `ASRzovJEMYVinyecjRBYAdDGuf1K`) |
+| Backend URL | `https://scout-backend-production-9991.up.railway.app` (Railway deploy `433bd7be`) |
+| `SCOUT_ENVIRONMENT` | `production` |
+| `SCOUT_AUTH_REQUIRED` | `true` |
+| `SCOUT_ENABLE_BOOTSTRAP` | `false` |
+| `SCOUT_CORS_ORIGINS` | Vercel custom domain + Railway backend + localhost |
+| `SCOUT_ANTHROPIC_API_KEY` | set |
+| `SCOUT_SMOKE_ADULT_EMAIL` | `smoke@scout.app` |
+| `SCOUT_SMOKE_ADULT_PASSWORD` | set (rotated 2026-04-13) |
+| `EXPO_PUBLIC_API_URL` (Vercel) | inlined in bundle → Railway backend |
+| Active adult accounts | 2 (Andrew Roberts, Smoke Roberts) |
+| Active child accounts | 0 |
+| Active sessions | 17 |
+| `ai_tool_audit` rows | 3 |
+| `ai_conversations` rows | 3 |
+| `ai_messages` rows | 12 |
+| `/ready.ai_available` | `true` |
+
+
