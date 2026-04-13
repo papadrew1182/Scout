@@ -1,298 +1,309 @@
 # GitHub Issue Drafts
 
-Last built: 2026-04-13. Last reconciled after Sprint 1 residual closeout.
-Source: `docs/EXECUTION_BACKLOG.md`.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`.
 
-Copy-paste ready. One section per top-priority backlog item. Ordered by
-the ranked Top 25.
+Source: `docs/EXECUTION_BACKLOG.md`. Copy-paste ready, ordered by the
+post-Sprint-2-feature-work top 10. Every draft here is a strategic
+completion / observability / polish item — none of them are
+launch-stability work.
 
-## Sprint 1 closeout status (do not re-open these)
+## Closed items — do NOT re-open these
 
-Issues that have already landed in `feat/sprint1-verification-closeout`
-(`5f11821`) or `feat/sprint1-residual-closeout` (follow-up):
+All of the previously-drafted issues below have landed on `main` and
+been VERIFIED. If you suspect a regression, open a new bug issue
+against the specific symptom, do not reopen the old draft.
 
-- **#4 Render confirmation-flow UI inside ScoutPanel** — RESOLVED.
-  Backend: `orchestrator.chat()` surfaces `pending_confirmation`
-  structurally; new `confirm_tool` direct path. Frontend: confirm/cancel
-  card in `ScoutLauncher.tsx`. Backend pytest: 2 new
-  `TestPendingConfirmationPlumbing` tests. Browser pytest:
-  `ai-roundtrip.spec.ts` covers the round-trip when AI is enabled.
-- **#5 Add global frontend error boundary** — RESOLVED.
-  `scout-ui/components/ErrorBoundary.tsx` wraps the shell. Residual
-  closeout added a Playwright test gated on `EXPO_PUBLIC_SCOUT_E2E=true`.
-- **#6 ScoutPanel disabled-state handling** — RESOLVED.
-  `fetchReady()` + readyState machine + disabled-state card.
-  `ai-panel.spec.ts` stubs `/ready` to prove it.
-- **#8 Meals `prep.tsx` + `reviews.tsx` smoke coverage** — RESOLVED.
-  `meals-subpages.spec.ts` (3 tests).
-- **#10 Dev-mode ingestion button prod behavior** — RESOLVED.
-  Audit + `dev-mode.spec.ts` assertion.
-- **#2 Write-path E2E smoke suite (6 tests)** — PARTIAL.
-  `write-paths.spec.ts` landed with 6 tests. The residual closeout
-  tightened the draft-plan approve test so it no longer relies on a
-  loud skip.
-
-Issues that are **still open and the checklist below is current**:
-
-- **#1** Deployed AI-panel smoke against Railway + Vercel — BLOCKED on
-  operator access. See `docs/AI_OPERATOR_VERIFICATION.md`.
-- **#3** Deepen AI panel smoke further — RESIDUAL (round-trip test
-  landed; deeper coverage possible).
-- **#7** Production error reporting (Sentry-equivalent) — unchanged.
-- **#9** Wire `dietary_preferences` into generator — unchanged.
+- ~~Run `ai-panel.spec.ts` against Railway + Vercel for the first time~~
+  — **RESOLVED 2026-04-13** via `smoke@scout.app` direct HTTPS
+  round-trip + Railway log evidence + prod DB row deltas (`782c3ef`).
+- ~~Add write-path E2E smoke suite (6 tests)~~ — **RESOLVED** in Sprint
+  1 residual closeout.
+- ~~Deepen AI panel smoke — content + tool round-trip + role variants~~
+  — **RESOLVED** in Sprint 1 closeout + residual closeout.
+- ~~Render confirmation-flow UI inside ScoutPanel~~ — **RESOLVED** in
+  Sprint 1 closeout (`5f11821`).
+- ~~Add global frontend error boundary~~ — **RESOLVED** in Sprint 1
+  closeout + residual closeout.
+- ~~ScoutPanel disabled-state handling~~ — **RESOLVED** in Sprint 1
+  closeout (`5f11821`).
+- ~~Cover `meals/prep.tsx`, `meals/reviews.tsx`, weekly generation
+  loop with smoke tests~~ — **RESOLVED** in Sprint 1 closeout.
+- ~~Decide production behavior for dev-mode ingestion buttons~~ —
+  **RESOLVED** in Sprint 1 closeout.
+- ~~AI streaming response pipeline~~ — **RESOLVED** in `4e8d2e9`.
 
 ---
 
----
-
-## 1. Run `ai-panel.spec.ts` against Railway + Vercel for the first time
+## 1. Deployed browser smoke in CI against Vercel
 
 **Problem statement**
 
-The AI panel Playwright test (`smoke-tests/tests/ai-panel.spec.ts`) has
-never been recorded as run against the deployed URLs. The 9/9 deployed
-smoke pass in `docs/release_candidate_report.md` covered auth + adult
-surfaces only; the AI suite was not part of that run. Deploy drift
-between local main and production for the AI path is currently
-invisible.
+The production AI backend path is verified end-to-end via a direct
+HTTPS round-trip (`smoke@scout.app`), and Railway logs confirm the
+`ai_chat_*` pipeline is reaching the log layer. What is **not** wired
+up is a CI job that runs the full 28-test Playwright suite against
+`https://scout-ui-gamma.vercel.app` on every push. Deploy drift
+between local `main` and the Vercel bundle is currently invisible.
 
 **Acceptance criteria**
 
-- [ ] `npx playwright test smoke-tests/tests/ai-panel.spec.ts --config smoke-tests/playwright.config.ts` runs against `https://scout-ui-gamma.vercel.app` pointing at the production Railway backend and passes.
-- [ ] Result recorded in `docs/release_candidate_report.md` as "10/10 deployed smoke".
-- [ ] Railway logs spot-checked for one `ai_chat_success` line with the trace id from the run.
+- [ ] New GitHub Actions job `smoke-deployed` runs after each push to
+      `main` that produces a successful deploy.
+- [ ] Uses `SCOUT_SMOKE_ADULT_EMAIL` / `SCOUT_SMOKE_ADULT_PASSWORD`
+      from GitHub Actions secrets (mirroring the Railway env vars).
+- [ ] Points at `SCOUT_WEB_URL=https://scout-ui-gamma.vercel.app` and
+      `SCOUT_API_URL=https://scout-backend-production-9991.up.railway.app`.
+- [ ] Runs the full 28-test suite (or at minimum `auth`, `surfaces`,
+      `ai-panel`, `ai-roundtrip`).
+- [ ] Result posted to `docs/release_candidate_report.md` on each
+      successful run.
 
 **Evidence / source**
 
-- `AI_ROADMAP.md` §10 and §11 (Production AI Deployment State)
-- `docs/ROADMAP_RECONCILIATION.md` §3 (launch-sufficient but not "done")
-- `docs/release_candidate_report.md` lines covering the 9/9 deployed run
+- `AI_ROADMAP.md` §12, §13
+- `docs/EXECUTION_BACKLOG.md` top 10 item #1
+- `docs/AI_OPERATOR_VERIFICATION.md`
 
-**Labels:** `ai`, `ops`, `verification`, `scope:S`, `launch-gate`
+**Labels:** `ai`, `ops`, `verification`, `scope:S`
 
 ---
 
-## 2. Add write-path E2E smoke suite (six tests)
+## 2. Provider retry / fallback on Anthropic 5xx
 
 **Problem statement**
 
-Every main surface is exercised by read-path smoke only. Task
-completion, grocery approve, weekly payout, meal-plan approve,
-meal-review submit, and purchase-request convert all run through
-backend unit tests but have zero UI-level verification. Any regression
-in the write-path wiring in `scout-ui/` would escape CI.
+A single 5xx from Anthropic currently surfaces to the user as an error
+banner. No retry, no backoff. `AnthropicProvider.chat()` and
+`chat_stream()` both need a bounded retry + backoff path.
 
 **Acceptance criteria**
 
-- [ ] `smoke-tests/tests/write-path.spec.ts` (or split across files) contains six tests:
-  - [ ] Child completes a task with step-tracking.
-  - [ ] Parent approves a pending grocery item.
-  - [ ] Parent runs weekly payout and sees an earned-amount update.
-  - [ ] Parent approves a weekly meal plan.
-  - [ ] Parent or child submits a meal review.
-  - [ ] Parent converts a purchase request into a grocery item.
-- [ ] All six run against a seeded fresh database in CI and in local dev.
-- [ ] Total Playwright count updated in `docs/release_candidate_report.md`.
+- [ ] `AnthropicProvider.chat()` retries once on 5xx with exponential
+      backoff (e.g. 250ms + jitter).
+- [ ] `AnthropicProvider.chat_stream()` retries at stream-start on 5xx
+      (not mid-stream).
+- [ ] New backend test with a mocked 5xx asserts the retry path and
+      the final error copy when both attempts fail.
+- [ ] Log line `ai_chat_retry trace=... attempt=1 reason=...`.
 
 **Evidence / source**
 
-- `FRONTEND_ROADMAP.md` §12 (Smoke coverage)
-- `docs/ROADMAP_RECONCILIATION.md` §2 (implemented but not strongly verified)
+- `AI_ROADMAP.md` §1 — gaps
+- `BACKEND_ROADMAP.md` §7 — gaps
 
-**Labels:** `frontend`, `verification`, `smoke-tests`, `scope:M`
+**Labels:** `ai`, `backend`, `reliability`, `scope:S`
 
 ---
 
-## 3. Deepen AI panel smoke — content + tool round-trip + role variants
+## 3. Production error reporting wired into `ErrorBoundary`
 
 **Problem statement**
 
-`smoke-tests/tests/ai-panel.spec.ts` only asserts "no 5xx and no error
-banner." The test passes even if the assistant bubble is empty or the
-response is a stock "I can't help right now." It covers the adult
-personal surface only — no child, no parent, no confirmation, no
-handoff deep-link.
+The global `ErrorBoundary` exists and is verified via the gated
+`/__boom` Playwright route, but it logs to stdout only. Production JS
+errors are currently invisible unless a user reports them or they
+correlate with backend log noise.
 
 **Acceptance criteria**
 
-- [ ] Existing test is strengthened: assistant bubble contains non-empty text.
-- [ ] New test: "Ask Scout to add a task" → asserts a `personal_task` handoff card renders → tap → asserts the new task appears on `/personal`.
-- [ ] New test: child login → quick-action that would require a write tool → asserts a denial response and no crash.
-- [ ] New test: parent-surface login → open ScoutPanel → asserts quick-actions render.
-- [ ] New test (depends on #4): trigger a confirmation-required tool → asserts the panel surfaces a confirm affordance.
+- [ ] Error provider (Sentry-equivalent) chosen and documented in
+      `docs/private_launch.md`.
+- [ ] `dsn` exposed via `EXPO_PUBLIC_*` env var in the Vercel build.
+- [ ] `ErrorBoundary.componentDidCatch` forwards errors upstream.
+- [ ] Global unhandled-promise-rejection handler also reports.
+- [ ] A deliberate error thrown via the `/__boom` test path shows up
+      in the provider within 60 seconds.
 
 **Evidence / source**
 
-- `AI_ROADMAP.md` §10 (Browser-Based AI Verification) and §5 (ScoutPanel Chat UX)
-- `FRONTEND_ROADMAP.md` §10 (AI Panel UX and Handoff)
-
-**Labels:** `ai`, `frontend`, `verification`, `scope:M`
-
----
-
-## 4. Render confirmation-flow UI inside ScoutPanel
-
-**Problem statement**
-
-The backend marks 10 shared-write tools as confirmation-required
-(`backend/app/ai/tools.py:35-47`). On the first call they return
-`{confirmation_required: true, ...}`, expecting a second call with
-`confirmed=true`. `ScoutLauncher.tsx` does not render any affordance for
-this — users hit the gate, see nothing, and have to re-ask in plain
-English. Shared-write tools effectively dead-end in the panel today.
-
-**Acceptance criteria**
-
-- [ ] `ScoutPanel` recognizes `result.confirmation_required` and renders a confirm + cancel affordance with the tool name + summary.
-- [ ] Tapping confirm re-invokes `/api/ai/chat` with `confirmed: true`.
-- [ ] Tapping cancel dismisses the affordance without firing the tool.
-- [ ] Covered by the confirmation-round-trip sub-test in issue #3.
-
-**Evidence / source**
-
-- `AI_ROADMAP.md` §3 (Tool Registry / Confirmation / Audit) and §5
-- `BACKEND_ROADMAP.md` §7 (AI Orchestration — confirmation-gated writes)
-
-**Labels:** `ai`, `frontend`, `ux`, `scope:M`
-
----
-
-## 5. Add global frontend error boundary
-
-**Problem statement**
-
-Expo Router / React Native Web does not use Next.js `error.tsx` /
-`loading.tsx` conventions. A render crash anywhere in the tree produces
-a blank screen with no recovery path.
-
-**Acceptance criteria**
-
-- [ ] `scout-ui/components/ErrorBoundary.tsx` exists and wraps `app/_layout.tsx`.
-- [ ] Renders a "Something went wrong — reload?" fallback with a reload button.
-- [ ] Playwright test forces a thrown error inside a surface and asserts the boundary fallback renders.
-- [ ] Error is forwarded to the production error reporting provider (depends on issue #7).
-
-**Evidence / source**
-
-- `FRONTEND_ROADMAP.md` §11 (Loading / Empty / Error / Retry States)
-
-**Labels:** `frontend`, `ux`, `reliability`, `scope:S`
-
----
-
-## 6. ScoutPanel disabled-state handling
-
-**Problem statement**
-
-`ScoutLauncher.tsx` does not probe `/ready.ai_available` before opening
-the chat modal. If the Anthropic API key is ever removed or rotated, the
-user will hit a live 5xx on their first quick-action tap. The smoke
-test gracefully skips in this state; the app does not.
-
-**Acceptance criteria**
-
-- [ ] `ScoutPanel.open()` (or the `_layout.tsx` wrapper) reads `/ready` and caches `ai_available`.
-- [ ] If `ai_available === false`, the panel renders a "Scout AI is currently unavailable" state instead of the chat UI.
-- [ ] Playwright test stubs `/ready` to return `ai_available: false` and asserts the disabled state.
-
-**Evidence / source**
-
-- `AI_ROADMAP.md` §5 (ScoutPanel Chat UX — gaps) and ledger item 11
-
-**Labels:** `ai`, `frontend`, `reliability`, `scope:S`
-
----
-
-## 7. Wire production error reporting (Sentry or equivalent)
-
-**Problem statement**
-
-Production JS errors in `scout-ui` are currently invisible. A broken
-build on the Vercel side would be found only when a user reports it,
-or indirectly via backend log noise.
-
-**Acceptance criteria**
-
-- [ ] Error provider configured in `scout-ui` with `dsn` via env var.
-- [ ] Errors caught by the global error boundary (issue #5) report upstream.
-- [ ] Unhandled promise rejections in the app also report.
-- [ ] `docs/private_launch.md` documents the setup and env var.
-
-**Evidence / source**
-
-- `FRONTEND_ROADMAP.md` §13 (Deployment / Web Readiness) — gaps
+- `FRONTEND_ROADMAP.md` §11, §13 — gaps
 
 **Labels:** `frontend`, `ops`, `reliability`, `scope:M`
 
 ---
 
-## 8. Cover `meals/prep.tsx`, `meals/reviews.tsx`, and the weekly generation loop with smoke tests
+## 4. Wire `dietary_preferences` into the weekly meal plan generator
 
 **Problem statement**
 
-`scout-ui/app/meals/prep.tsx` (122 lines) and `scout-ui/app/meals/reviews.tsx`
-(417 lines) are real implementations with zero Playwright coverage.
-The AI-driven weekly plan generation loop in `meals/this-week.tsx` is
-also unsmoked.
+`dietary_preferences` table exists (migration `005_meals.sql`) but
+`weekly_meal_plan_service.py` (790 lines) never reads it. Families
+with real dietary restrictions get generic plans.
 
 **Acceptance criteria**
 
-- [ ] Playwright loads `/meals/prep` and asserts either the "Sunday Prep" header or the no-plan empty state renders.
-- [ ] Playwright loads `/meals/reviews` and asserts either the rating UI or the empty state renders.
-- [ ] Playwright loads `/meals/this-week` after a plan exists in the seed and asserts the generation buttons render. (Does NOT drive a real AI generation — seed an approved plan instead.)
+- [ ] `weekly_meal_plan_service.build_context()` reads
+      `dietary_preferences` rows for the target family.
+- [ ] Prompt includes a "constraints" block describing allergies,
+      dislikes, and diet labels.
+- [ ] New test in `test_weekly_meal_plans.py`: family with
+      `nut_allergy=true` does not surface nut-based staples.
 
 **Evidence / source**
 
-- `FRONTEND_ROADMAP.md` §6 (Meals UX) and Unknowns list
-- `AI_ROADMAP.md` §7 (Meal Generation Workflow)
-
-**Labels:** `frontend`, `verification`, `smoke-tests`, `scope:S`
-
----
-
-## 9. Wire `dietary_preferences` into the weekly meal plan generator
-
-**Problem statement**
-
-The `dietary_preferences` table exists (migration `005_meals.sql`) but
-`backend/app/services/weekly_meal_plan_service.py` (790 lines) never
-reads it. Families with real dietary restrictions get generic plans.
-
-**Acceptance criteria**
-
-- [ ] `weekly_meal_plan_service.build_context()` reads `dietary_preferences` rows for the target family.
-- [ ] The generation prompt includes a "constraints" block describing allergies, dislikes, and diet labels.
-- [ ] New test in `backend/tests/test_weekly_meal_plans.py` asserts that a plan generated for a family with `nut_allergy=true` does not surface nut-based staples.
-
-**Evidence / source**
-
-- `BACKEND_ROADMAP.md` §5 (Meals — gaps)
-- `AI_ROADMAP.md` §7 (Meal Generation Workflow — gaps)
+- `BACKEND_ROADMAP.md` §5 — gaps
+- `AI_ROADMAP.md` §7 — gaps
 
 **Labels:** `backend`, `ai`, `scope:S`
 
 ---
 
-## 10. Decide production behavior for dev-mode ingestion buttons
+## 5. Scheduled daily brief delivery
 
 **Problem statement**
 
-`scout-ui/app/personal/index.tsx` renders Google Calendar and YNAB
-ingestion buttons behind a `DEV_MODE` flag. The flag has never been
-validated against the production Vercel build — behavior is UNKNOWN.
-A user clicking one in prod would fire a real ingestion request with
-demo payloads.
+`generate_daily_brief` works on demand but nobody sees the output
+without tapping a button. No cron, no push, no Action Inbox entry on
+a schedule.
 
 **Acceptance criteria**
 
-- [ ] Confirm current production behavior (visible or hidden).
-- [ ] If visible, hide by default in prod builds.
-- [ ] Playwright smoke test asserts the buttons are not rendered when `process.env.EXPO_PUBLIC_DEV_MODE !== "true"`.
-- [ ] `docs/private_launch.md` documents the decision.
+- [ ] Daily job (Railway scheduled service or APScheduler) runs
+      `generate_daily_brief` for each active adult at 06:00 local.
+- [ ] Brief is written as a `parent_action_item` so it surfaces in the
+      existing Action Inbox.
+- [ ] Backend test covers the cron entry point + action-item creation.
+- [ ] Documented in `docs/private_launch.md`.
 
 **Evidence / source**
 
-- `FRONTEND_ROADMAP.md` §3 (Personal surface — missing UX/product work)
-- `docs/ROADMAP_RECONCILIATION.md` §3
+- `AI_ROADMAP.md` §8 — gaps
+- Backend §7 deferred ledger
 
-**Labels:** `frontend`, `ops`, `scope:S`, `launch-gate`
+**Labels:** `ai`, `backend`, `scope:M`
+
+---
+
+## 6. AI cost / latency observability
+
+**Problem statement**
+
+The only AI observability today is `ai_chat_start` / `ai_chat_success`
+/ `ai_chat_fail` stdout log lines. No dashboard, no alert, no per-family
+cost tracking, no token budgeting.
+
+**Acceptance criteria**
+
+- [ ] Structured log format on success: `trace_id`, `conversation_id`,
+      `tool_name` (or `null` if no tool), `duration_ms`, `input_tokens`,
+      `output_tokens`, `model`.
+- [ ] Minimal aggregation script in `scripts/` that reports totals per
+      family per day by parsing Railway log archives.
+- [ ] Documented in `docs/private_launch.md` with a sample output.
+- [ ] No production code path is load-bearing on the aggregation; it
+      runs out-of-band.
+
+**Evidence / source**
+
+- `AI_ROADMAP.md` §11 — gaps
+
+**Labels:** `ai`, `ops`, `observability`, `scope:M`
+
+---
+
+## 7. Streaming assertion depth in Playwright
+
+**Problem statement**
+
+The SSE streaming path is live and used by the panel by default, but
+no Playwright test asserts chunk-by-chunk rendering. The
+`ai-panel.spec.ts` / `ai-roundtrip.spec.ts` tests only assert final
+content, not the stream's incremental behavior.
+
+**Acceptance criteria**
+
+- [ ] New `smoke-tests/tests/ai-streaming.spec.ts` (or extension to
+      `ai-panel.spec.ts`) that:
+  - [ ] Opens the panel and fires a quick action.
+  - [ ] Observes the assistant bubble's text content growing across
+        multiple observation points before the final `done`.
+  - [ ] Skips if `ai_available=false`.
+
+**Evidence / source**
+
+- `AI_ROADMAP.md` §5, §12
+
+**Labels:** `ai`, `frontend`, `verification`, `scope:S`
+
+---
+
+## 8. AI-settings toggle smoke
+
+**Problem statement**
+
+The Settings page has adult-only toggles for `allow_general_chat` and
+`allow_homework_help` wired to `PATCH /api/families/{id}/ai-settings`.
+Backend prompt variants for all four combinations are covered by
+`test_ai_context.py`, but no Playwright test exercises the UI round-trip.
+
+**Acceptance criteria**
+
+- [ ] New Playwright test that logs in as an adult, navigates to
+      Settings, toggles each of the two flags, and asserts the UI
+      reflects the new state after the PATCH.
+- [ ] Optional: fire a child-surface chat after each toggle and assert
+      the response category matches the expected variant (may be
+      flaky; skip if so).
+
+**Evidence / source**
+
+- `FRONTEND_ROADMAP.md` §8
+- `AI_ROADMAP.md` §10
+
+**Labels:** `ai`, `frontend`, `verification`, `scope:S`
+
+---
+
+## 9. Bonus / penalty parent payout endpoint + UI wiring
+
+**Problem statement**
+
+The parent payout card renders "Bonus" and "Penalty" buttons but the
+handlers are explicit stubs. No backend endpoint, no model support, no
+test.
+
+**Acceptance criteria**
+
+- [ ] Backend: `POST /families/{id}/allowance/adjustments` with
+      `{member_id, cents, reason, kind ∈ {bonus, penalty}}`.
+- [ ] Migration `016_allowance_adjustments.sql` adds the
+      `adjustment_kind` column (or separate table, whichever fits the
+      existing `allowance_ledger` model).
+- [ ] Adjustment row appears in the payout calculation path.
+- [ ] Backend test covers create + appears-in-payout.
+- [ ] Parent payout card wires the two buttons through.
+- [ ] Playwright test covers one bonus + one penalty adjustment.
+
+**Evidence / source**
+
+- `BACKEND_ROADMAP.md` §2 — gaps
+- `FRONTEND_ROADMAP.md` §4 — gaps
+
+**Labels:** `backend`, `frontend`, `full-stack`, `scope:M`
+
+---
+
+## 10. Prompt caching for static system-prompt prefix
+
+**Problem statement**
+
+Every turn rebuilds the system prompt from scratch. At current volume
+this is fine; at higher volume it's a measurable cost.
+`AnthropicProvider.chat()` can use the Anthropic SDK's prompt cache
+flags for the unchanging prefix (the tool definitions + static
+persona copy).
+
+**Acceptance criteria**
+
+- [ ] `AnthropicProvider.chat()` marks the static prompt prefix as
+      cacheable via the SDK's cache flag.
+- [ ] Test asserts the cache flag is set on the request.
+- [ ] Documentation note in `AI_ROADMAP.md` §1 on the cache hit rate
+      on a hot conversation.
+
+**Evidence / source**
+
+- `AI_ROADMAP.md` §1 — gaps
+- `AI_ROADMAP.md` deferred ledger #8
+
+**Labels:** `ai`, `backend`, `performance`, `scope:S`

@@ -1,6 +1,6 @@
 # Scout Frontend Roadmap
 
-Last reconciled: 2026-04-13 against commit `9481f8f` on `main`.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`.
 
 This is the frontend roadmap for Scout. The frontend lives in `scout-ui/`
 (Expo / React Native Web, deployed via `expo export --platform web`).
@@ -168,22 +168,36 @@ two summary sections at the bottom separate those.
 
 **Recommended next step:** add E2E for the approve-pending flow — it's the highest-value missing smoke.
 
-## 8. Settings — Accounts & Access
+## 8. Settings — Accounts & Access + AI Flags
 
 **Status:** VERIFIED
 
 **What exists:**
-- `scout-ui/app/settings/index.tsx` — My Account (password change, session list, revoke others) + Accounts & Access (adults only: create / reset password / activate-deactivate / revoke sessions / last-login display)
+- `scout-ui/app/settings/index.tsx` — My Account (password change, session
+  list, revoke others) + Accounts & Access (adults only: create / reset
+  password / activate-deactivate / revoke sessions / last-login display).
+- **AI settings (new):** two adult-only toggle rows for
+  `allow_general_chat` and `allow_homework_help`. PATCH
+  `/api/families/{id}/ai-settings`. These flags drive the child-surface
+  prompt variants in `backend/app/ai/context.py`.
 
-**Evidence:** `surfaces.spec.ts` asserts role visibility — adult sees "Accounts & Access", child does not.
+**Evidence:** `surfaces.spec.ts` asserts role visibility — adult sees
+"Accounts & Access", child does not. `settings/index.tsx` is tracked in
+git and deployed; the AI-toggle rows are reachable in the local dev
+build.
 
-**Missing verification:** no E2E for actually creating a new account or resetting a password.
+**Missing verification:**
+- No E2E for creating a new account or resetting a password.
+- No E2E for toggling the AI flags and asserting the child prompt
+  variant changes (backend variants themselves are covered by
+  `test_ai_context.py`).
 
 **Missing UX/product work:**
 - No confirmation dialog before deactivating an account.
 - No audit log visible to the user.
 
-**Recommended next step:** add a confirmation dialog for destructive actions; E2E for account creation.
+**Recommended next step:** smoke for the AI-toggle round-trip; confirmation
+dialog for destructive actions; E2E for account creation.
 
 ## 9. Parent Action Inbox
 
@@ -205,54 +219,101 @@ two summary sections at the bottom separate those.
 
 ## 10. AI Panel UX and Handoff
 
-**Status:** IMPLEMENTED (Sprint 1 closeout, 2026-04-13 — confirmation flow + disabled state landed; smoke deepened)
+**Status:** VERIFIED (Sprint 2, 2026-04-13 — SSE streaming landed in
+`4e8d2e9`; all four previous gaps closed)
 
 **What exists:**
-- `scout-ui/components/ScoutLauncher.tsx` — slide-up chat modal with:
+- `scout-ui/components/ScoutLauncher.tsx` (597 lines) — slide-up chat
+  modal with:
   - Quick-action chips (6 pre-canned prompts)
   - Message history (user bubbles right, assistant left)
-  - `X-Scout-Trace-Id` header for backend correlation (commit `9481f8f`)
-  - Handoff cards rendered from `result.handoff` — tap deep-links into the created entity
-  - **Confirmation card** rendered from `result.pending_confirmation` — confirm/cancel affordance that re-invokes `/api/ai/chat` with a structured `confirm_tool` payload (Sprint 1 closeout, `5f11821`)
-  - **Disabled-state card** when `/ready.ai_available=false` — probed via `fetchReady()` on panel open; the chat UI never mounts in the disabled state (Sprint 1 closeout, `5f11821`)
-- `scout-ui/lib/api.ts :: sendChatMessage()` — single POST to `/api/ai/chat`, awaits full JSON response. Options signature now accepts `{ confirmTool }` for the confirmation resubmit path.
+  - **SSE streaming** via `sendChatMessageStream()` — typed
+    `text` / `tool_start` / `tool_end` / `done` / `error` events patch
+    the last assistant bubble as chunks arrive. Non-streaming
+    `sendChatMessage()` is the automatic fallback if the stream errors
+    before producing any text.
+  - `X-Scout-Trace-Id` header forwarded on both streaming and
+    non-streaming calls.
+  - Handoff cards rendered from `result.handoff` — tap deep-links into
+    the created entity via `router.push(route_hint)`.
+  - **Confirmation card** rendered from `pending_confirmation` —
+    confirm/cancel affordance that re-invokes `/api/ai/chat` with a
+    `confirm_tool` payload (bypassing the LLM round).
+  - **Disabled-state card** driven by a `readyState` state machine
+    (`checking | ok | disabled | error`). On open, the panel calls
+    `fetchReady()`; if `ai_available=false` the chat UI never mounts.
+- `scout-ui/lib/api.ts` — `fetchReady()`, `sendChatMessage()`, and
+  `sendChatMessageStream()` with typed `StreamEvent`, `AIHandoff`,
+  `AIPendingConfirmation`, `SendChatOptions`.
 
-**Evidence:** `smoke-tests/tests/ai-panel.spec.ts` — **3 tests**: content assertion (non-empty response), disabled-state (stub `/ready` via `page.route()`), child-surface open-without-crash. Plus new round-trip tests in `ai-roundtrip.spec.ts` when AI is enabled (see §12).
+**Evidence:**
+- `smoke-tests/tests/ai-panel.spec.ts` — 3 tests: content assertion,
+  disabled-state (via `page.route()` stub), child-surface open.
+- `smoke-tests/tests/ai-roundtrip.spec.ts` — 2 tests: `add_grocery_item`
+  quick-action round-trip with handoff tap, `create_event` confirmation
+  round-trip.
+- **Production backend verified** 2026-04-13 via direct HTTPS round-trip
+  + one real adult-user pair captured in Railway logs (see
+  `AI_ROADMAP.md` §13).
 
 **Missing verification:**
-- No test covers conversation resume across panel opens (conversations persist server-side).
-- AI round-trip + confirmation round-trip run only when `ai_available=true` at test start (they skip otherwise).
+- Streaming rendering path — the chunks arrive but no Playwright test
+  asserts per-chunk updates.
+- Deployed browser smoke against Railway + Vercel — direct HTTPS
+  round-trip covers the backend path; full Playwright against Vercel is
+  still operator-only.
+- Conversation resume across panel opens.
 
 **Missing UX/product work:**
-- **No streaming.** The panel shows a spinner until the whole response arrives. Biggest perceived-latency issue in the product.
-- No conversation resume — server persists conversations but the panel starts blank each open.
-- No typing indicator (because no streaming).
+- No conversation resume — server persists conversations but the panel
+  starts blank each open.
 - No per-surface quick-action overrides (same 6 chips everywhere).
 
-**Recommended next step:** streaming response pipeline is the single biggest UX win for AI; tracked as AI Roadmap Phase A item.
+**Recommended next step:** wire a CI job that runs the AI panel +
+roundtrip smoke against `scout-ui-gamma.vercel.app` using the
+Railway-stored smoke credentials.
 
 ## 11. Loading / Empty / Error / Retry States
 
-**Status:** IMPLEMENTED (Sprint 1 closeout, 2026-04-13 — global error boundary landed)
+**Status:** VERIFIED (Sprint 1 residual closeout, 2026-04-13 — global
+error boundary landed + Playwright verification via gated `/__boom`
+route)
 
 **What exists:**
 - Per-component `ActivityIndicator` (loading)
-- Error text with retry button on data-fetching components (`ActionInbox.tsx`, `meals/prep.tsx`, parent dashboard)
+- Error text with retry button on data-fetching components
+  (`ActionInbox.tsx`, `meals/prep.tsx`, parent dashboard)
 - Empty-state messaging on every list view
-- **Global `ErrorBoundary` (new)** in `scout-ui/components/ErrorBoundary.tsx`, wrapped around the AuthProvider + AppShell in `app/_layout.tsx`. Catches render-time errors anywhere below the shell and renders a "Something went wrong — Reload" fallback. Logs via `console.error("[Scout ErrorBoundary]", ...)` for forwarding to a future error-reporting provider.
+- **Global `ErrorBoundary`** in `scout-ui/components/ErrorBoundary.tsx`,
+  wrapped around `AuthProvider + AppShell` in `app/_layout.tsx`. Catches
+  render-time errors anywhere below the shell and renders a
+  "Something went wrong — Reload" fallback, with
+  `data-testid="scout-error-boundary"`. Logs via
+  `console.error("[Scout ErrorBoundary]", ...)`.
+- **DEV/E2E-only `/__boom` route** (`scout-ui/app/__boom.tsx`) that
+  triggers a render crash when `EXPO_PUBLIC_SCOUT_E2E=true` at build
+  time, so Playwright can verify the boundary end-to-end. Production
+  builds render an inert "Not available" stub.
 
-**Missing verification:** no Playwright test forces a render crash to assert the boundary renders. The boundary is currently verified by code review + manual inspection.
+**Evidence:** `smoke-tests/tests/error-boundary.spec.ts` exercises the
+boundary via `/__boom` when the E2E flag is set.
+
+**Missing verification:** boundary is not asserted against production
+builds (expected — the gate is deliberate).
 
 **Missing UX/product work:**
-- No production error reporting provider (Sentry or equivalent) yet — the boundary logs to stdout only.
+- No production error reporting provider (Sentry or equivalent) yet —
+  the boundary logs to stdout only.
 - No skeleton loaders — everything is `ActivityIndicator` spinners.
 - No offline / stale-data banner.
 
-**Recommended next step:** wire an error-reporting provider into `ErrorBoundary.componentDidCatch` in Sprint 2.
+**Recommended next step:** wire an error-reporting provider into
+`ErrorBoundary.componentDidCatch` in Sprint 2.
 
 ## 12. Smoke Coverage
 
-**Status:** VERIFIED (Sprint 1 residual closeout, 2026-04-13 — suite expanded from 13 to 28 tests)
+**Status:** VERIFIED locally / PARTIAL against deployed URLs (28 tests
+across 8 files; not yet run through CI against `scout-ui-gamma.vercel.app`)
 
 **What exists:**
 - `smoke-tests/tests/auth.spec.ts` — 5 tests (auth happy path + error paths)
@@ -267,14 +328,18 @@ two summary sections at the bottom separate those.
 Total: **28 Playwright tests** (was 13). The only skips now are intentional capability gates (AI enabled / E2E hooks flag), not coverage holes.
 
 **Missing verification — remaining UNCOVERED flows:**
-- AI tool execution full round-trip through the UI (create task via AI → verify on Personal).
-- AI `confirmation_required` UI round-trip (confirm tap surfaces a second chat call with `confirm_tool`).
-- Handoff card deep-link taps.
+- AI tool execution that asserts the created entity is visible on its
+  target screen (handoff taps verify navigation, not target content).
+- Streaming rendering path — chunks arrive but no per-chunk assertion.
 - Account create / password reset through the adult settings screen.
-- Render crash forcing the new global error boundary to render its fallback.
-- Deployed browser smoke against Railway + Vercel (still launch-local-only; operator checklist in `AI_ROADMAP.md §10`).
+- AI-settings toggles on the Settings screen (`allow_general_chat`,
+  `allow_homework_help`).
+- Deployed browser smoke against Railway + Vercel in CI (backend path
+  already verified via direct HTTPS round-trip; operator checklist in
+  `docs/AI_OPERATOR_VERIFICATION.md`).
 
-**Recommended next step:** AI tool round-trip + confirmation UI round-trip are the two highest-value remaining write-path tests.
+**Recommended next step:** wire deployed-URL smoke into CI using the
+Railway-stored `SCOUT_SMOKE_ADULT_*` credentials.
 
 ## 13. Deployment / Web Readiness
 
@@ -286,7 +351,11 @@ Total: **28 Playwright tests** (was 13). The only skips now are intentional capa
 - `scout-ui/railway.json` — same build, serve `dist`, healthcheck `/`
 - `scout-ui/app.json` — Expo config with metro web bundler, single output
 
-**Evidence:** deployed at `https://scout-ui-gamma.vercel.app`; 9/9 deployed smoke pass per `docs/release_candidate_report.md`.
+**Evidence:** deployed at `https://scout-ui-gamma.vercel.app`; 9/9
+deployed auth + surfaces smoke passed at initial launch 2026-04-12
+(`c29a5d0`); production AI backend path VERIFIED 2026-04-13
+(`782c3ef`) via direct HTTPS round-trip. Deployed-URL **browser**
+Playwright in CI is the one residual — tracked as top backlog item.
 
 **Missing verification:**
 - No bundle-size budget or CI gate.
@@ -310,11 +379,18 @@ Total: **28 Playwright tests** (was 13). The only skips now are intentional capa
 
 ## Recommended Next Frontend Sequence
 
-1. **Write-path smoke** — task completion, approve pending grocery, run weekly payout. Converts read-only smoke into a real regression net.
-2. **Global error boundary** — cheapest fix for the worst-case blank-screen failure.
-3. **AI panel depth** — one tool round-trip smoke + streaming pipeline + confirmation UI.
-4. **Bonus / penalty parent payout** — blocked on backend endpoint; UI is already the right home.
-5. **DEV_MODE ingestion gate audit** — decide prod behavior before next deploy.
+Sprint 1 work is complete. Remaining Sprint 2 items, in priority order:
+
+1. **Deployed browser smoke in CI** — wire the Playwright suite against
+   `scout-ui-gamma.vercel.app` using the Railway-stored smoke credentials.
+2. **Production error reporting (Sentry-equivalent)** — wire into
+   `ErrorBoundary.componentDidCatch`.
+3. **Streaming assertion depth** — one Playwright test that asserts
+   per-chunk updates arrive before `done`.
+4. **AI-settings toggle smoke** — verify the `allow_general_chat` /
+   `allow_homework_help` flags round-trip from the Settings UI.
+5. **Bonus / penalty parent payout** — blocked on backend endpoint; UI
+   is already the right home.
 6. **RexOS / Exxir product decision** — build, remove, or re-label.
 
 ---
@@ -339,26 +415,31 @@ Surfaces with code **and** evidence (smoke or deployed verification):
 
 Passed the launch gate; not strategically done:
 
-- **AI panel** — one happy-path test covers entry; tool execution, confirmation, history, streaming all absent.
-- **Meals subpages (`prep.tsx`, `reviews.tsx`)** — real implementations but no smoke.
-- **Write-path coverage across the app** — every main surface is read-path only in smoke.
-- **Error states** — per-component only; no global boundary.
+- **Deployed browser smoke in CI** — 28 Playwright tests run locally
+  and against a local stack; no CI job runs them against
+  `scout-ui-gamma.vercel.app` yet.
+- **Streaming assertion depth** — the panel uses SSE streaming but no
+  test asserts per-chunk updates.
+- **AI-settings toggle round-trip** — adult can toggle the flags but no
+  smoke verifies the round-trip.
 - **Bonus / penalty parent UX** — buttons rendered, handlers are stubs.
-- **Dev-mode ingestion buttons** — behind a flag that hasn't been audited for prod.
 - **RexOS / Exxir panels** — placeholder copy only.
-- **Household insight banner** — rule-based, not AI-driven (may be fine permanently).
+- **Household insight banner** — rule-based, not AI-driven (may be fine
+  permanently).
 - **Notification badge for Action Inbox** — does not exist.
+- **Production error reporting** — global `ErrorBoundary` logs to
+  stdout; no Sentry-equivalent.
 - **Bundle / Web Vitals / accessibility** — unmeasured.
 
 ## Front-end Deferred Ledger
 
 | Item | Why deferred | Launch impact | Next window |
 |---|---|---|---|
-| Write-path E2E smoke (task complete, grocery approve, payout, meal-plan approve) | Read-path smoke + backend tests gave adequate confidence | Medium — regressions in write flows wouldn't be caught by CI | Next sprint |
-| Global error boundary | Component-level handling covers 99% of cases | Low — worst case is a blank surface | Next sprint |
-| AI streaming responses | Request/response works; streaming is UX debt | Perceived latency on long replies | See AI Roadmap Phase A |
-| AI panel smoke depth (tools, confirmation, resume) | Happy-path smoke was the launch bar | Medium | Next sprint |
-| Confirmation flow UI inside ScoutPanel | Backend returns `confirmation_required` but UI has no affordance | Write tools requiring confirmation currently awkward | AI Roadmap Phase B |
+| Deployed browser smoke in CI | Direct HTTPS round-trip verified the backend AI path; browser-against-Vercel run is operator-only today | Medium — deploy drift between local and Vercel can land unseen | Sprint 2 |
+| Streaming assertion depth | SSE shipped and panel consumes it; basic smoke is enough for launch | Low | Sprint 2 tail |
+| AI-settings toggle smoke | Backend variants covered by pytest | Low | Sprint 2 |
+| Conversation resume in ScoutPanel | Server persists conversations; panel always opens blank | Low | Later |
+| Handoff target-screen content assertion | Current smoke verifies navigation, not target content | Low | Sprint 2 |
 | Bonus / penalty parent payout UX | Backend not yet built | None — parents can still run payout | Next sprint |
 | RexOS / Exxir personal-surface panels | Placeholder copy only | None — not exposed as a feature | Later |
 | Dev-mode ingestion button audit | Gate exists but not prod-validated | Low — only visible if `DEV_MODE` leaks | Next sprint |
@@ -374,12 +455,15 @@ Passed the launch gate; not strategically done:
 
 ## Front-end Unknowns
 
-- Does the current prod build actually hide dev-mode ingestion buttons, or is the flag being set at runtime in production? Needs manual verification.
-- Do meals `prep.tsx` and `reviews.tsx` handle the empty-plan / error paths correctly at UI level? Code is present and structured, but not smoked.
-- Does `ScoutLauncher` render the AI `result.handoff` button correctly for every entity type? Only the chat response has been smoke-checked.
-- Is the parent household insight banner's `off_track` / `at_risk` logic reviewed by a product owner, or is it a rough heuristic nobody has validated?
-- Does `sendChatMessage` gracefully handle a 60s timeout without tearing the panel state? No test forces this.
-- Raw `grep -c "test("` across `smoke-tests/tests/*.spec.ts` shows 13 test declarations (auth 5 + surfaces 7 + ai-panel 1). `docs/release_candidate_report.md` (commit `549723b`) records 12/12 at preflight. Either a test was added post-preflight or the preflight count missed one — needs a fresh `npx playwright test` run to confirm.
+- Does the parent household insight banner's `off_track` / `at_risk`
+  logic match a product owner's intent, or is it a rough heuristic?
+- Does `sendChatMessageStream` gracefully handle a 60s timeout or a
+  mid-stream disconnect without tearing the panel state? No Playwright
+  test forces this.
+- Does the deployed Vercel bundle render every handoff entity type
+  correctly (`personal_task`, `event`, `meal_plan`, `grocery_item`,
+  `purchase_request`, `note`, `chore_instance`)? Local tests cover a
+  subset; deployed-URL coverage is operator-only.
 
 ---
 
@@ -387,18 +471,32 @@ Passed the launch gate; not strategically done:
 
 Prioritized deferred work, worst-impact-first:
 
-1. **Write-path smoke suite** (§12) — task completion, grocery approve, run weekly payout, meal-plan approve, meal review submit. Converts read-only smoke into a real regression net. Highest leverage; no backend dependency.
-2. **Global error boundary** (§11) — single top-level `ErrorBoundary` in `_layout.tsx`. Cheapest fix for the worst-case blank-screen failure mode.
-3. **AI panel tool-call + confirmation smoke** (§10) — at least one write-tool round-trip asserted, including `confirmation_required: true` branch. Covers the highest-risk interaction surface.
-4. **Meals `prep.tsx` + `reviews.tsx` smoke** (§6) — code exists (122 and 417 lines respectively) but both pages are UNKNOWN until exercised by at least a page-load assertion.
-5. **AI response streaming pipeline** (§10) — request/response works but there's no token-streaming UI. Biggest perceived-latency issue in the product. Blocks on AI Roadmap Phase A.
-6. **Confirmation-flow UI inside ScoutLauncher** (§10) — backend returns `confirmation_required: true` on gated writes but the panel has no affordance to confirm, so users re-ask in plain English.
-7. **Parent payout bonus / penalty handlers** (§4) — UI buttons are rendered but "not implemented yet". Blocked on backend endpoints landing.
-8. **Dev-mode ingestion button prod audit** (§3) — the `DEV_MODE` gate has not been validated against the production Vercel build; behavior is UNKNOWN.
-9. **RexOS / Exxir personal-surface panels** (§3) — product decision: build, remove, or re-label as "coming soon". Placeholder copy only today.
-10. **Production error reporting (Sentry or equivalent)** (§13) — production JS errors are currently invisible. No provider chosen.
+1. **Deployed browser smoke in CI** (§12, §10) — wire Playwright against
+   `scout-ui-gamma.vercel.app` using the Railway-stored smoke credentials.
+   Single biggest trust gap left.
+2. **Production error reporting (Sentry or equivalent)** (§11, §13) —
+   global `ErrorBoundary` exists and is tested; it logs to stdout only.
+3. **Streaming assertion depth** (§10) — SSE path is live and used; no
+   Playwright test asserts chunk-by-chunk rendering.
+4. **AI-settings toggle smoke** (§8) — Settings page now has
+   `allow_general_chat` / `allow_homework_help` toggles; no smoke
+   verifies the PATCH round-trip or the resulting child-prompt variant.
+5. **Parent payout bonus / penalty handlers** (§4) — UI buttons
+   rendered; handlers are stubs. Blocked on backend endpoint landing.
+6. **Conversation resume across sessions** (§10) — server persists
+   conversations; panel always opens blank.
+7. **Account create / password reset smoke** (§8) — adult-facing flows
+   not covered by Playwright.
+8. **Handoff target-screen content assertion** (§10) — taps verify
+   navigation; no test asserts the new entity is visible on the target
+   screen.
+9. **RexOS / Exxir personal-surface panels** (§3) — product decision:
+   build, remove, or re-label as "coming soon". Placeholder copy only.
+10. **Bundle-size CI gate + Web Vitals** (§13) — no measurement today.
 
-See the full `Front-end Deferred Ledger` table above for the long tail (skeleton loaders, Web Vitals, accessibility, mobile-web, multi-member session switching, offline/PWA, etc.).
+See the full `Front-end Deferred Ledger` table above for the long tail
+(skeleton loaders, accessibility, mobile-web, multi-member session
+switching, offline/PWA, etc.).
 
 ---
 
@@ -406,11 +504,19 @@ See the full `Front-end Deferred Ledger` table above for the long tail (skeleton
 
 Ranked by evidence strength and launch-readiness:
 
-1. **Auth UX** (§2) — 5 smoke tests (adult login, child login, bad password, sign-out, invalid-token recovery). Most-covered surface in the repo.
-2. **Settings — Accounts & Access** (§8) — role visibility asserted both ways (adult sees, child does not); session management flows exist; page loads asserted for both roles.
-3. **App Shell / Nav / Scout Launcher** (§1) — transitively smoked by every surface test; role-gated nav verified; shell has been stable across all releases.
-4. **Deployment / Web Readiness** (§13) — Docker + Vercel + Railway all green; deployed smoke passing at `scout-ui-gamma.vercel.app`; 9/9 deployed smoke pass per `release_candidate_report.md` at commit `c29a5d0`; 12/12 at preflight `549723b`.
-5. **Shared UX / Platform Systems** (§14) — `lib/auth.tsx`, `lib/api.ts` with trace IDs, reusable components (`ActionInbox`, `NeedSomething`, `TaskCard`, `StepList`, `DataCard`); used across every surface and stable.
+1. **Auth UX** (§2) — 5 smoke tests covering adult login, child login,
+   bad password, sign-out, and invalid-token recovery.
+2. **AI Panel / ScoutLauncher** (§10) — 3 panel tests + 2 round-trip
+   tests (tool + confirmation) + SSE streaming + disabled-state card
+   + production backend path verified via direct HTTPS round-trip +
+   one real user pair captured in Railway logs.
+3. **App Shell / Nav / Scout Launcher** (§1) — transitively smoked by
+   every surface test; role-gated nav verified.
+4. **Error handling** (§11) — global `ErrorBoundary` with a gated
+   `/__boom` test path verifying the render fallback.
+5. **Settings — Accounts & Access + AI Flags** (§8) — role visibility
+   asserted both ways; session management flows exist; AI-toggle rows
+   wired through to backend + `test_ai_context.py` variants.
 
 ---
 
@@ -418,11 +524,17 @@ Ranked by evidence strength and launch-readiness:
 
 Ranked by verification gap and product risk:
 
-1. **AI Panel / ScoutLauncher** (§10) — 3 local smoke tests + conditional AI round-trip + confirmation round-trip when enabled. Still no conversation resume coverage, no streaming. Biggest remaining risk is deploy drift (local-only smoke; deployed-URL run is operator-only).
-2. **Write paths across Parent / Grocery / Child surfaces** (§4, §5, §7) — 6 write-path tests now cover approve grocery, approve meal plan, run payout, convert purchase request, child task completion, child meal-review. Any new write flow added after this still lacks smoke until added explicitly.
-3. **Meals subpages `prep.tsx` + `reviews.tsx`** (§6) — page-load smoke landed; generation-loop still not smoke-tested.
-4. **Loading / Error / Retry states** (§11) — per-component handling + global `ErrorBoundary` in `_layout.tsx`. Error reporting provider not wired (Sentry-equivalent is Sprint 2 item).
-5. **Personal surface placeholder panels** (§3) — RexOS + Exxir panels are stub copy; dev-mode ingestion verified safe in prod (`DEV_MODE = !EXPO_PUBLIC_API_URL`, baked at compile time, asserted by `dev-mode.spec.ts`).
+1. **Deployed browser smoke in CI** (§12) — backend is verified end-to-end
+   against production; the full Playwright suite has never been run
+   against `scout-ui-gamma.vercel.app` from CI. Biggest trust gap left.
+2. **Streaming assertion depth** (§10) — SSE path is live in the panel;
+   no Playwright test asserts per-chunk updates.
+3. **Production error reporting** (§11, §13) — global `ErrorBoundary`
+   logs to stdout only; no Sentry-equivalent provider.
+4. **Settings AI-toggle smoke** (§8) — backend variants covered by
+   pytest; the browser round-trip is not.
+5. **Personal surface placeholder panels** (§3) — RexOS + Exxir panels
+   are stub copy pending a product decision.
 
 ---
 
@@ -438,12 +550,28 @@ Ranked by verification gap and product risk:
 Meals is labeled "VERIFIED (core) / IMPLEMENTED (subpages)" reflecting the mixed state of `this-week.tsx` (VERIFIED) vs `prep.tsx` / `reviews.tsx` (UNKNOWN without a smoke or audit).
 
 **Key reconciliation notes:**
-- The frontend is **private-launch ready** (12/12 smoke passing at commit `549723b`, all critical surfaces covered by at least a page-load test, all role-gating verified both ways).
-- It is **not strategically complete** — the gap between "launch-sufficient" and "complete" is primarily write-path smoke coverage, AI panel depth, and the global error boundary.
-- AI panel is the single biggest verification risk per surface area.
-- Backend coverage (320 tests per preflight) partially offsets the frontend write-path gap, but regressions in UI wiring would still escape CI.
+- The frontend is **private-launch ready and production-verified**
+  (28 local Playwright tests passing; production AI backend verified
+  end-to-end via direct HTTPS round-trip + real user pair in Railway
+  logs).
+- It is **not strategically complete** — the gap between
+  "launch-sufficient" and "complete" is primarily deployed browser
+  smoke in CI, streaming assertion depth, production error reporting,
+  and AI-settings toggle smoke.
+- AI panel moved from "single biggest verification risk" to a solid
+  middle: 5 browser tests + production round-trip + real-user logs.
+  The remaining AI risk is deploy drift between local and the Vercel
+  bundle.
+- Backend coverage (349 tests; 58 AI-layer) now offsets most regression
+  risk for business logic; UI wiring regressions would still escape CI
+  until deployed-URL smoke runs on every push.
 
 **Freshness:**
-- Branch: `docs/roadmap-reconciliation`
+- Branch: `docs/final-roadmap-resync`
 - Last reconciled: 2026-04-13
-- Reference commits: `c527fdf` (previous reconciliation), `9481f8f` (AI chat schema fix, added `X-Scout-Trace-Id`), `549723b` (launch preflight)
+- Reference commits: `4e8d2e9` (SSE streaming + conversation kind +
+  moderation alerts), `8647e00` (broad chat + homework help + moderation
+  + weather), `782c3ef` (Whitfield → Roberts rename + prod AI
+  verification), `5f11821` (Sprint 1 closeout: confirmation UI +
+  disabled-state + ErrorBoundary), `9481f8f` (trace-id correlation
+  logging)

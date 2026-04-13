@@ -52,6 +52,8 @@ Healthchecks: Postgres waits for pg_isready, backend waits for Postgres healthy,
 | `SCOUT_CORS_ORIGINS` | Yes | `https://scout.yourfamily.com` |
 | `SCOUT_ENABLE_BOOTSTRAP` | Disable after setup | `false` |
 | `SCOUT_ANTHROPIC_API_KEY` | For AI features | `sk-ant-...` |
+| `SCOUT_SMOKE_ADULT_EMAIL` | Persistent smoke operator account | `smoke@scout.app` |
+| `SCOUT_SMOKE_ADULT_PASSWORD` | Persistent smoke operator password | (random 43-char token) |
 | `EXPO_PUBLIC_API_URL` | Frontend build | `https://api.yourfamily.com` |
 
 ## Production Fail-Closed Rules
@@ -87,14 +89,29 @@ Jobs: `backend-tests`, `frontend-types`, `smoke-web` (full Playwright).
 
 ## Merge / Release Checklist
 
-- [ ] `python -m pytest backend/tests/ -v` green
+- [ ] `python -m pytest backend/tests/ -q` green (349 tests as of
+      2026-04-13)
 - [ ] `cd scout-ui && npx tsc --noEmit` clean
 - [ ] `python scripts/release_check.py --smoke` passes
 - [ ] CI green on branch
-- [ ] `/ready` returns status=ready, accounts_exist=true
+- [ ] `/ready` returns `status=ready`, `accounts_exist=true`,
+      `ai_available=true`
 - [ ] Adult sign-in works (meals, grocery, settings, inbox load)
 - [ ] Child sign-in works (restricted view)
+- [ ] ScoutPanel opens and streams a response on the personal surface
 - [ ] Bootstrap disabled (`SCOUT_ENABLE_BOOTSTRAP=false`)
 - [ ] `SCOUT_AUTH_REQUIRED=true` for production
 - [ ] `SCOUT_CORS_ORIGINS` set to production frontend
 - [ ] `SCOUT_ENVIRONMENT=production`
+- [ ] `SCOUT_ANTHROPIC_API_KEY` set
+- [ ] `SCOUT_SMOKE_ADULT_EMAIL` / `SCOUT_SMOKE_ADULT_PASSWORD` set for
+      operator / CI smoke
+- [ ] Only one Railway service in the Scout project (`scout-backend`);
+      stale duplicate services removed
+
+## Operator AI verification
+
+After each deploy, an operator can re-verify the production AI path
+end-to-end by following `docs/AI_OPERATOR_VERIFICATION.md`. The
+standing credentials live in Railway env vars; no password needs to
+leave the Railway vault.

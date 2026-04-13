@@ -1,42 +1,45 @@
 # Scout Execution Backlog
 
-Last built: 2026-04-13 from `BACKEND_ROADMAP.md`, `FRONTEND_ROADMAP.md`,
-`AI_ROADMAP.md`, `docs/ROADMAP_RECONCILIATION.md`, `docs/release_candidate_report.md`,
-`docs/private_launch.md`.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`, after
+Sprint 2 feature work (broad chat + homework + moderation + weather +
+AI settings + SSE streaming + `conversation_kind`).
 
-**Sprint 1 closeout status (2026-04-13):** items 1.2, 1.3, 2.1 (partial),
-2.2 (partial), 2.3, 2.4, 2.5 have landed. Items 1.1 and the investigations
-(#17/#18/#19) remain blocked on operator access to Railway logs, prod
-Postgres, and a deploy-aware smoke runner. See
-`docs/release_candidate_report.md` Sprint 1 closeout section and the
-per-item status notes below.
+**Sprint 1 + Sprint 2 feature work is complete.** Scout is live for
+private family use; the production AI backend path has been verified
+end-to-end. Backlog below is now the **strategic completion + polish
+list** for bugfix-only / tightly-scoped execution mode. See
+`docs/ROADMAP_RECONCILIATION.md` §11 ("Operating mode now") for the
+new execution constraints.
 
-**Sprint 1 residual closeout status (2026-04-13):** items 2.1 and 2.2 have
-been upgraded from PARTIAL — item 2.1 (write-path E2E smoke) is now
-**VERIFIED** because the "approve draft meal plan" test no longer relies
-on an annotated skip (the seed now deterministically surfaces a draft
-plan for the current week). Item 2.2 (AI panel verification depth) is
-now **IMPLEMENTED** because `ai-roundtrip.spec.ts` adds a real tool
-round-trip and confirmation round-trip (both conditional on
-`ai_available=true`), and item 2.4 (global error boundary) is now
-**IMPLEMENTED** (was code-only) because `error-boundary.spec.ts` + a
-DEV-gated `/__boom` route exercise the boundary end-to-end when
-`EXPO_PUBLIC_SCOUT_E2E=true`.
+**Closed-in-this-pass items** (do not re-open unless a regression is
+discovered):
 
-**Operator-verification pass status (2026-04-13, commit `782c3ef`):**
-items **1.1, 17, 18, 19 all upgraded from BLOCKED to VERIFIED**. A
-persistent `smoke@scout.app` adult account was provisioned in
-production Postgres, smoke credentials were persisted as Railway env
-vars, a direct HTTPS round-trip against `/api/auth/login` +
-`/api/ai/chat` succeeded with a 200 response, Railway logs show the
-`ai_chat_start`/`ai_chat_success` pair with the round-tripped trace
-id (plus the new `confirm=`/`handoff=`/`pending=` fields from Sprint
-1 closeout), and `ai_tool_audit`/`ai_conversations`/`ai_messages`
-delta moved exactly +1/+1/+4 in the production DB. Full evidence in
-`docs/AI_OPERATOR_VERIFICATION.md` "Initial verification result
-(2026-04-13)". The only residual is running the full Playwright
-browser suite against the deployed URLs in CI using the Railway-
-stored credentials.
+- ~~1.1 Deployed AI-panel smoke (first-ever)~~ — **VERIFIED** at the
+  backend path level via `smoke@scout.app` HTTPS round-trip + Railway
+  log evidence + prod DB row deltas on 2026-04-13 (`782c3ef`).
+  Residual: deployed **browser** run in CI against Vercel — see new
+  item `Sprint 2 — deployed browser smoke in CI` below.
+- ~~1.2 ScoutPanel disabled-state handling~~ — VERIFIED in Sprint 1
+  closeout `5f11821`.
+- ~~1.3 Dev-mode ingestion button prod audit~~ — VERIFIED in Sprint 1
+  closeout `5f11821`.
+- ~~2.1 Write-path E2E smoke suite~~ — VERIFIED in Sprint 1 residual
+  closeout (6 tests, no annotated skips).
+- ~~2.2 AI panel verification depth~~ — **VERIFIED locally** (3
+  `ai-panel` tests + 2 `ai-roundtrip` tests); the deployed-URL CI run
+  is the residual, tracked as a new Sprint 2 item.
+- ~~2.3 Confirmation-flow UI inside ScoutPanel~~ — VERIFIED (backend
+  structural surfacing + frontend card + `confirm_tool` direct path +
+  pytest + Playwright round-trip test).
+- ~~2.4 Global frontend error boundary~~ — VERIFIED (gated `/__boom`
+  route + `error-boundary.spec.ts`).
+- ~~2.5 Meals subpages smoke~~ — VERIFIED (3 tests).
+- ~~3.1 AI streaming response pipeline~~ — VERIFIED. SSE shipped in
+  `4e8d2e9`; orchestrator has `chat_stream()`, routes expose
+  `/api/ai/chat/stream`, frontend uses `sendChatMessageStream()`.
+- ~~17/18/19 Investigation items~~ — VERIFIED. Direct HTTPS round-trip
+  + Railway log tail + prod Postgres row-count query all completed on
+  2026-04-13.
 
 This is a cross-product execution backlog. It is **not** a changelog and
 it is **not** a wish list. Every item here is already captured as a
@@ -87,42 +90,26 @@ Merged item groups:
 
 ## Bucket 1 — Must-fix for private-launch stability
 
-Items that, if left broken, can degrade the single family currently using
-Scout. These are the only items that should block a fresh deploy today.
+**Bucket 1 is empty.** All launch-stability items have landed. Scout is
+in operating mode now — see `docs/ROADMAP_RECONCILIATION.md` §11.
 
-### 1.1 — Deployed AI-panel smoke (first-ever against Railway + Vercel)
-**Operator-verification pass status (2026-04-13): VERIFIED via direct
-HTTPS round-trip.** A dedicated `smoke@scout.app` adult account was
-provisioned in production Postgres with credentials persisted as
-Railway env vars (`SCOUT_SMOKE_ADULT_EMAIL`, `SCOUT_SMOKE_ADULT_PASSWORD`).
-A Python script logged in, POSTed to `/api/ai/chat`, and captured a
-200 response with a real `conversation_id`, `model=claude-sonnet-4-20250514`,
-`tool_calls_made=1`, and a 762-char Claude response. See
-`docs/AI_OPERATOR_VERIFICATION.md` "Initial verification result
-(2026-04-13)" for the full evidence. The only residual work is running
-the full Playwright browser suite against the deployed URLs using the
-Railway-stored credentials — that is follow-up work for CI wiring, not
-a BLOCKED item.
+Archived item (retained for historical context only):
+
+### 1.1 — ~~Deployed AI-panel smoke (first-ever against Railway + Vercel)~~
+**VERIFIED 2026-04-13 (`782c3ef`).** Direct HTTPS round-trip from
+`smoke@scout.app` returned 200 with a real conversation id, tool call,
+and 762-char response. Railway logs show matched `ai_chat_start` /
+`ai_chat_success` pairs (one of them from a real adult user, Andrew,
+before the smoke run). Production DB row deltas: `ai_tool_audit=+1`,
+`ai_conversations=+1`, `ai_messages=+4`, matching the orchestrator's
+persistence model exactly. See `docs/AI_OPERATOR_VERIFICATION.md`
+"Initial verification result (2026-04-13)". The residual CI wiring for
+running the full Playwright suite against Vercel has moved to the new
+Sprint 2 item **"Deployed browser smoke in CI"** below.
 
 - **Area:** ai / ops
-- **Status:** PARTIAL (AI Roadmap §10, §11)
-- **Why it matters:** `ai-panel.spec.ts` has never been recorded as run
-  against the deployed URLs. The 9/9 deployed smoke in
-  `release_candidate_report.md` covered auth + surfaces only. Drift
-  between local main and production is currently invisible.
-- **Launch impact:** high
-- **Verification gap:** zero evidence the ScoutPanel actually gets a 200
-  from Railway through Vercel today.
-- **Scope:** S
-- **Owner:** ops
-- **Acceptance:**
-  1. `npx playwright test smoke-tests/tests/ai-panel.spec.ts` runs
-     against `https://scout-ui-gamma.vercel.app` with the production
-     backend and passes.
-  2. Result recorded in `docs/release_candidate_report.md` as "10/10
-     deployed smoke".
-  3. Railway logs spot-checked for one `ai_chat_success` line with a
-     real `X-Scout-Trace-Id`.
+- **Status:** VERIFIED (2026-04-13)
+- **Resolution:** see note above.
 
 ### 1.2 — ScoutPanel disabled-state handling
 **Sprint 1 status: IMPLEMENTED.** `scout-ui/lib/api.ts :: fetchReady()` +
@@ -625,86 +612,85 @@ Each one has a cheap investigation task before scope can be sized.
   and time the request. If >60s: bumps `SCOUT_AI_REQUEST_TIMEOUT` or
   moves generation to an async path (potential Bucket 3 item).
 
-### 5.7 — Actual Playwright test count: 12 or 13?
+### 5.7 — ~~Actual Playwright test count~~
 - **Area:** ops
-- **Status:** UNKNOWN (Frontend Roadmap Unknowns)
-- **Investigation:** `npx playwright test --list`. Reconcile with the
-  "12/12 preflight" number recorded at `549723b` vs the 13 `test(`
-  declarations visible in the repo today.
+- **Status:** RESOLVED. Current count is **28 tests across 8 files**
+  (auth 5 + surfaces 7 + ai-panel 3 + ai-roundtrip 2 + write-paths 6
+  + meals-subpages 3 + dev-mode 1 + error-boundary 1). Verified by
+  source inspection against `4e8d2e9`.
 
 ---
 
-## Top 25 Ranked Backlog
+## Top 10 Ranked Backlog (post-Sprint-2-feature-work)
 
-Worst-impact-first, biased toward closing verification gaps, finishing
-over-called "done" areas, and improving real-world trust.
+Worst-trust-gap-first. All items below are strategic completion /
+polish / observability — none of them gate the current private launch.
 
 | # | Item | Area | Bucket | Scope |
 |---|---|---|---|---|
-| 1 | Deployed AI-panel smoke against Railway + Vercel | ai/ops | 1 | S |
-| 2 | Write-path E2E smoke suite (six tests) | full-stack | 2 | M |
-| 3 | AI panel verification depth (content + tool round-trip + child + handoff) | full-stack | 2 | M |
-| 4 | Confirmation-flow UI inside ScoutPanel | frontend | 2 | M |
-| 5 | Global frontend error boundary | frontend | 2 | S |
-| 6 | ScoutPanel disabled-state handling | frontend | 1 | S |
-| 7 | Production error reporting (Sentry-equivalent) | frontend/ops | 2 | M |
-| 8 | Meals `prep.tsx` + `reviews.tsx` + generation-loop smoke | frontend | 2 | S |
-| 9 | Provider retry / fallback on upstream 5xx | backend | 3 | S |
-| 10 | AI streaming response pipeline | full-stack | 3 | L |
-| 11 | `dietary_preferences` → weekly meal plan generator | backend | 2 | S |
-| 12 | Scheduled daily brief delivery | backend | 3 | M |
-| 13 | Cost / latency observability for AI | ops | 3 | M |
-| 14 | AI deploy drift watchdog (full smoke against deployed URLs in CI) | ops | 3 | S |
-| 15 | Bonus / penalty parent payout endpoint + UI | full-stack | 2 | M |
-| 16 | Dev-mode ingestion button prod-behavior audit | frontend | 1 | S |
-| 17 | Investigate: does `ai-panel.spec.ts` pass against deployed URLs (feeds #1) | ai/ops | 5 | S |
-| 18 | Investigate: Railway logs showing `ai_chat_*` lines | ops | 5 | S |
-| 19 | Investigate: audit-table rows since deploy | ops | 5 | S |
-| 20 | RexOS / Exxir product decision + execution | product/frontend | 3 | S |
-| 21 | Notification delivery channel for `send_notification_or_create_action` | backend | 3 | M |
-| 22 | Real integrations layer (OAuth + API + webhooks + schedulers) | backend | 4 | L |
-| 23 | Multi-instance safe rate limiter + distributed bootstrap state | backend/ops | 4 | M |
-| 24 | Investigate: sendChatMessage 60s timeout behavior | frontend | 5 | S |
-| 25 | Conversation resume across sessions in ScoutPanel | frontend/ai | 4 | M |
+| 1 | Deployed browser smoke in CI against Vercel (full Playwright via Railway smoke creds) | ai/ops | 2 | S |
+| 2 | Provider retry / fallback on Anthropic 5xx | backend | 2 | S |
+| 3 | Production error reporting wired into `ErrorBoundary` (Sentry-equivalent) | frontend/ops | 2 | M |
+| 4 | `dietary_preferences` → weekly meal plan generator wiring | backend / ai | 2 | S |
+| 5 | Scheduled daily brief / weekly plan delivery (via `parent_action_items`) | backend / ai | 2 | M |
+| 6 | AI cost / latency / per-family observability (structured log format + aggregation) | ops / ai | 2 | M |
+| 7 | Streaming assertion depth in Playwright (chunk-by-chunk smoke) | frontend | 3 | S |
+| 8 | AI-settings toggle smoke (`allow_general_chat` / `allow_homework_help` round-trip) | frontend | 3 | S |
+| 9 | Bonus / penalty parent payout endpoint + UI wiring + `allowance_adjustments` migration | full-stack | 3 | M |
+| 10 | Prompt caching for static system-prompt prefix | ai | 3 | S |
+
+**Later / strategic (not ranked above):**
+- Real integrations layer (OAuth + API + webhooks + schedulers)
+- Multi-instance safe rate limiter
+- Conversation resume across sessions in ScoutPanel
+- Second AI provider
+- RexOS / Exxir product decision
+- Notification delivery channel for `send_notification_or_create_action`
+- Moderation false-positive feedback loop
+- Account create / password reset smoke
+- Handoff target-screen content assertion
+- Bundle-size CI gate + Web Vitals
+- Accessibility audit
+- Offline / PWA / service worker
+- Skeleton loaders
+- Multi-member session switching
 
 ---
 
-## Direct answers to required questions
+## Direct answers (post-Sprint-2-feature-work)
 
 **1. What is the single biggest backend gap now?**
-→ Real integrations layer (§4.1). Google Calendar / YNAB / Apple Health /
-Nike Run Club ingestion today is dev-mode buttons hitting pre-built
-payloads. No real OAuth, no live API clients, no webhooks, no
-schedulers, no delta sync, no ingestion audit log. The scaffolding is
-correct; the real-world integration story is not built. Everything
-else in the backend is either VERIFIED or small-scope debt.
+→ Provider retry / fallback on Anthropic 5xx + cost / latency
+observability. A single upstream hiccup still surfaces as a
+user-visible error banner, and there is no dashboard to see how often
+this happens. Real integrations layer remains a strategic Bucket-4
+item but is not the most immediately useful gap to close.
 
 **2. What is the single biggest frontend gap now?**
-→ Write-path E2E smoke coverage (§2.1). Every main surface is read-path
-only. Task completion, grocery approve, weekly payout, meal-plan
-approve, and meal-review submit are the user flows that define the
-product's daily value, and regressions in any of them would escape CI.
+→ Deployed browser smoke in CI. 28 Playwright tests run locally, the
+production AI backend is verified via direct HTTPS round-trip, but the
+full browser-rendered path against `scout-ui-gamma.vercel.app` has
+never been run from an automated job. Deploy drift between local and
+Vercel is currently invisible.
 
 **3. What is the single biggest AI gap now?**
-→ Deployed browser verification + thin smoke assertions combined (§1.1
-and §2.2). `ai-panel.spec.ts` has never been recorded as run against
-Railway + Vercel, and even locally it only checks "no 5xx and no error
-banner." The real behavior through the real UI against the real
-backend is UNKNOWN. Streaming is the biggest *feature* gap, but
-verification is the biggest *trust* gap.
+→ Observability, specifically a structured event store for
+conversation-level metrics (duration, tokens, tool calls). The
+functional gaps have closed: streaming ships, moderation ships,
+broad-chat + homework flags ship, confirmation flow ships, production
+round-trip is verified. What's missing is the ability to see how it's
+being used at scale.
 
 **4. Which "done" claim should be treated most skeptically?**
-→ "AI orchestration layer — DONE" as it appeared in the old
-`BACKEND_ROADMAP.md §10`. Reality: the backend orchestration is solid
-and covered by 29 backend tests, but the deployed UX is PARTIAL, smoke
-is thin, confirmation flow cannot complete through the UI, streaming
-does not exist, and deployed verification is UNKNOWN. Calling that
-"done" was launch-sufficient, not strategically complete.
+→ "Deployed AI verified." True for the backend path (HTTPS round-trip
++ Railway logs + prod DB deltas). Not yet true for the browser
+rendering path in CI — that's the single residual item that prevents
+a clean "deployed AI = VERIFIED" claim across the whole stack.
 
 **5. Which 3 items most improve trust if completed next?**
-1. **#1 — Deployed AI-panel smoke run** (closes the single biggest
-   UNKNOWN in the entire product; cheap; cannot hurt).
-2. **#2 — Write-path E2E smoke suite** (the six tests that would catch
-   the most impactful regressions across every main surface).
-3. **#5 + #7 — Global error boundary + production error reporting**
-   (together, they close the "broken prod would be invisible" gap).
+1. **#1 — Deployed browser smoke in CI** (closes the last deploy-drift
+   gap; cheap; cannot hurt).
+2. **#3 — Production error reporting** wired into the existing
+   `ErrorBoundary` (closes the "broken prod JS is invisible" gap).
+3. **#6 — AI cost / latency observability** (shifts the product from
+   "works" to "works and we can see why" for the AI path).

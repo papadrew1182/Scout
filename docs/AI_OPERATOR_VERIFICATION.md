@@ -1,14 +1,18 @@
 # AI Operator Verification Checklist
 
-Last built: 2026-04-13. Updated after production AI was VERIFIED
-end-to-end on 2026-04-13 using a persistent smoke adult account.
-Maintained by `docs/EXECUTION_BACKLOG.md` items 1.1, 17, 18, 19.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`.
 
-All three Sprint 1 closeout items that needed operator access have now
-been VERIFIED once against production. This doc is now the **standing
-checklist** for re-verifying the AI path on any subsequent deploy, plus
-the authoritative description of how the persistent smoke credentials
-work.
+Production AI was VERIFIED end-to-end for the first time on 2026-04-13
+using a persistent `smoke@scout.app` account. This doc is the
+**standing checklist** for re-verifying the AI path on any subsequent
+deploy, plus the authoritative description of how the persistent smoke
+credentials work.
+
+One residual item remains open: running the full **browser** Playwright
+suite against `https://scout-ui-gamma.vercel.app` from CI (tracked as
+top-10 backlog item #1 in `docs/EXECUTION_BACKLOG.md`). Until that
+wires up, the direct HTTPS round-trip in §1 is the authoritative
+backend-path check.
 
 Paste the outputs of each step back into
 `docs/release_candidate_report.md` under "Deployed Verification" when

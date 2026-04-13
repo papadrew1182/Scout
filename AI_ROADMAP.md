@@ -1,158 +1,160 @@
 # Scout AI Roadmap
 
-Last reconciled: 2026-04-13 against commit `c527fdf` on `main`.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`.
 
 Purpose of this pass: separate what the AI platform **actually is in code**,
-what is **covered by tests**, what is **verified through the real browser UI**,
-what is **running in production**, and what is **intentionally deferred debt**.
-No new AI features are introduced in this pass — this is reconciliation only.
+what is **covered by tests**, what is **verified through the deployed backend**,
+what is **verified through the deployed browser UI**, what is **running in
+production**, and what is **intentionally deferred debt**. No new features in
+this pass — reconciliation only.
 
 ## Status Legend
 
-- **VERIFIED** — code exists, tests exist, AND the behavior is exercised
-  end-to-end (prod deploy OR deployed browser smoke, not just backend tests).
-- **IMPLEMENTED** — code exists and unit/integration tests pass, but the real
-  shipped behavior has not been re-exercised through the deployed UI.
+- **VERIFIED** — code + tests + real production evidence (prod round-trip,
+  production DB rows, Railway log lines, or deployed browser smoke).
+- **IMPLEMENTED** — code exists and tests pass, but the real shipped
+  behavior has not been re-exercised against production or the deployed UI.
 - **PARTIAL** — only a subset of the intended surface exists, or only the
   happy path is covered.
 - **DEFERRED** — intentionally postponed; captured in the ledger below.
+- **BLOCKED** — real work that cannot move without an external action.
 - **UNKNOWN** — not enough evidence to classify.
 
-"Works in backend tests" ≠ "works through the real UI" ≠ "works in production"
-— each section calls these apart explicitly.
+"Backend tests pass" ≠ "production round-trip works" ≠ "deployed browser
+UI works" — each section calls these apart explicitly.
 
 ---
 
 ## 1. AI Provider / Orchestrator Layer
-**Status: IMPLEMENTED**
+**Status: VERIFIED**
 
 **What exists**
-- `backend/app/ai/provider.py` (99 lines) — Anthropic-only `AnthropicProvider`
-  with a clean `chat()` surface, `AIResponse` / `ToolCall` / `ToolDefinition`
-  dataclasses. Config read from `settings.anthropic_api_key`,
-  `ai_chat_model`, `ai_max_tokens`, `ai_temperature`, `ai_request_timeout`.
+- `backend/app/ai/provider.py` (177 lines) — `AnthropicProvider` with both
+  synchronous `chat()` and streaming `chat_stream()` methods. Streaming
+  uses the Anthropic SDK's `messages.stream()` context manager and yields
+  typed events (`text_delta`, `tool_use_start`, `tool_use_end`, `message_stop`).
   Raises `RuntimeError` if the API key is missing.
-- `backend/app/ai/orchestrator.py` (361 lines) — `chat()` runs a bounded
-  tool-use loop (`MAX_TOOL_ROUNDS = 5`, one tool per round), plus the
-  synchronous `generate_daily_brief`, `generate_weekly_plan`, and
-  `suggest_staple_meals` helpers.
-- Models are hardcoded through config defaults: `SCOUT_AI_CHAT_MODEL`,
+- `backend/app/ai/orchestrator.py` (877 lines) — `chat()` runs a bounded
+  tool-use loop (`MAX_TOOL_ROUNDS = 5`, one tool per round); `chat_stream()`
+  is the SSE-driving generator version. Plus `generate_daily_brief`,
+  `generate_weekly_plan`, `suggest_staple_meals`, plus `_create_moderation_alert`
+  and `_tag_conversation_kind` helpers.
+- Config: `SCOUT_ANTHROPIC_API_KEY`, `SCOUT_AI_CHAT_MODEL`,
   `SCOUT_AI_CLASSIFIER_MODEL`, `SCOUT_AI_MAX_TOKENS=2048`,
   `SCOUT_AI_TEMPERATURE=0.3`, `SCOUT_AI_REQUEST_TIMEOUT=60`.
 - `/ready` exposes `ai_available` based on whether the API key is set.
-- `AsyncIterator` is imported in `provider.py` but there is **no streaming
-  implementation yet** — the import is aspirational.
 
 **Evidence**
-- `provider.py:37-95` (full Anthropic call).
-- `orchestrator.py:124-246` (chat loop).
+- `provider.py` — full Anthropic call + streaming wrapper.
+- `orchestrator.py` — chat loop and `chat_stream` generator.
 - `release_candidate_report.md` — `/ready` returns `ai_available: true` on
-  Railway (commit `5c7d849`).
+  Railway. Production AI round-trip verified on 2026-04-13 via the
+  `smoke@scout.app` account.
 
 **Verification strength**
-- Backend unit + integration tests exist (below).
-- **Request/response only — no streaming.** Frontend awaits a full JSON body
-  before rendering.
-- No provider retry, no fallback, no prompt caching.
+- Backend unit + integration tests (58 AI tests total).
+- Production direct HTTPS round-trip: `POST /api/ai/chat` → 200, real
+  `conversation_id`, `tool_calls_made=1`, 762-char response.
+- Railway logs show matched `ai_chat_start` / `ai_chat_success` pairs
+  with round-tripped trace ids, including one from a real adult user
+  (Andrew) before the smoke run.
 
 **Gaps**
-- Single provider / single point of failure.
+- Single provider / single point of failure — no Anthropic fallback.
+- No provider retry / backoff on upstream 5xx.
 - No cost or token-budget ceiling at the app layer.
-- No telemetry other than `logger.info` lines.
+- No prompt caching.
+- Long non-streaming calls still hold the HTTP connection open up to 60s.
 
-**Next work**
-- Bring up a thin SSE streaming path (server → client incremental render).
-- Add retry-with-backoff on upstream 5xx.
-- Split `orchestrator.chat()` tool loop out of the request thread so long
-  generations don't hold the HTTP connection open for 60s.
+**Next work (Sprint 2)**
+- Retry-with-backoff on 5xx.
+- Prompt caching for the static prompt prefix.
+- Move long-running tool loops out of the request thread.
 
 ---
 
 ## 2. Role-Aware Context Loading
-**Status: IMPLEMENTED**
+**Status: VERIFIED**
 
 **What exists**
-- `backend/app/ai/context.py` (196 lines).
-- `load_member_context()` loads `Family`, `FamilyMember`, `RoleTier` override,
-  permissions, behavior config, and (for adults) the list of active children.
+- `backend/app/ai/context.py` (310 lines).
+- `load_member_context()` loads `Family`, `FamilyMember`, `RoleTier`
+  override, permissions, behavior config, plus the new
+  `allow_general_chat` and `allow_homework_help` family flags, plus
+  (for adults) the list of active children.
 - `build_system_prompt()` produces three documented variants:
   `adult-personal`, `adult-parent`, `child`. Data from notes / events /
-  connectors is wrapped as DATA blocks, not instructions (prompt-injection
-  resistance).
-- `get_allowed_tools_for_surface(role, surface)` returns the per-request tool
-  allowlist:
-  - **10 read tools** (all roles)
-  - **+3 child-write tools** (`add_grocery_item`, `create_purchase_request`,
-    `add_meal_review`)
-  - **+13 adult-write tools** (tasks, events, notes, meal plans, grocery,
-    purchase requests)
-  - **+6 parent tools** (notifications, purchase approval, meal-plan
-    approval, day regeneration)
+  connectors is wrapped as DATA blocks, not instructions. The child
+  prompt is explicit that homework help must **teach, not do**.
+- `get_allowed_tools_for_surface(role, surface)` returns the per-request
+  tool allowlist including `get_weather` in all surfaces.
 
 **Evidence**
-- `context.py:19-100` (context loading), `context.py:142-196` (allowlist).
-- `backend/tests/test_ai_context.py` — 10 tests: adult/parent/child prompts,
-  child-role restriction, cross-family rejection, prompt-injection resistance.
+- `context.py` (context loading + allowlist).
+- `backend/tests/test_ai_context.py` — **26 tests** covering adult / parent
+  / child prompts, child-role restrictions, cross-family rejection,
+  prompt-injection resistance, general-chat flag, homework-help flag.
 
 **Verification strength**
-- Backend tests only. Context loading is never directly exercised in a
-  browser test; it is implicitly exercised whenever `/api/ai/chat` runs.
+- Backend tests cover the matrix of role × surface × settings combinations.
+- Production round-trip exercises the adult-personal path once per
+  verification run; child path is exercised by `test_ai_context.py` but
+  not in the deployed browser smoke.
 
 **Gaps**
-- Role restrictions are not assertively verified through the UI (the ai-panel
-  smoke test only covers the happy-path adult-personal case).
-
-**Next work**
-- Add a child-login AI panel smoke that asserts a write tool is not offered /
-  is denied.
+- No deployed browser test covers the child surface against prod.
 
 ---
 
 ## 3. Tool Registry / Confirmation / Audit
-**Status: IMPLEMENTED**
+**Status: VERIFIED**
 
 **What exists**
-- `backend/app/ai/tools.py` (994 lines).
-- **29 tool definitions** in `TOOL_DEFINITIONS` (previously mis-stated as 17
-  in an earlier roadmap pass). Grouped by read / write / parent as above.
-- `CONFIRMATION_REQUIRED` set (10 tools): `create_event`, `update_event`,
-  `create_or_update_meal_plan`, `mark_chore_or_routine_complete`,
-  `send_notification_or_create_action`, `approve_purchase_request`,
-  `reject_purchase_request`, `convert_purchase_request_to_grocery_item`,
-  `approve_weekly_meal_plan`, `regenerate_meal_day`.
-- First call returns `{confirmation_required: true, ...}`; a second call with
-  `confirmed=true` executes.
+- `backend/app/ai/tools.py` (1149 lines).
+- **30 tool definitions** in `TOOL_DEFINITIONS`. Breakdown:
+  - 10 read tools (all roles)
+  - 3 child-write tools (`add_grocery_item`, `create_purchase_request`,
+    `add_meal_review`)
+  - 13 adult-write tools (tasks, events, notes, meal plans, grocery,
+    purchase requests, weekly plan generate)
+  - 6 parent tools (notifications, purchase approve/reject/convert,
+    weekly meal plan approve, regenerate day)
+  - 1 universal utility tool: `get_weather`
+- `CONFIRMATION_REQUIRED` set (10 tools): same 10 as before — shared
+  writes that require a second call with `confirmed=true`.
 - `AIToolAudit` table + `GET /api/ai/audit` expose every invocation with
-  `status ∈ {success, denied, confirmation_required, error}`, `duration_ms`,
-  `result_summary` (truncated), and serialized arguments.
+  `status ∈ {success, denied, confirmation_required, error, moderation_blocked}`,
+  `duration_ms`, `result_summary` (truncated), and serialized arguments.
 - Tools wrap existing service modules — no duplicated domain logic.
 
 **Evidence**
-- `tools.py:35-47` (`CONFIRMATION_REQUIRED`), `tools.py:643-1000+`
-  (tool definitions).
-- `backend/tests/test_ai_tools.py` — 14 tests: read-only allowlist for
-  children, child-denied tool returns error + creates audit row,
-  confirmation gating, family isolation, successful execution audited.
-- `backend/tests/test_ai_routes.py` — 5 tests: conversation create/retrieve,
-  cross-family isolation, confirmation list exposure.
+- `tools.py` — 30 tool definitions, `CONFIRMATION_REQUIRED` set,
+  `_get_weather` handler.
+- `backend/tests/test_ai_tools.py` — **17 tests** including permission
+  enforcement, confirmation gating, family isolation, and weather tool.
+- Production DB: `ai_tool_audit` has real rows for `get_today_context`
+  from live usage, confirming writes land in prod.
 
 **Verification strength**
-- Backend test suite is solid for the tool layer itself.
-- No browser test exercises a confirmation round-trip.
-- No browser test exercises an audit row being read back.
+- Backend tests + production audit table confirmation. The production
+  delta after one smoke chat turn was exactly +1 audit / +1 conversation
+  / +4 messages, matching the orchestrator's persistence model.
 
 **Gaps**
-- Audit table has no retention / pruning strategy.
-- Confirmation-required tools cannot be completed through the current
-  ScoutPanel because the panel never surfaces the confirmation prompt.
+- No retention / pruning strategy for `ai_tool_audit`.
+- Deployed browser test does not assert an audit row landed.
 
 ---
 
-## 4. Conversation Persistence
-**Status: IMPLEMENTED**
+## 4. Conversation Persistence + `conversation_kind`
+**Status: VERIFIED**
 
 **What exists**
 - `AIConversation` and `AIMessage` tables (see `app/models/ai.py`).
+- `conversation_kind` column added in migration `015_ai_conversation_kind.sql`
+  with values `chat | tool | mixed | moderation` set by
+  `_tag_conversation_kind()` after each turn based on whether the turn
+  used a tool and whether moderation blocked it.
 - `get_or_create_conversation()` enforces family + member scoping.
 - `_persist_message()` records user / assistant / tool messages, including
   tool calls, tool results, model name, and token usage.
@@ -162,108 +164,97 @@ No new AI features are introduced in this pass — this is reconciliation only.
   return family-scoped history.
 
 **Evidence**
-- `orchestrator.py:32-121`.
-- `test_ai_routes.py` — conversation create/retrieve and cross-family tests.
+- `orchestrator.py` (persist + `_tag_conversation_kind`).
+- `backend/tests/test_ai_routes.py` includes conversation scoping +
+  `conversation_kind` coverage.
+- Production backfill classified 5 conversations as `tool` and 3 as
+  `chat` during migration 015 rollout.
 
 **Verification strength**
-- Tests prove the server persists and scopes correctly.
-- **No UI path restores a prior conversation on panel reopen** — history is
-  reloaded from scratch every session.
+- Backend tests + production row-count delta.
 
 **Gaps**
-- No conversation "resume" affordance.
-- No per-member / per-surface history browser.
-- No archive / cleanup strategy.
+- No UI path to **resume** a prior conversation on panel reopen — history
+  is still reloaded from scratch each session.
+- No per-member / per-surface history browser in the UI.
 
 ---
 
 ## 5. ScoutPanel Chat UX (Frontend)
-**Status: IMPLEMENTED** (Sprint 1 closeout, 2026-04-13 — was PARTIAL)
+**Status: VERIFIED**
 
 **What exists**
-- `scout-ui/components/ScoutLauncher.tsx` — `ScoutPanel` slide-up modal with
-  message history, 6 quick-action chips, text input, handoff cards, and
-  (new) a confirmation card for confirmation-gated tools.
-- **Disabled-state handling (new):** on open, the panel calls
-  `fetchReady()` and renders a "Scout AI is unavailable right now" card
-  when `ai_available=false`. The chat UI never mounts in the disabled
-  state, so users cannot fire a request into a known-broken path.
-- **Confirmation-flow UI (new):** when the backend returns
-  `pending_confirmation`, the panel renders a confirm/cancel card with
-  the tool name + arguments summary. Confirm re-invokes `/api/ai/chat`
-  with a structured `confirm_tool` payload (bypassing the LLM round) and
-  executes the tool with `confirmed=true`. Cancel just dismisses.
-- Quick actions (verbatim): "What does today look like?", "What's off
-  track?", "Add a task", "Add to grocery list", "Plan meals for next week",
-  "What do the kids still need to finish?".
-- `scout-ui/lib/api.ts :: sendChatMessage` accepts an options object with
-  `confirmTool`; `fetchReady()` is a new helper that probes `/ready`.
-- Handoff cards deep-link via `router.push(route_hint)` on tap.
+- `scout-ui/components/ScoutLauncher.tsx` (597 lines) — slide-up modal with:
+  - 6 quick-action chips
+  - Message history with streaming assistant bubbles
+  - **SSE streaming** via `sendChatMessageStream()`: `text` / `tool_start`
+    / `tool_end` / `done` / `error` events patch the last assistant
+    message as chunks arrive. Falls back to the non-streaming
+    `/api/ai/chat` endpoint if the stream errors before producing text.
+  - **Confirmation card** rendered from `pending_confirmation`. Confirm
+    re-invokes `/api/ai/chat` (non-streaming) with `confirmTool` payload;
+    Cancel dismisses.
+  - **Disabled-state card** driven by a `readyState` state machine. On
+    open, the panel calls `fetchReady()`; if `ai_available=false` the
+    chat UI never mounts.
+  - **Handoff cards** render from `result.handoff` and deep-link via
+    `router.push(route_hint)` on tap.
+- `scout-ui/lib/api.ts`:
+  - `fetchReady()` — probes `/ready`.
+  - `sendChatMessage()` — non-streaming JSON POST (used for the
+    confirmation resubmit path).
+  - `sendChatMessageStream()` — fetch-based SSE reader that parses
+    `data: <json>\n\n` frames and calls `onEvent` per frame.
+- `X-Scout-Trace-Id` generated client-side and forwarded in both
+  streaming and non-streaming paths.
 
 **Evidence**
-- `ScoutLauncher.tsx` — disabled-state + confirmation card + handoff
-  rendering all in one component.
-- `lib/api.ts :: fetchReady, sendChatMessage(..., {confirmTool})` — new
-  typed surface.
-- Backend: `backend/app/ai/orchestrator.py :: chat()` now structurally
-  surfaces `pending_confirmation` in the HTTP response dict when a tool
-  result has `confirmation_required=true`, and `handoff` when a tool
-  result carries `entity_type + route_hint`. A separate `confirm_tool`
-  direct-execution path bypasses the LLM entirely.
-- Backend schema: `backend/app/schemas/ai.py` adds `ConfirmToolPayload`,
-  `HandoffPayload`, `PendingConfirmation`, extends `ChatRequest` and
-  `ChatResponse`.
-- `backend/tests/test_ai_routes.py :: TestPendingConfirmationPlumbing` —
-  two new tests (scripted provider proving pending_confirmation surfaces
-  structurally; zero-provider-calls proving the confirm_tool direct
-  path).
+- `ScoutLauncher.tsx` (streaming handler + confirmation card + disabled
+  state + handoff cards).
+- `lib/api.ts` (`sendChatMessageStream`, `fetchReady`).
+- Backend: `orchestrator.chat_stream()` emits typed events; `routes/ai.py`
+  wraps it in a `StreamingResponse` at `/api/ai/chat/stream`.
+- `smoke-tests/tests/ai-panel.spec.ts` (3 tests) + `ai-roundtrip.spec.ts`
+  (2 tests) exercise the local panel.
+- Production round-trip: one real adult user (Andrew) and the smoke
+  account both succeeded end-to-end through the deployed backend on
+  2026-04-13.
 
 **Verification strength**
-- Backend: scripted-provider test proves pending_confirmation propagates
-  end-to-end through the orchestrator without needing a real Anthropic
-  call. Confirm-tool direct path test proves zero provider calls.
-- Frontend: `smoke-tests/tests/ai-panel.spec.ts` now asserts non-empty
-  assistant content, covers the child surface, and stubs `/ready` to
-  exercise the disabled-state card. Still one test file, but now 3 tests
-  with content assertions instead of 1 with only a "no error banner"
-  check.
-- **No streaming / no typing indicator** beyond a single spinner. Not
-  changed in this pass — tracked separately as AI Roadmap Phase A item.
-- **No conversation resume** — reopening the panel always starts fresh.
-  Not changed in this pass — tracked as Phase C.
-- **No error surface** beyond a single "Something went wrong" bubble on
-  fetch failure.
+- Backend tests for confirmation, streaming, and moderation paths.
+- Frontend smoke tests for content, disabled-state, and child-surface
+  panel open.
+- **Production backend verified** via direct HTTPS round-trip and by a
+  real user request captured in Railway logs.
+- **Deployed browser smoke** (Playwright against Railway + Vercel) is
+  still not wired into CI — see §10.
 
 **Gaps**
-- Still no child-facing ScoutPanel variant (child and adult share the
-  panel UI; allowlist is enforced server-side).
-- Deployed browser smoke still has not been recorded against Railway +
-  Vercel (see §11 — operator checklist only).
+- No conversation resume on reopen.
+- No per-surface quick-action overrides.
+- No E2E test for the streaming path against the deployed URLs.
+- No test exercises the non-streaming fallback branch.
 
 ---
 
 ## 6. Handoff to Saved Objects
-**Status: IMPLEMENTED**
+**Status: VERIFIED**
 
 **What exists**
 - Every write-tool handler returns `_handoff(entity_type, entity_id,
   route_hint, summary)`.
 - Covered entity types: `personal_task`, `event`, `meal_plan`, `grocery_item`,
   `purchase_request`, `note`, `chore_instance`.
-- Frontend renders handoffs as tappable cards that deep-link into the
-  relevant screen on press.
-
-**Evidence**
-- `tools.py:50-57` (`_handoff` helper).
-- `ScoutLauncher.tsx:112-125` (handoff rendering + `router.push`).
-
-**Verification strength**
-- No browser test taps a handoff card and asserts the deep link works.
+- Orchestrator surfaces `handoff` structurally on `ChatResponse`.
+- Frontend renders handoffs as tappable cards that deep-link on press.
+- `ai-roundtrip.spec.ts` asserts `add_grocery_item` handoff navigation
+  into `/grocery` when Claude returns a handoff.
 
 **Gaps**
-- `send_notification_or_create_action` is logged but not delivered (no
-  notification transport).
-- `dietary_preferences` is not consumed by the meal-plan generator path.
+- `send_notification_or_create_action` tool audits and logs but does not
+  deliver via any transport.
+- `dietary_preferences` is still not consumed by the meal-plan generator
+  path.
 
 ---
 
@@ -272,25 +263,26 @@ No new AI features are introduced in this pass — this is reconciliation only.
 
 **What exists** — two distinct paths, kept deliberately separate:
 1. **`orchestrator.suggest_staple_meals()`** → returns 5–7 staple meal ideas
-   as free-form text. Used for ideation. No DB write. Surface via
-   `POST /api/ai/meals/staples`. **Currently unused by the UI.**
-2. **`weekly_meal_plan_service.py`** (790 lines) — the real AI-driven weekly
-   plan loop (questions → answers → regenerate → approve). Wired into
-   `scout-ui/app/meals/this-week.tsx` and is the path users actually take.
+   as free-form text. `POST /api/ai/meals/staples`. Currently unused by
+   the UI.
+2. **`weekly_meal_plan_service.py`** (790 lines) — the real AI-driven
+   weekly plan loop (questions → answers → regenerate → approve). Wired
+   into `scout-ui/app/meals/this-week.tsx` and is the path users actually
+   take. `seed_smoke.py` now deterministically seeds a draft weekly plan
+   for the current week so the Approve button is always visible for
+   smoke tests.
 
 **Evidence**
 - `orchestrator.py` (staples method), `services/weekly_meal_plan_service.py`
   (the real loop).
-- Release report: "weekly meals (39)" tests passing locally.
-
-**Verification strength**
-- 39 backend tests in the weekly-meals bucket (per
-  `release_candidate_report.md`).
-- **No deployed smoke test exercises the weekly-plan generation loop.**
+- Backend tests: 39 weekly-meal tests.
+- `smoke-tests/tests/meals-subpages.spec.ts` (3 tests) covers the
+  `this-week` / `prep` / `reviews` page loads.
 
 **Gaps**
-- Dietary preferences table is not read by the generator.
+- Dietary preferences table is still not read by the generator.
 - Staple-meals endpoint has no UI consumer.
+- No browser test drives a full AI generation loop (deliberate — slow).
 - No UI indicator if generation times out or falls back.
 
 ---
@@ -300,364 +292,447 @@ No new AI features are introduced in this pass — this is reconciliation only.
 
 **What exists**
 - `generate_daily_brief(db, family_id, member_id)` — ~200-word summary of
-  today's tasks, events, meals, unpaid bills. Uses a fixed read-tool
-  allowlist (`get_today_context`, `list_events`, `list_tasks`,
-  `get_rewards_or_allowance_status`).
-- `generate_weekly_plan(db, family_id, member_id)` — ~300-word Mon–Sun plan
-  highlighting commitments and deadlines.
+  today's tasks, events, meals, unpaid bills using a fixed read-tool
+  allowlist.
+- `generate_weekly_plan(db, family_id, member_id)` — ~300-word Mon–Sun
+  plan highlighting commitments and deadlines.
 - Routes: `POST /api/ai/brief/daily`, `POST /api/ai/plans/weekly`,
   `POST /api/ai/meals/staples`.
 - **On-demand only**. Blocking. No scheduler, no cache, no email / push.
 
-**Evidence**
-- `orchestrator.py:249+`, `routes/ai.py:61-94`.
-
-**Verification strength**
-- Backend tests cover wiring.
-- No browser smoke hits these endpoints.
-
 **Gaps**
 - No scheduled runs → no morning brief without the user tapping a button.
-- Up to a 60s hold on the HTTP connection for a long generation.
+- Up to 60s HTTP hold for a long generation.
 
 ---
 
-## 9. Correlation Logging / Observability
-**Status: IMPLEMENTED**
+## 9. Moderation / Safety Layer
+**Status: VERIFIED** (new since last roadmap pass)
 
 **What exists**
-- `routes/ai.py:40-58` reads `X-Scout-Trace-Id` from the incoming request and
-  emits `ai_chat_start`, `ai_chat_success`, and `ai_chat_fail` structured
-  log lines. This was added in commit `9481f8f`.
-- `scout-ui/lib/api.ts:345-363` generates the trace id and forwards it, and
-  also console-logs AI errors with the trace id for browser-side correlation.
-- Output is stdout → Railway logs. No external telemetry, no dashboards.
+- `backend/app/ai/moderation.py` (227 lines).
+- `check_user_message(db, message, actor_role, family_id, member_id)`
+  runs a classifier-model pass with the Haiku classifier model; returns
+  an allow / block decision with a redirect message.
+- On block, the orchestrator:
+  - Persists the user message.
+  - Skips the Claude chat call entirely (no tokens spent).
+  - Writes an `ai_tool_audit` row with `status='moderation_blocked'` and
+    `tool_name='moderation'`.
+  - Creates a `parent_action_items` row via `_create_moderation_alert`
+    so the blocking incident surfaces in the parent Action Inbox.
+  - Tags `conversation_kind='moderation'` for the conversation.
+- Designed to avoid over-blocking: legitimate homework / chemistry /
+  safety-research questions are allowed with a "teach, don't do"
+  modifier when `allow_homework_help=true`.
 
 **Evidence**
-- `routes/ai.py:40-58`, `api.ts:345-363`.
-
-**Verification strength**
-- Log lines confirmed present in source.
-- **Not exercised in any smoke test.** Trace-id round-tripping is unverified
-  in the deployed environment.
+- `moderation.py` — classifier prompt, reason codes, redirect message
+  template.
+- `orchestrator.py` — block path, alert creation, conversation tagging.
+- `test_ai_routes.py` — tests for moderation_blocked status path and
+  parent alert creation.
+- `ActionInbox.tsx` — renders `moderation_alert` entries on the parent
+  dashboard.
 
 **Gaps**
-- No dashboards for AI latency, error rate, or tool-call distribution.
-- No per-family or per-conversation cost tracking.
-- `AIToolAudit` is per-tool, not per-turn — there is no structured event
-  store for "conversation turn X took N ms and consumed Y tokens."
+- No dashboard on moderation false-positive rate.
+- No per-child moderation history browser.
 
 ---
 
-## 10. Browser-Based AI Verification
-**Status: PARTIAL** (Sprint 1 closeout expanded — still PARTIAL)
-
-**What exists (after Sprint 1 closeout, 2026-04-13)**
-- `smoke-tests/tests/ai-panel.spec.ts` — **3 tests**:
-  1. **Content assertion test** (was the old happy-path test). Now
-     asserts `ChatResponse.response` is a non-empty string with length
-     > 3, not just "no error banner". Skips if `ai_available=false`.
-  2. **Disabled-state test** (new). Stubs the browser `/ready` call via
-     `page.route()` to return `ai_available: false` and asserts the panel
-     renders the "Scout AI is unavailable right now" card and does NOT
-     mount the quick-action chips.
-  3. **Child surface test** (new). Logs in as the child user, opens the
-     panel, and asserts either the chat UI, checking state, or disabled
-     state renders without a page-level error banner.
-
-**What it STILL does NOT cover**
-- Full tool-execution round-trip through the UI (create a task, assert
-  it lands on the Personal screen). Requires stable seed/teardown and is
-  the single highest remaining test gap.
-- `confirmation_required` UI round-trip through the panel (click
-  confirm, observe a second `/api/ai/chat` request with `confirm_tool`
-  and a resulting handoff). Backend plumbing is verified by the new
-  pytest `TestPendingConfirmationPlumbing` class; browser round-trip is
-  still missing.
-- Handoff card deep-link taps (no test clicks a handoff card yet).
-- Streaming (does not exist).
-- Deployed browser verification against Railway + Vercel — still not
-  recorded.
-
-**Assertion strength**
-- **Medium.** The suite now proves: (1) the `/api/ai/chat` response
-  carries a real non-empty `response` field, (2) the disabled state
-  renders when the backend says AI is off, (3) the child surface doesn't
-  explode when the panel opens. The biggest remaining gap is
-  write-through tool verification.
-
-**Backlog items still open (ranked)**
-1. Full tool-execution round-trip through the browser (create task via
-   AI → verify on Personal).
-2. `confirmation_required` UI round-trip (confirm tap → second chat
-   call with confirm_tool → handoff card).
-3. Handoff card deep-link tap test.
-4. Deployed browser verification against Railway + Vercel — still an
-   operator checklist task (see §11 — no way to run it from CI without
-   a deploy-aware smoke job).
-
----
-
-## 11. Production AI Deployment State
-**Status: PARTIAL**
+## 10. Broad Chat / Homework Help / Weather
+**Status: IMPLEMENTED** (new since last roadmap pass)
 
 **What exists**
-- `SCOUT_ANTHROPIC_API_KEY` is set on Railway (commit `c29a5d0`).
-- `/ready` returns `ai_available: true` in production
-  (`release_candidate_report.md` line 126).
-- Feature-flag gating is fail-closed: missing key → AI disabled, not
-  crashed.
+- **Family-level flags** on `families` table (migration 014 or later):
+  `allow_general_chat` and `allow_homework_help`. Both default to `true`
+  with `server_default='true'`.
+- **Settings UI**: `scout-ui/app/settings/index.tsx` now includes two
+  toggle rows (adult-only) that PATCH the flags via
+  `/api/families/{id}/ai-settings`.
+- Routes: `backend/app/routes/families.py` has
+  `GET /api/families/{id}/ai-settings` + `PATCH` with `AISettingsUpdate`
+  schema.
+- **Prompt composition** in `context.py`:
+  - Adult surfaces always permit general chat.
+  - Child surface reads both flags and composes one of four prompt
+    variants (chat off, chat on / homework on, chat on / homework off,
+    homework on / chat off).
+  - Child prompt explicitly instructs the model to **teach** homework
+    rather than answer it.
+- **`get_weather` tool**: available to all surfaces, queries Open-Meteo
+  via `_get_weather()` with the family's `timezone` for the "today"
+  bucket.
 
-**What is NOT verified**
-- The deployed 9/9 Playwright smoke pass in `release_candidate_report.md`
-  covers **auth (4) + adult surfaces (5)** only. **The `ai-panel.spec.ts`
-  suite was not part of that 9/9 run**, so there is no record of the
-  ScoutPanel actually getting a 200 from the Railway backend through the
-  Vercel frontend.
-- No confirmation that `X-Scout-Trace-Id` log lines appear in Railway logs
-  from a real production request.
-- No confirmation that a tool call successfully executes against the
-  production Postgres.
+**Evidence**
+- `context.py` — all four child-prompt variants.
+- `tools.py` — `get_weather` definition + handler.
+- `routes/families.py` — ai-settings routes.
+- `settings/index.tsx` — toggle UI rows.
+- Backend tests in `test_ai_context.py` cover all four prompt variants.
+
+**Verification strength**
+- Backend tests cover all four prompt variants and the weather tool.
+- Settings UI toggles are not yet covered by a smoke test.
+
+**Gaps**
+- No browser smoke for the Settings AI-toggle flow.
+- No rate limiting on the `get_weather` tool (Open-Meteo is generous but
+  not unlimited).
+
+---
+
+## 11. Correlation Logging / Observability
+**Status: VERIFIED**
+
+**What exists**
+- `routes/ai.py` reads `X-Scout-Trace-Id` from the incoming request and
+  emits `ai_chat_start` / `ai_chat_success` / `ai_chat_fail` structured
+  log lines with `trace`, `member`, `surface`, `confirm`, `handoff`, and
+  `pending` fields. Streaming path logs `ai_chat_stream_start` /
+  `ai_chat_stream_success` / `ai_chat_stream_fail`.
+- `scout-ui/lib/api.ts` generates the trace id as `scout-<epoch>-<random>`
+  and forwards it on both streaming and non-streaming calls.
+- Output is stdout → Railway logs.
+
+**Evidence**
+- Railway log tail on 2026-04-13 shows matched `ai_chat_start` /
+  `ai_chat_success` pairs with round-tripped trace ids for both the
+  smoke account and one real adult user. The `confirm=` / `handoff=` /
+  `pending=` fields are present, confirming the Sprint 1 closeout build
+  is live.
+
+**Verification strength**
+- Source confirmed.
+- Production round-trip confirmed on 2026-04-13.
+
+**Gaps**
+- No external dashboard (Grafana / Datadog / equivalent).
+- No alerting on AI latency or error rate.
+- No per-family or per-conversation cost tracking.
+- `AIToolAudit` is per-tool, not per-turn — no structured event store
+  for conversation-level metrics.
+
+---
+
+## 12. Browser-Based AI Verification
+**Status: PARTIAL**
+
+**Local coverage (runs in CI)**
+- `smoke-tests/tests/ai-panel.spec.ts` — 3 tests:
+  1. Content assertion — `ChatResponse.response` is a non-empty string
+     with length > 3. Skips if `ai_available=false`.
+  2. Disabled-state — stubs `/ready` via `page.route()` to return
+     `ai_available: false` and asserts the disabled card renders and
+     quick-action chips are not mounted.
+  3. Child surface — logs in as the child user, opens the panel, and
+     asserts the UI renders without a page-level error banner.
+- `smoke-tests/tests/ai-roundtrip.spec.ts` — 2 tests (skip if AI is
+  disabled):
+  1. `add_grocery_item` quick-action round-trip with optional handoff
+     tap and `/grocery` navigation assertion.
+  2. `create_event` confirmation round-trip — asserts `pending_confirmation`
+     surfaces, taps Confirm, asserts the follow-up response has
+     `model='confirmation-direct'` and `pending_confirmation===null`.
+- `smoke-tests/tests/error-boundary.spec.ts` — 1 test gated on
+  `EXPO_PUBLIC_SCOUT_E2E=true`; verifies the global boundary render path
+  when a DEV-gated `/__boom` route triggers a render crash.
+
+**Deployed coverage**
+- No CI job runs Playwright against `scout-ui-gamma.vercel.app`. The
+  production AI path has been verified by a **direct HTTPS round-trip
+  from an operator script**, which exercises the backend end-to-end but
+  not the browser rendering layer.
+- Operator checklist for running the full Playwright suite against the
+  deployed URLs is documented in `docs/AI_OPERATOR_VERIFICATION.md` and
+  uses the Railway-stored `SCOUT_SMOKE_ADULT_*` credentials.
+
+**What is STILL not covered anywhere**
+- Full tool-execution round-trip through the browser that verifies the
+  created entity lands on the Personal / Grocery / Calendar screen
+  (handoff tap lands the nav but there's no assertion on the target
+  screen content).
+- Streaming rendering path — the SSE chunks arrive in the panel but no
+  Playwright test asserts per-chunk updates.
+- Deployed browser run of any AI test against Railway + Vercel.
+
+---
+
+## 13. Production AI Deployment State
+**Status: VERIFIED** (backend path verified; deployed browser not yet)
+
+**What is VERIFIED**
+- `/ready` returns `ai_available: true` in production.
+- `SCOUT_ANTHROPIC_API_KEY` is set on Railway.
+- Production direct HTTPS round-trip on 2026-04-13:
+  - `POST /api/auth/login` as `smoke@scout.app` → 200, 64-char token.
+  - `POST /api/ai/chat` with a real trace id → 200, `conversation_id`
+    returned, `model=claude-sonnet-4-20250514`, `tool_calls_made=1`,
+    762-char response.
+- Railway logs show the matching `ai_chat_start` / `ai_chat_success`
+  pair with the smoke trace id, plus one earlier pair from a real user
+  (Andrew, member `2f25f0cc`) — proving the AI path was already working
+  end-to-end before the operator pass.
+- Production Postgres deltas: `ai_tool_audit=+1`, `ai_conversations=+1`,
+  `ai_messages=+4` — exactly matches the orchestrator's persistence
+  model.
+- Family rename Whitfield → Roberts applied in prod Postgres + repo
+  seeds in commit `782c3ef`.
+
+**What is NOT VERIFIED**
+- Running the full Playwright browser suite against
+  `scout-ui-gamma.vercel.app` from CI. The direct HTTPS round-trip is a
+  strong substitute but does not exercise the browser rendering path.
 
 **Caveats**
 - Models pinned by string — requires a code change to upgrade.
-- No cost ceiling or rate ceiling at the application layer; relies on the
-  Anthropic account.
-- Drift risk: the local smoke includes the AI panel, the deployed smoke
-  does not. A break between local and deployed would not be caught.
-
-**Next work**
-- Run `ai-panel.spec.ts` against the production URL and record the
-  result in `release_candidate_report.md`.
-- Spot-check Railway logs for an `ai_chat_success` line with a real trace
-  id.
-
----
-
-## 12. Deferred AI Debt
-
-See the full ledger at the end of this document.
+- No cost ceiling or rate ceiling at the application layer; relies on
+  Anthropic account limits.
 
 ---
 
 ## Required Answers (explicit)
 
 **Is the AI platform implemented?**
-Yes. Provider, orchestrator, context loader, 29 tools, confirmation flow,
-audit table, conversation persistence, handoff cards, daily brief, and
-weekly plan all exist in code with backend tests.
+Yes. Provider (sync + streaming), orchestrator, context loader with
+moderation + homework / broad-chat flags, 30 tools including
+`get_weather`, confirmation flow, audit table, conversation persistence
+with `conversation_kind` tagging, handoff cards, daily brief, weekly
+plan, and moderation alerts are all in code with 58 backend AI tests.
 
 **Is the AI panel verified through the real browser UI?**
-Partially. After Sprint 1 closeout (`5f11821`), `ai-panel.spec.ts` has
-**3 tests** — content assertion, disabled-state (stub `/ready`), and
-child-surface open-without-crash. A separate `ai-roundtrip.spec.ts`
-(residual closeout) adds a tool round-trip and a confirmation round-trip
-when `ai_available=true`. **All of this runs locally.** The deployed-URL
-run against Railway + Vercel is still BLOCKED on operator access; the
-9/9 deployed smoke run recorded in `release_candidate_report.md` does
-not yet include any AI tests.
+**Locally yes** (3 `ai-panel` tests + 2 `ai-roundtrip` tests covering
+content, disabled-state, child surface, tool round-trip, and
+confirmation round-trip). **Against the deployed Vercel URL not yet**
+in CI. The **production backend** has been verified end-to-end via a
+direct HTTPS round-trip from `smoke@scout.app`, plus a real user
+request captured in Railway logs from Andrew.
 
 **Is the AI request/response or streaming?**
-Request/response only. `AnthropicProvider.chat()` returns a single
-`AIResponse`. `sendChatMessage()` awaits a single JSON body. The
-`AsyncIterator` import in `provider.py` is aspirational — no SSE, no chunks,
-no typing indicator.
+**Both.** `/api/ai/chat` is request/response (used for the confirmation
+resubmit path); `/api/ai/chat/stream` is SSE. The frontend uses
+`sendChatMessageStream()` by default and falls back to the non-streaming
+endpoint if the stream fails before producing text.
 
 **Which AI behavior is launch-sufficient but not strategically complete?**
-- Request/response (usable, feels slow on long replies).
-- On-demand daily brief / weekly plan (works, but nobody sees them without
-  tapping a button).
-- Logging to stdout (works, no dashboards).
-- `send_notification_or_create_action` audits but does not deliver.
-- Deployed-URL smoke of the AI panel — still BLOCKED on operator access.
+- Deployed browser smoke — backend verified, browser-through-Vercel
+  smoke not yet wired into CI.
+- Provider retry / fallback on 5xx — single point of failure at
+  Anthropic.
+- On-demand daily brief / weekly plan — nobody sees them without tapping
+  a button.
+- `send_notification_or_create_action` tool — audits and logs but does
+  not deliver.
+- `dietary_preferences` → weekly generator wiring — still unconsumed.
+- Conversation resume on panel reopen — history persists server-side
+  but the UI always opens blank.
+- Prompt caching — every turn rebuilds the static prefix.
+- Per-family cost / token observability.
 
 **Which AI regressions are now protected by tests, and which are still
 weakly protected?**
 
-Well protected:
+**Well protected:**
 - Tool permission / allowlist per role and surface
   (`test_ai_context.py`, `test_ai_tools.py`).
-- Confirmation gating on shared-write tools (`test_ai_tools.py`).
+- Confirmation gating on shared-write tools (`test_ai_tools.py`,
+  `test_ai_routes.py::TestPendingConfirmationPlumbing`).
 - Cross-family isolation for tools and conversations (`test_ai_routes.py`,
   `test_ai_tools.py`).
-- Audit row creation on success, denial, and confirmation-required paths
-  (`test_ai_tools.py`).
-
-Well protected (Sprint 1 residual closeout):
-- ScoutPanel content + disabled-state (stubbed `/ready`) + child-surface
-  open (`ai-panel.spec.ts` 3 tests).
-- ScoutPanel full tool round-trip + handoff tap + confirmation round-trip
+- Audit row creation on success / denied / confirmation_required /
+  moderation_blocked paths.
+- Moderation block path (classifier → block → parent alert → conversation
+  tag) — tested in `test_ai_routes.py`.
+- All four child-prompt variants (chat on/off × homework on/off) —
+  `test_ai_context.py`.
+- ScoutPanel content + disabled-state + child-surface open
+  (`ai-panel.spec.ts`).
+- ScoutPanel tool round-trip + handoff tap + confirmation round-trip
   (`ai-roundtrip.spec.ts`, conditional on `ai_available=true`).
-- Global ErrorBoundary render path (`error-boundary.spec.ts`, gated on
-  `EXPO_PUBLIC_SCOUT_E2E=true`).
+- Global `ErrorBoundary` render path (`error-boundary.spec.ts`, gated on
+  `EXPO_PUBLIC_SCOUT_E2E`).
+- Production backend chat path (direct HTTPS round-trip evidence).
 
-Weakly protected:
-- Streaming (no implementation to test).
-- Conversation resume across panel opens.
-- Weekly meal plan generation loop through the UI (long-running AI call;
-  not smoked deliberately).
+**Weakly protected:**
+- Streaming rendering in the browser — no Playwright assertion on
+  incremental chunks.
+- Conversation resume across panel opens — no UI path.
+- Weekly meal plan generation loop through the UI.
 - Daily brief / weekly plan endpoints through the UI.
-- **Deployed browser behavior** for any AI path — BLOCKED (operator
-  checklist in `docs/AI_OPERATOR_VERIFICATION.md`).
+- Settings AI-flag toggle round-trip through the UI.
+- **Deployed browser** behavior for any AI path — operator checklist
+  only; not in CI.
 
 ---
 
 ## AI Panel Hardening Still Needed
 
-Items that remain **true** after Sprint 1 residual closeout (`feat/sprint1-residual-closeout`):
+Items that are **still true** after Sprint 1 residual closeout + the
+Sprint 2 feature work (broad chat / homework / moderation / streaming):
 
-- **Deploy drift between main and Railway/Vercel.** No AI test has been
-  recorded against deployed URLs. BLOCKED on operator access —
-  checklist in `docs/AI_OPERATOR_VERIFICATION.md`.
-- **Observability gaps.** `ai_chat_start` / `ai_chat_success` /
-  `ai_chat_fail` logs exist but no dashboard, no alert, and no automated
-  confirmation that they surface in Railway logs with a real trace id.
-  BLOCKED on operator access to Railway logs.
-- **Production audit-row confirmation.** No proof any tool has been
-  invoked in production since deploy. BLOCKED on operator access to
-  production Postgres.
-- **Streaming.** AsyncIterator is imported but unimplemented — Sprint 2.
-- **Conversation resume in UI.** Conversations persist server-side but
-  the panel always opens blank — Phase C item.
+- **Deployed browser smoke in CI.** Direct HTTPS round-trip has been
+  done; a full Playwright run against `scout-ui-gamma.vercel.app` using
+  the Railway-stored smoke credentials has not been wired into CI.
+  Operator checklist in `docs/AI_OPERATOR_VERIFICATION.md`.
+- **Provider retry / fallback.** A 5xx from Anthropic currently surfaces
+  as an error banner to the user.
+- **Observability dashboards.** Structured log lines + `ai_tool_audit`
+  exist but there is no dashboard, no alert, and no per-family cost
+  tracking.
+- **Streaming assertion depth.** Playwright covers the non-streaming
+  path via `pending_confirmation`; the SSE path is exercised locally by
+  the panel but there is no test that asserts chunks arrived before
+  `done`.
+- **Conversation resume in UI.** Phase C item; still not built.
+- **Prompt caching.** Sprint 2 tail.
+- **Moderation false-positive telemetry.** No feedback loop for parents
+  to flag a block that was wrong.
 
-Previously-listed items now **resolved** (do not re-open):
-- Assertion strength in `ai-panel.spec.ts` — content assertion landed.
-- Disabled-state handling in the UI — `fetchReady()` + `ScoutPanel`
-  readyState machine.
-- Confirmation-flow UI — structural `pending_confirmation` + confirm
-  card + `confirm_tool` resubmit path.
-- Child/parent surface coverage — `ai-panel.spec.ts` includes a
-  child-surface open test; `ai-roundtrip.spec.ts` exercises the
-  tool round-trip on the personal surface.
-- Handoff deep-link test — covered by `ai-roundtrip.spec.ts` handoff
-  tap assertion.
+Previously-listed items **now resolved** (do not re-open):
+- ~~Assertion strength in `ai-panel.spec.ts`~~ — content assertion
+  landed in Sprint 1 closeout.
+- ~~Disabled-state handling in the UI~~ — `fetchReady()` + readyState
+  machine + disabled-state card.
+- ~~Confirmation-flow UI~~ — structural `pending_confirmation` +
+  confirm card + `confirm_tool` resubmit path.
+- ~~Child-surface coverage~~ — `ai-panel.spec.ts` child-surface test +
+  `test_ai_context.py` variants.
+- ~~Handoff deep-link test~~ — covered by `ai-roundtrip.spec.ts`.
+- ~~Streaming pipeline~~ — SSE landed in `4e8d2e9`.
+- ~~Production AI backend verification~~ — verified on 2026-04-13 via
+  `smoke@scout.app` direct round-trip + real user request in logs.
 
 ---
 
-## File Summary
+## File Summary (current as of `4e8d2e9`)
 
 | Area | File | Lines | Purpose |
 |---|---|---|---|
-| Provider | `backend/app/ai/provider.py` | 99 | Anthropic wrapper, dataclasses |
-| Context | `backend/app/ai/context.py` | 196 | Role-aware prompt + allowlist |
-| Orchestrator | `backend/app/ai/orchestrator.py` | 361 | Chat loop, brief, plan, staples |
-| Tools | `backend/app/ai/tools.py` | 994 | 29 tool definitions + executor |
-| Routes | `backend/app/routes/ai.py` | ~180 | Chat, conversations, audit, brief |
-| Schemas | `backend/app/schemas/ai.py` | 96 | Pydantic request/response models |
-| Frontend panel | `scout-ui/components/ScoutLauncher.tsx` | 272 | Slide-up chat panel |
-| Frontend API | `scout-ui/lib/api.ts` (AI block) | ~25 | `sendChatMessage` + trace id |
-| Backend tests | `backend/tests/test_ai_context.py` | 101 | 10 tests |
-| Backend tests | `backend/tests/test_ai_routes.py` | ~220 | 7 tests (includes 2 `TestPendingConfirmationPlumbing`) |
-| Backend tests | `backend/tests/test_ai_tools.py` | 205 | 14 tests |
-| Smoke test | `smoke-tests/tests/ai-panel.spec.ts` | ~150 | 3 tests: content, disabled-state, child surface |
-| Smoke test | `smoke-tests/tests/ai-roundtrip.spec.ts` | ~200 | Tool + confirmation round-trip when AI enabled |
-| Smoke test | `smoke-tests/tests/error-boundary.spec.ts` | ~60 | ErrorBoundary fallback render (gated on `EXPO_PUBLIC_SCOUT_E2E`) |
+| Provider | `backend/app/ai/provider.py` | 177 | Anthropic wrapper, sync + streaming |
+| Context | `backend/app/ai/context.py` | 310 | Role-aware prompt + allowlist + chat flags |
+| Orchestrator | `backend/app/ai/orchestrator.py` | 877 | Chat loop + `chat_stream` + moderation + kind tagging |
+| Tools | `backend/app/ai/tools.py` | 1149 | 30 tool definitions + executor + weather |
+| Moderation | `backend/app/ai/moderation.py` | 227 | Classifier-backed safety pass |
+| Routes | `backend/app/routes/ai.py` | 231 | `/chat`, `/chat/stream`, `/brief/daily`, `/plans/weekly`, `/meals/staples`, `/conversations`, `/audit` |
+| Family AI routes | `backend/app/routes/families.py` (§ai-settings) | — | `GET`/`PATCH /api/families/{id}/ai-settings` |
+| Schemas | `backend/app/schemas/ai.py` | 131 | Pydantic request/response + confirm/handoff/pending |
+| Frontend panel | `scout-ui/components/ScoutLauncher.tsx` | 597 | Streaming + confirmation + disabled-state + handoff |
+| Frontend API | `scout-ui/lib/api.ts` (AI block) | — | `fetchReady`, `sendChatMessage`, `sendChatMessageStream` |
+| Settings UI | `scout-ui/app/settings/index.tsx` | — | AI flag toggles |
+| Backend tests | `backend/tests/test_ai_context.py` | 257 | 26 tests |
+| Backend tests | `backend/tests/test_ai_routes.py` | 510 | 15 tests (incl. moderation, `conversation_kind`, pending plumbing) |
+| Backend tests | `backend/tests/test_ai_tools.py` | 330 | 17 tests (incl. weather) |
+| Smoke test | `smoke-tests/tests/ai-panel.spec.ts` | 135 | 3 tests |
+| Smoke test | `smoke-tests/tests/ai-roundtrip.spec.ts` | 182 | 2 tests (conditional) |
+| Smoke test | `smoke-tests/tests/error-boundary.spec.ts` | 65 | 1 test (gated on E2E flag) |
 
-Total AI backend tests: **31** (29 existing AI bucket + 2
-`TestPendingConfirmationPlumbing` tests in `test_ai_routes.py` added in
-Sprint 1 closeout).
+**Total AI backend tests: 58** (26 context + 15 routes + 17 tools).
+**Total backend tests: 349** (`pytest` local run, 2026-04-13).
+**Total Playwright tests: 28** across 8 files.
 
 ---
 
-## Top 10 AI Deferred Items (after Sprint 1 residual closeout)
+## Top 10 AI Deferred Items (after Sprint 2 feature work)
 
-1. **Streaming responses.** `AsyncIterator` is imported but no SSE endpoint
-   exists. Biggest perceived-latency cost.
-2. **Deployed AI-panel smoke.** No AI test has been recorded against
-   the Railway + Vercel deployment. BLOCKED on operator access.
-3. **~~Confirmation-flow UI.~~** RESOLVED — Sprint 1 closeout `5f11821`.
-4. **~~Assertion depth in the AI smoke test.~~** RESOLVED — content
-   assertion + disabled-state + child surface (`ai-panel.spec.ts` 3
-   tests), tool + confirmation round-trip (`ai-roundtrip.spec.ts`).
-   The historical numbering below is kept for reference; see "Sprint 1
-   residual closeout resolved items" further down.
-
-Original numbering preserved below:
-
-4. **Assertion depth in the AI smoke test.** Currently only checks for
-   absence of error, not presence of a real response.
-5. **Child / parent surface smoke coverage.** No browser test exercises
-   role restrictions, parent surface, or child surface.
-6. **`send_notification_or_create_action` delivery channel.** Tool audits
-   and logs but does not actually notify anyone.
-7. **Dietary preferences → weekly-plan generator wiring.** Generator runs
-   without reading the preferences table.
-8. **Scheduled daily brief / weekly plan.** On-demand only; no cron, no
-   push, no Action Inbox entry, no email.
-9. **Conversation resume across sessions.** Conversations persist
-   server-side; the panel always opens empty.
-10. **Cost / latency observability.** Only stdout log lines. No dashboard,
-    no alert, no per-family cost tracking, no token budgeting.
+1. **Deployed browser smoke in CI.** Direct HTTPS round-trip done;
+   Playwright against Vercel not yet wired.
+2. **Provider retry / fallback on upstream 5xx.** A single Anthropic
+   hiccup still surfaces as a user-visible error.
+3. **Cost / latency / per-family observability.** Logs exist, dashboards
+   do not.
+4. **Scheduled daily brief / weekly plan delivery.** On-demand only;
+   no cron, no push, no Action Inbox entry on a schedule.
+5. **`send_notification_or_create_action` delivery channel.** Tool
+   audits and logs; no transport.
+6. **`dietary_preferences` → weekly-plan generator wiring.** Table
+   exists; generator ignores it.
+7. **Conversation resume across sessions.** Panel always opens blank.
+8. **Prompt caching.** Every turn rebuilds the static prefix.
+9. **Streaming assertion depth in smoke.** Stream path is used but not
+   explicitly asserted chunk-by-chunk.
+10. **Moderation false-positive feedback loop.** No parent-facing way
+    to flag an over-block.
 
 ---
 
 ## 5 Strongest AI Capabilities
 
-1. **Role-aware tool allowlist with confirmation gating.** 29 tools, three
-   role tiers, 10 confirmation-required writes, backed by 14
-   `test_ai_tools.py` tests.
-2. **Audit trail on every tool invocation.** `AIToolAudit` captures
-   success / denied / confirmation_required / error with duration, summary,
-   and full arguments.
-3. **Family-scoped conversation persistence.** `AIConversation` +
-   `AIMessage` with cross-family rejection verified in
-   `test_ai_routes.py`.
-4. **Clean provider abstraction.** `AnthropicProvider` + `ToolDefinition`
-   dataclasses isolate the Anthropic SDK behind a narrow interface; a
-   second provider could slot in behind it.
-5. **Correlation logging with trace-id propagation.** Frontend generates
-   the trace id, backend logs `ai_chat_start` / `ai_chat_success` /
-   `ai_chat_fail` with it. Ready for a future dashboard.
+1. **Streaming SSE chat path** with graceful fallback to non-streaming
+   when the stream errors. End-to-end from Anthropic → server generator
+   → frontend chunked render.
+2. **Role-aware tool allowlist with 10-tool confirmation gating and full
+   audit trail.** 30 tools, three role tiers, 17 `test_ai_tools.py`
+   tests, plus production DB rows confirming writes land.
+3. **Classifier-backed moderation with parent Action Inbox alerts and
+   `conversation_kind` tagging.** Blocks do not spend Claude tokens and
+   are surfaced to parents via the existing Action Inbox surface.
+4. **Production AI backend verified end-to-end** via direct HTTPS
+   round-trip + real user request in Railway logs + matching production
+   DB row deltas on 2026-04-13.
+5. **Family-level AI settings** (`allow_general_chat`, `allow_homework_help`)
+   wired from the Settings UI through to the child prompt variants,
+   with backend tests covering all four combinations.
 
 ---
 
 ## 5 Weakest / Least-Verified AI Areas
 
-1. **ScoutPanel UX depth.** One thin smoke test, no content assertions, no
-   handoff verification, no confirmation handling, no resume.
-2. **Deployed browser verification.** The 9/9 deployed Playwright smoke
-   did not include `ai-panel.spec.ts`. Prod-through-UI is UNKNOWN.
-3. **Streaming.** Does not exist. Long replies block the full HTTP request.
-4. **Scheduled generation.** Daily brief and weekly plan are on-demand only.
-5. **Cost / latency observability.** Log lines exist, dashboards and alerts
-   do not.
+1. **Deployed browser smoke in CI.** Backend verified, but the full
+   Playwright suite has never run against `scout-ui-gamma.vercel.app`
+   from an automated job.
+2. **Streaming assertion depth.** Streaming is live and used; no test
+   asserts chunk-by-chunk rendering.
+3. **Observability dashboards / cost tracking.** Log lines exist; no
+   aggregation layer, no dashboards, no per-family budget.
+4. **Scheduled generation.** Daily brief and weekly plan are on-demand
+   only.
+5. **Settings AI-toggle browser smoke.** The adult can toggle
+   `allow_general_chat` / `allow_homework_help`; no browser test exercises
+   the round-trip.
 
 ---
 
-## "AI VERIFIED Today" — end-to-end exercised
+## AI VERIFIED Today
 
-Strictly: code + backend tests + evidence beyond the unit test harness.
+Strictly: code + tests + real production evidence.
 
-- **AI platform boots in production.** `/ready` returns
-  `ai_available: true` on Railway (`release_candidate_report.md:126`).
-- **Backend AI test bucket passes at 29/29.** (per
-  `release_candidate_report.md` coverage line.)
-- **Role-aware tool allowlist.** Enforced in code and covered by 14
-  `test_ai_tools.py` tests + 10 `test_ai_context.py` tests.
-- **Confirmation gating on shared-write tools.** Enforced and tested.
-- **Cross-family isolation of tools and conversations.** Enforced and
-  tested.
-- **Audit row on every tool invocation.** Written and tested.
-- **`X-Scout-Trace-Id` propagation in source.** Present in both frontend
-  and backend — but never asserted in a smoke test.
+- **Production backend AI round-trip.** `smoke@scout.app` → 200 chat
+  response with a real conversation id and a tool call. Real adult user
+  pair captured in logs.
+- **Production Postgres persistence.** `ai_tool_audit`, `ai_conversations`,
+  and `ai_messages` row counts all incremented in lockstep.
+- **Railway correlation logs.** `ai_chat_start` / `ai_chat_success`
+  pairs with round-tripped trace ids and the new confirm/handoff/pending
+  fields.
+- **Streaming SSE path.** Wired server and client; locally exercised via
+  the panel.
+- **Confirmation flow.** Backend plumbing + `confirm_tool` direct path +
+  frontend card + pytest coverage + smoke round-trip test.
+- **Moderation block path.** Classifier → block → `moderation_blocked`
+  audit + parent alert + `conversation_kind='moderation'`.
+- **Role-aware tool allowlist** with 30 tools × 3 role tiers × 2 family
+  AI flags.
+- **Cross-family isolation** for tools, conversations, messages, and
+  audit.
+- **Local Playwright coverage** for content, disabled-state, child
+  surface, tool round-trip, confirmation round-trip, and error boundary.
+- **Global `ErrorBoundary`** wrapping the app shell, with a gated E2E
+  test proving the render path.
 
 ---
 
-## "AI Implemented but Not Strongly Verified"
+## AI Implemented but Not Strongly Verified
 
-- **ScoutPanel chat loop.** One happy-path smoke test, no content
-  assertions.
-- **Handoff cards.** Rendered in code; no test taps one.
-- **Conversation persistence replay.** Server persists; no UI test verifies
-  a reload.
-- **Daily brief / weekly plan / staple meals endpoints.** No smoke test
-  calls them.
-- **Trace-id propagation end-to-end.** Wired on both sides; no test
-  asserts the id reaches the log.
-- **Weekly meal plan generation loop.** 39 backend tests; no deployed
-  smoke of the real UI flow.
-- **`ai-panel.spec.ts` against production.** Exists locally; never
-  recorded against Railway + Vercel.
+- **Deployed browser path against Vercel URLs in CI.** Backend verified;
+  browser-level run is operator-only.
+- **Streaming chunk-by-chunk rendering.** Panel uses it; no Playwright
+  assertion on per-chunk state.
+- **Settings AI-toggle round-trip through the UI.**
+- **Daily brief / weekly plan endpoints through the UI.**
+- **Weekly meal plan generation loop through the UI** (deliberately
+  unsmoked — slow).
+- **Moderation false-positive telemetry.**
 
 ---
 
@@ -665,72 +740,58 @@ Strictly: code + backend tests + evidence beyond the unit test harness.
 
 | # | Item | Why deferred | Launch impact | Next window |
 |---|---|---|---|---|
-| 1 | Streaming responses | Request/response works; streaming is UX debt | Perceived latency on long replies | Phase A |
-| 2 | Deployed browser verification of AI panel | 9/9 smoke covered auth + surfaces; AI panel ran locally only | Drift between local and deployed can land unseen | Phase A (immediate) |
-| 3 | AI panel smoke depth (tools, confirmation, history, handoff) | Happy-path smoke was sufficient for launch gate | Medium — regressions in tool flow would not be caught | Phase A |
-| 4 | Confirmation-flow UI in ScoutPanel | Backend returns `confirmation_required`; UI does not render it | Shared-write tools currently dead-end in the panel | Phase B |
-| 5 | Provider fallback / retry on 5xx | Anthropic reliability has been acceptable | User sees error on upstream hiccup | Phase A |
-| 6 | Dietary preferences → generator wiring | Generator still produces usable plans | Low | Phase A |
-| 7 | Scheduled daily brief / weekly plan | On-demand works | Lower engagement | Phase B |
-| 8 | `send_notification_or_create_action` delivery | Action Inbox covers the need today | None for launch | Phase B |
-| 9 | Cost / latency dashboards | Log-grepping works at single-family scale | None for launch | Phase A tail |
-| 10 | Conversation resume in UI | Conversations persist server-side but not restored | Low | Phase C |
-| 11 | Disabled-state handling in ScoutPanel | Prod currently has `ai_available: true` | User-visible break if the key is ever removed | Phase A |
-| 12 | Prompt caching | Per-turn rebuild is fine at current volume | None | Phase C |
-| 13 | Second provider | Single-provider risk is acceptable for private use | Single point of failure | Later |
-| 14 | Autonomous multi-step planning | Out of scope for private launch | None | Not planned |
-| 15 | Photo / doc / voice pipelines | Out of scope | None | Not planned |
+| 1 | Deployed browser smoke in CI against Vercel | Direct HTTPS round-trip was cheaper and proved the backend path | Drift between local and Vercel can land unseen | Sprint 2 |
+| 2 | Provider retry / fallback on 5xx | Anthropic reliability acceptable today | User sees error banner on hiccup | Sprint 2 |
+| 3 | Cost / latency / per-family dashboards | Log grep works at family scale | None today; rises with usage | Sprint 2 tail |
+| 4 | Scheduled daily brief / weekly plan | On-demand works | Lower engagement | Sprint 2 |
+| 5 | `send_notification_or_create_action` real delivery | Action Inbox covers the need | None | Later |
+| 6 | `dietary_preferences` → generator wiring | Generator still produces usable plans | Low today | Sprint 2 |
+| 7 | Conversation resume in UI | Panel always opens blank | Low | Later |
+| 8 | Prompt caching | Per-turn rebuild is fine at current volume | None | Later |
+| 9 | Second provider | Single-provider risk acceptable for private use | SPOF | Later |
+| 10 | Streaming assertion depth in smoke | Basic smoke sufficient | Low | Sprint 2 tail |
+| 11 | Moderation false-positive feedback loop | Classifier is tuned conservatively | Low | Later |
+| 12 | Audit / conversation retention policy | Volume is small | None | Later |
+| 13 | Autonomous multi-step planning | Out of scope | None | Not planned |
+| 14 | Photo / doc / voice intelligence pipelines | Out of scope | None | Not planned |
+| 15 | Custom fine-tuning | Out of scope | None | Not planned |
 
 ---
 
 ## AI Unknowns
 
-These are things the current repo cannot tell us without going out and
-probing:
-
-- Whether `ai-panel.spec.ts` would pass against the live Vercel + Railway
-  URLs today.
-- Whether Railway logs actually show `ai_chat_start` / `ai_chat_success`
-  lines from real production traffic (nothing has verified this since
-  `9481f8f` landed).
-- Whether the weekly meal plan generation loop completes end-to-end against
-  production Postgres within the 60s request timeout.
-- Whether production Anthropic usage is currently within the account's
+- Whether the full Playwright suite would pass against
+  `https://scout-ui-gamma.vercel.app` today. Direct HTTPS round-trip
+  says the backend path is healthy; the browser-rendering path against
+  the deployed bundle has not been tested in this pass.
+- Whether the weekly meal plan generation loop completes end-to-end
+  against production Postgres within the 60s request timeout.
+- Whether current production Anthropic usage is within account
   rate/cost ceilings (no app-layer telemetry).
-- Whether any tool has been invoked in production since deploy (audit
-  table has not been inspected).
+- Whether the moderation classifier is over-blocking in practice
+  (no feedback loop).
 
 ---
 
 ## Recommended Sequence
 
-**Phase A — Coverage + Quality of Life (before any new AI capability)**
-1. Run `ai-panel.spec.ts` against the deployed URLs; log the result.
-2. Strengthen the AI smoke test: assert non-empty assistant bubble,
-   perform one full tool round trip (create task → verify on Personal).
-3. Add a child-login smoke that expects a write denial.
-4. Streaming response pipeline (server SSE → client incremental render).
-5. Retry-with-backoff on upstream 5xx.
-6. Dietary preferences → weekly-plan generator wiring.
-7. Disabled-state handling: ScoutPanel probes `ai_available` before opening.
+**Sprint 2 — Close the remaining trust gaps**
+1. CI job that runs Playwright against `scout-ui-gamma.vercel.app` using
+   the Railway-stored smoke credentials.
+2. Provider retry-with-backoff on 5xx.
+3. `dietary_preferences` → weekly-plan generator wiring.
+4. Structured cost / latency log format + minimal aggregation script.
+5. Scheduled daily brief delivery via `parent_action_items`.
+6. Settings AI-toggle browser smoke.
+7. Prompt caching for the static prefix (cheap; defensible).
 
-**Phase B — Copilot depth**
-1. Scheduled morning brief delivery (email or Action Inbox entry).
-2. "What's off track?" as a real rule-engine-backed explanation.
-3. Confirmation UI flow inside ScoutPanel.
-4. Notification delivery channel for `send_notification_or_create_action`.
+**Later (strategic, not launch-gate)**
+- Conversation resume + per-member history browser.
+- Second provider for redundancy.
+- Moderation false-positive feedback loop.
 
-**Phase C — Ambient / optimization**
-1. Conversation resume + per-member history browser.
-2. Prompt caching for the static parts of the system prompt.
-3. Budget ceilings per family.
-4. Optional: second provider for redundancy.
-
----
-
-## Out of Scope For Now
-
-- Photo / doc / voice intelligence pipelines
-- Autonomous multi-turn planning loops
-- Cross-family or anonymized intelligence
-- Custom fine-tuned models
+**Out of scope**
+- Photo / doc / voice intelligence pipelines.
+- Autonomous multi-turn planning loops.
+- Cross-family or anonymized intelligence.
+- Custom fine-tuned models.

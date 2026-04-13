@@ -1,6 +1,6 @@
 # Scout Backend Roadmap
 
-Last reconciled: 2026-04-12 against commit `9481f8f` on `main`.
+Last reconciled: 2026-04-13 against commit `4e8d2e9` on `main`.
 
 This roadmap is organized by backend capability area. It is the planning layer for
 the backend — not a changelog dump. Each section lists current status, evidence,
@@ -173,37 +173,62 @@ Gaps:
   dedicated route module if Action Inbox gains filtering/pagination.
 
 ## 7. AI Orchestration
-Status: **VERIFIED** (updated 2026-04-13; see `AI_ROADMAP.md` for depth)
+Status: **VERIFIED** (updated 2026-04-13 after Sprint 2 feature work; see
+`AI_ROADMAP.md` for depth)
 
 Scope at the backend layer:
-- Anthropic provider abstraction
-- Role-aware context loader
-- 29 tool registry wrapping existing services (was previously mis-stated as 17)
+- Anthropic provider abstraction with **both `chat()` (sync) and
+  `chat_stream()` (SSE)** surfaces (`provider.py`, 177 lines)
+- Role-aware context loader with family-level `allow_general_chat` and
+  `allow_homework_help` flags (`context.py`, 310 lines)
+- **30-tool** registry wrapping existing services, including the new
+  universal `get_weather` tool (`tools.py`, 1149 lines)
 - Role × surface permission enforcement
 - Confirmation-gated shared writes (10 tools in `CONFIRMATION_REQUIRED`)
-- Bounded 5-round tool-execution loop
-- Full audit logging per tool call
-- **(Sprint 1 closeout, 2026-04-13)** Structural surfacing of
-  `pending_confirmation` and `handoff` in `ChatResponse`, plus a new
-  `confirm_tool` direct-execution path in `ChatRequest` that bypasses
-  the LLM round. This backs the ScoutPanel confirm-card affordance.
+- Bounded 5-round tool-execution loop + SSE streaming generator
+- Structural surfacing of `pending_confirmation` and `handoff` in
+  `ChatResponse`; `confirm_tool` direct-execution path that bypasses the
+  LLM round (Sprint 1 closeout, `5f11821`)
+- **Moderation layer** (`moderation.py`, 227 lines) — classifier-backed
+  safety pass that blocks before any Claude tokens are spent, writes an
+  audit row with `status='moderation_blocked'`, creates a
+  `parent_action_items` alert, and tags `conversation_kind='moderation'`
+  (Sprint 2, `8647e00` + `4e8d2e9`)
+- **`conversation_kind` tagging** (`chat | tool | mixed | moderation`)
+  per turn via `_tag_conversation_kind()` (migration 015)
+- Full audit logging per tool call, including moderation blocks and
+  direct-confirm paths
 
 Evidence:
-- `backend/app/ai/provider.py`, `context.py`, `tools.py` (994 lines),
-  `orchestrator.py` (extended with `_detect_handoff`, `_build_chat_result`,
-  and a `confirm_tool` direct path)
-- `backend/app/routes/ai.py` — 7 endpoints including chat, daily brief, weekly plan
-- `backend/app/schemas/ai.py` — `ConfirmToolPayload`, `HandoffPayload`,
-  `PendingConfirmation`, extended `ChatRequest`/`ChatResponse`
-- Migration: `010_ai_orchestration.sql`
-- Tests: `test_ai_context.py` (10), `test_ai_routes.py` (now 8 including
-  `TestPendingConfirmationPlumbing` — scripted-provider pending test and
-  zero-provider-call confirm_tool test), `test_ai_tools.py` (14)
+- `backend/app/ai/provider.py`, `context.py`, `orchestrator.py` (877 lines),
+  `tools.py`, `moderation.py`
+- `backend/app/routes/ai.py` (231 lines) — 8 endpoints:
+  `/chat`, **`/chat/stream`**, `/brief/daily`, `/plans/weekly`,
+  `/meals/staples`, `/conversations`, `/conversations/{id}/messages`,
+  `/audit`
+- `backend/app/routes/families.py` — new
+  `GET`/`PATCH /api/families/{id}/ai-settings` for the chat flags
+- `backend/app/schemas/ai.py` (131 lines) — `ConfirmToolPayload`,
+  `HandoffPayload`, `PendingConfirmation`, extended `ChatRequest`/`ChatResponse`,
+  SSE event types
+- Migrations: `010_ai_orchestration.sql`, `015_ai_conversation_kind.sql`
+- Tests: `test_ai_context.py` (**26**), `test_ai_routes.py` (**15**,
+  including `TestPendingConfirmationPlumbing` + moderation +
+  `conversation_kind`), `test_ai_tools.py` (**17**, including weather).
+  Total: **58 AI backend tests**.
+- **Production backend verified end-to-end on 2026-04-13** via
+  `smoke@scout.app` HTTPS round-trip + real user request captured in
+  Railway logs. See `docs/AI_OPERATOR_VERIFICATION.md` and
+  `docs/release_candidate_report.md`.
 
 Gaps:
-- Provider is **request/response only** — no streaming. Captured in AI Roadmap.
-- `send_notification_or_create_action` tool logs but does not deliver.
-- No background job, no autonomous loop.
+- No provider retry / fallback on upstream 5xx.
+- `send_notification_or_create_action` tool logs but does not deliver
+  via any transport.
+- No background scheduler; daily brief / weekly plan are on-demand only.
+- No prompt caching for the static system-prompt prefix.
+- No cost or token-budget observability at the app layer.
+- Moderation false-positive rate is not telemetered.
 
 ## 8. Dashboard Aggregation
 Status: **VERIFIED**
@@ -241,37 +266,65 @@ Deliberately not built (see Deferred Ledger):
 Status: **VERIFIED**
 
 Current surface:
-- 20 backend test files, ~320 tests passing (per `docs/release_candidate_report.md`)
+- 20 backend test files, **349 tests passing** (local pytest run 2026-04-13
+  on commit `4e8d2e9`; 58 of those are AI-layer tests)
 - `backend/tests/` uses pytest + Postgres 16 + fresh schema per run
-- `.github/workflows/ci.yml` jobs: `backend-tests`, `frontend-types`, `smoke-web`
-- 12 Playwright smoke tests in `smoke-tests/` (auth + core surfaces + AI panel)
+- `.github/workflows/ci.yml` jobs: `backend-tests`, `frontend-types`,
+  `smoke-web` (full local Playwright)
+- **28 Playwright tests** across 8 files: auth (5), surfaces (7),
+  ai-panel (3), ai-roundtrip (2, conditional), write-paths (6),
+  meals-subpages (3), dev-mode (1), error-boundary (1, gated on
+  `EXPO_PUBLIC_SCOUT_E2E`)
 - `scripts/release_check.py` — pytest + tsc + migrate + seed + smoke
 - `scripts/wait_for_url.py` — readiness wait for deploy verification
+- Persistent smoke credentials provisioned on Railway
+  (`SCOUT_SMOKE_ADULT_EMAIL` / `SCOUT_SMOKE_ADULT_PASSWORD`) for operator
+  and future CI smoke runs against the deployed URLs.
 
 Gaps:
+- No CI job runs Playwright against the deployed Vercel URL — operator
+  checklist only. Tracked as Sprint 2 backlog item "deployed browser
+  smoke in CI".
 - No load testing. Acceptable at private launch scale.
 - No backend chaos / fault injection suite.
-- Smoke coverage for AI is thin — see AI Roadmap §9.
 
 ## 11. Deployment
-Status: **VERIFIED** (in production for private launch as of 2026-04-12)
+Status: **VERIFIED** (in production for private launch since 2026-04-12;
+AI path verified end-to-end 2026-04-13)
 
 Artifacts:
-- `backend/Dockerfile` (Python 3.12 slim + `start.sh`)
+- `backend/Dockerfile` (Python 3.12 slim + `start.sh`) — context-relative
+  `COPY requirements.txt` / `COPY . .` so Railway's `rootDirectory: backend`
+  build works cleanly.
 - `scout-ui/Dockerfile`, `docker-compose.yml`
-- `backend/railway.json`, `scout-ui/vercel.json`, `scout-ui/railway.json`
-- `backend/seed.py` run post-migration for family bootstrap
+- `backend/railway.json`, `scout-ui/vercel.json`, `scout-ui/railway.json`.
+  Single `scout-backend` Railway service (the stale duplicate `Scout`
+  service was removed 2026-04-13).
+- `backend/seed.py` + `backend/seed_smoke.py` run post-migration.
+  `seed_smoke.py` deterministically seeds a draft weekly meal plan,
+  pending purchase request, chore template, and a `TaskInstance` for
+  the current day so write-path smoke tests always find the right state.
 - Production env: `SCOUT_ENVIRONMENT=production`, `SCOUT_AUTH_REQUIRED=true`,
-  `SCOUT_ENABLE_BOOTSTRAP=false`, `SCOUT_ANTHROPIC_API_KEY` set
+  `SCOUT_ENABLE_BOOTSTRAP=false`, `SCOUT_ANTHROPIC_API_KEY` set,
+  `SCOUT_SMOKE_ADULT_EMAIL` + `SCOUT_SMOKE_ADULT_PASSWORD` set.
 
 Verification:
 - Backend: `https://scout-backend-production-9991.up.railway.app` (healthy)
 - Frontend: `https://scout-ui-gamma.vercel.app`
-- 9/9 deployed smoke tests passed (commit `c29a5d0`)
+- 9/9 auth + surface deployed smoke tests passed (`c29a5d0`).
+- **Production AI round-trip VERIFIED** on 2026-04-13 (`782c3ef`) using
+  the new persistent `smoke@scout.app` account: login → chat → 200 with
+  real conversation id, tool call, tokens, and matching production DB
+  row deltas. Railway logs confirm `ai_chat_start` / `ai_chat_success`
+  pairs with trace ids (including one pair from a real adult user).
+- Family renamed Whitfield → Roberts in repo + prod Postgres in lockstep
+  (`782c3ef`).
 
 Gaps:
-- Rate limiter and bootstrap state are process-local. See Deferred Ledger
-  for multi-instance hardening.
+- Deployed browser smoke (Playwright against Vercel URL) is not wired
+  into CI yet — backlog Sprint 2 item.
+- Rate limiter and bootstrap state are process-local. See Deferred
+  Ledger for multi-instance hardening.
 - No blue/green or rolling-release strategy beyond Railway's default.
 
 ## Deferred Backend Debt Ledger
@@ -284,7 +337,11 @@ Gaps:
 | Ingestion audit log | Basic service-level logging is sufficient for v1 | None | Next sprint if integrations ship |
 | Multi-instance safe rate limiter | Single-instance backend on Railway | None today; risk if we horizontally scale | Before any horizontal scale-out |
 | Bonus / penalty allowance adjustments | UI stubs exist; model change + endpoint needed | None — payout path works without it | Next sprint |
-| Streaming AI responses | Request/response works; streaming is UX debt | Perceived latency on long replies | See AI Roadmap |
+| Provider retry / fallback on Anthropic 5xx | Anthropic reliability acceptable today | User-visible error on single upstream hiccup | Sprint 2 |
+| AI cost / latency dashboards + per-family token budget | Log-grep works at family scale | None today; rises with usage | Sprint 2 tail |
 | Notification delivery for AI `send_notification_or_create_action` | Currently logged only; no delivery channel chosen | None — Action Inbox covers the need | Later |
-| `dietary_preferences` → AI meal generation wiring | Table exists but generator ignores it | Low — AI still produces usable plans | Next sprint |
+| `dietary_preferences` → AI meal generation wiring | Table exists but generator ignores it | Low — AI still produces usable plans | Sprint 2 |
+| Prompt caching for static system prompt | Per-turn rebuild fine at current volume | None | Sprint 2 tail |
+| Scheduled daily brief / weekly plan delivery | On-demand works | Lower engagement | Sprint 2 |
 | Dedicated `parent_action_items` route module | Dashboard aggregation covers current UX | None | When action inbox needs filtering |
+| Moderation false-positive feedback loop | Classifier tuned conservatively | Low | Later |

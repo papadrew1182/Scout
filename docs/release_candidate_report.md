@@ -1,10 +1,35 @@
 # Scout Release Candidate Report
 
-**Verified commit:** `549723b` (main)
-**Date:** 2026-04-12
-**Branch:** launch-preflight (from main)
+**Current commit on main:** `4e8d2e9`
+**Last reconciliation:** 2026-04-13 (post-Sprint-2-feature-work)
+**Initial launch commit:** `549723b` (2026-04-12)
 
-## Verification Results
+## Current Verification Results (2026-04-13 against `4e8d2e9`)
+
+### Backend Tests
+- **Result:** 349 passed, 0 failed
+- **Command:** `cd backend && python -m pytest tests/ -q`
+- **Coverage:** auth (40), grocery (26), weekly meals (39), AI (58: 26
+  context + 15 routes + 17 tools), meals (15), dashboard (11),
+  route-level (27), plus calendar, finance, notes, personal tasks,
+  health, integrations, payouts, tenant isolation
+
+### Playwright Tests (local)
+- **Result:** 28 tests across 8 files (not run in this pass; counted
+  by source inspection)
+- **Files:** `auth.spec.ts` (5), `surfaces.spec.ts` (7),
+  `ai-panel.spec.ts` (3), `ai-roundtrip.spec.ts` (2), `write-paths.spec.ts`
+  (6), `meals-subpages.spec.ts` (3), `dev-mode.spec.ts` (1),
+  `error-boundary.spec.ts` (1, gated on `EXPO_PUBLIC_SCOUT_E2E`)
+
+### Production AI Backend Verification (2026-04-13)
+- **Result:** VERIFIED via direct HTTPS round-trip from
+  `smoke@scout.app`. See "Production AI Verification" section below
+  for the full evidence.
+
+---
+
+## Initial Launch Verification (2026-04-12 against `549723b`)
 
 ### Backend Tests
 - **Result:** 320 passed, 0 failed
@@ -125,7 +150,7 @@
 | Backend /health | `{"status":"ok"}` |
 | Backend /ready | `{"status":"ready","ai_available":true,"meal_generation":true}` |
 | Unauthenticated /api/auth/me | 401 (auth enforced) |
-| Adult login (robertsandrewt@gmail.com) | Success (token + member returned) |
+| Adult login (`<primary adult email>`) | Success (token + member returned) |
 | Frontend loads (Vercel) | 200 OK |
 | Frontend API_BASE_URL | Correct (scout-backend-production-9991.up.railway.app) |
 | Bootstrap endpoint | Disabled (SCOUT_ENABLE_BOOTSTRAP=false) |
@@ -523,12 +548,12 @@ matching the orchestrator's persistence model.
 browser suite against `scout-ui-gamma.vercel.app` using the
 Railway-stored smoke credentials. CI wiring work, not a regression.
 
-### Production env snapshot (2026-04-13 post-rename, post-deploy)
+### Production env snapshot (2026-04-13 post-rename, post-Sprint-2-deploy)
 
 | Setting | Value |
 |---|---|
-| Frontend URL | `https://scout-ui-gamma.vercel.app` (Vercel dpl `ASRzovJEMYVinyecjRBYAdDGuf1K`) |
-| Backend URL | `https://scout-backend-production-9991.up.railway.app` (Railway deploy `433bd7be`) |
+| Frontend URL | `https://scout-ui-gamma.vercel.app` |
+| Backend URL | `https://scout-backend-production-9991.up.railway.app` |
 | `SCOUT_ENVIRONMENT` | `production` |
 | `SCOUT_AUTH_REQUIRED` | `true` |
 | `SCOUT_ENABLE_BOOTSTRAP` | `false` |
@@ -537,12 +562,30 @@ Railway-stored smoke credentials. CI wiring work, not a regression.
 | `SCOUT_SMOKE_ADULT_EMAIL` | `smoke@scout.app` |
 | `SCOUT_SMOKE_ADULT_PASSWORD` | set (rotated 2026-04-13) |
 | `EXPO_PUBLIC_API_URL` (Vercel) | inlined in bundle → Railway backend |
-| Active adult accounts | 2 (Andrew Roberts, Smoke Roberts) |
-| Active child accounts | 0 |
-| Active sessions | 17 |
-| `ai_tool_audit` rows | 3 |
-| `ai_conversations` rows | 3 |
-| `ai_messages` rows | 12 |
+| Railway services in project | `scout-backend`, `Postgres` (stale duplicate `Scout` service removed 2026-04-13) |
+| `backend/Dockerfile` | context-relative paths (`COPY requirements.txt`, `COPY . .`) to match Railway's `rootDirectory: backend` build |
 | `/ready.ai_available` | `true` |
+
+---
+
+## Operating mode now (post-2026-04-13)
+
+Scout is **live for private family use**. Sprint 1 + Sprint 2 feature
+work has landed. The production AI backend path is VERIFIED end-to-end.
+
+From this point forward the project is in **bugfix-only / tightly-scoped
+backlog mode**. Future prompts should be shaped as:
+
+- Specific bug reports with a repro or failing test.
+- Named backlog items from `docs/EXECUTION_BACKLOG.md` (currently: #1
+  deployed browser smoke in CI, #2 provider retry, #3 production error
+  reporting, #4 `dietary_preferences` wiring, #5 scheduled daily brief,
+  #6 AI observability, plus the Sprint 3 tail).
+- Smoke coverage for a named existing surface.
+- Operational / dependency maintenance.
+
+No more broad "build everything" prompts. The remaining work is
+trust / polish / strategic completion, not launch survival. See
+`docs/ROADMAP_RECONCILIATION.md` §11 for the full ruleset.
 
 
