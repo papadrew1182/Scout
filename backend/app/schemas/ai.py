@@ -1,15 +1,48 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class ConfirmToolPayload(BaseModel):
+    """Inline confirmation of a previously-gated tool.
+
+    Sent back to /api/ai/chat when the user taps 'Confirm' on a
+    pending_confirmation card in the ScoutPanel. Bypasses the LLM round
+    and re-executes the tool with confirmed=true inside the same
+    conversation.
+    """
+
+    tool_name: str = Field(min_length=1, max_length=120)
+    arguments: dict
 
 
 class ChatRequest(BaseModel):
     family_id: uuid.UUID | None = None  # Optional: route derives from actor session
     member_id: uuid.UUID | None = None  # Optional: route derives from actor session
     surface: str = Field(default="personal", pattern="^(personal|parent|child)$")
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field(default="", max_length=4000)
     conversation_id: uuid.UUID | None = None
+    confirm_tool: ConfirmToolPayload | None = None
+
+    @model_validator(mode="after")
+    def _require_message_or_confirm(self) -> "ChatRequest":
+        if not self.message.strip() and self.confirm_tool is None:
+            raise ValueError("message is required unless confirm_tool is provided")
+        return self
+
+
+class HandoffPayload(BaseModel):
+    entity_type: str
+    entity_id: str
+    route_hint: str
+    summary: str
+
+
+class PendingConfirmation(BaseModel):
+    tool_name: str
+    arguments: dict
+    message: str
 
 
 class ChatResponse(BaseModel):
@@ -18,6 +51,8 @@ class ChatResponse(BaseModel):
     tool_calls_made: int
     model: str
     tokens: dict
+    handoff: HandoffPayload | None = None
+    pending_confirmation: PendingConfirmation | None = None
 
 
 class BriefRequest(BaseModel):

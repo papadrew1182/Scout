@@ -337,12 +337,56 @@ export function fetchActionItems(status: string = "pending"): Promise<any[]> {
 // AI Chat — auth-derived actor
 // ---------------------------------------------------------------------------
 
+export interface AIHandoff {
+  entity_type: string;
+  entity_id: string;
+  route_hint: string;
+  summary: string;
+}
+
+export interface AIPendingConfirmation {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  message: string;
+}
+
+export interface AIChatResult {
+  conversation_id: string;
+  response: string;
+  tool_calls_made: number;
+  model: string;
+  tokens: { input?: number; output?: number };
+  handoff?: AIHandoff | null;
+  pending_confirmation?: AIPendingConfirmation | null;
+}
+
+export interface SendChatOptions {
+  surface?: string;
+  conversationId?: string;
+  confirmTool?: { tool_name: string; arguments: Record<string, unknown> };
+}
+
 export async function sendChatMessage(
   message: string,
-  surface: string = "personal",
+  surfaceOrOptions: string | SendChatOptions = "personal",
   conversationId?: string,
-): Promise<any> {
+): Promise<AIChatResult> {
+  // Backwards-compatible two-call signatures:
+  //   sendChatMessage("msg", "personal", convId)
+  //   sendChatMessage("", { confirmTool: {...}, conversationId })
+  const opts: SendChatOptions =
+    typeof surfaceOrOptions === "string"
+      ? { surface: surfaceOrOptions, conversationId }
+      : { surface: "personal", ...surfaceOrOptions };
+
   const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const body: Record<string, unknown> = {
+    surface: opts.surface ?? "personal",
+    message,
+  };
+  if (opts.conversationId) body.conversation_id = opts.conversationId;
+  if (opts.confirmTool) body.confirm_tool = opts.confirmTool;
+
   const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
     method: "POST",
     headers: {
@@ -350,11 +394,7 @@ export async function sendChatMessage(
       "Content-Type": "application/json",
       "X-Scout-Trace-Id": traceId,
     },
-    body: JSON.stringify({
-      surface,
-      message,
-      conversation_id: conversationId || undefined,
-    }),
+    body: JSON.stringify(body),
   });
   if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
   if (!res.ok) {
@@ -362,8 +402,31 @@ export async function sendChatMessage(
     console.error(`[Scout AI] trace=${traceId} status=${res.status} error=${text.slice(0, 200)}`);
     throw new Error(`AI request failed (${res.status})`);
   }
-  const data = await res.json();
-  return data;
+  return (await res.json()) as AIChatResult;
+}
+
+// ---------------------------------------------------------------------------
+// Platform readiness probe — used by ScoutPanel to render a disabled state
+// when the backend reports ai_available=false.
+// ---------------------------------------------------------------------------
+
+export interface ReadyState {
+  status: string;
+  ai_available: boolean;
+  auth_required?: boolean;
+  environment?: string;
+  reason?: string;
+}
+
+export async function fetchReady(): Promise<ReadyState> {
+  const res = await fetch(`${API_BASE_URL}/ready`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    return { status: "unknown", ai_available: false, reason: `ready ${res.status}` };
+  }
+  return (await res.json()) as ReadyState;
 }
 
 export function fetchDailyBrief(): Promise<any> {

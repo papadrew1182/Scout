@@ -14,7 +14,7 @@ Creates:
 
 import os
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -22,7 +22,8 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models.foundation import Family, FamilyMember, UserAccount, Session
-from app.models.grocery import GroceryItem
+from app.models.grocery import GroceryItem, PurchaseRequest
+from app.models.life_management import ChoreTemplate, TaskInstance
 from app.models.meals import WeeklyMealPlan
 from app.models.action_items import ParentActionItem
 from app.services.auth_service import hash_password
@@ -192,6 +193,108 @@ def seed_smoke():
         print(f"  Created parent action item: {action.id}")
     else:
         print(f"  Action item already exists: {existing_action.id}")
+
+    # --- Draft weekly meal plan (next week) — supports 'Approve Plan' smoke ---
+    next_monday = monday + timedelta(days=7)
+    existing_draft = db.scalars(
+        select(WeeklyMealPlan)
+        .where(WeeklyMealPlan.family_id == family.id)
+        .where(WeeklyMealPlan.week_start_date == next_monday)
+    ).first()
+    if not existing_draft:
+        draft_plan = WeeklyMealPlan(
+            family_id=family.id,
+            created_by_member_id=andrew.id,
+            week_start_date=next_monday,
+            source="ai",
+            status="draft",
+            title="Next Week (Draft)",
+            constraints_snapshot={},
+            week_plan={
+                "dinners": {
+                    "monday": {"title": "Grilled salmon", "description": "with rice and greens"},
+                    "tuesday": {"title": "Chicken fajitas", "description": "pepper and onion"},
+                    "wednesday": {"title": "Meatball subs", "description": "family favorite"},
+                    "thursday": {"title": "Veggie curry", "description": "mild coconut"},
+                    "friday": {"title": "Breakfast for dinner", "description": "pancakes and eggs"},
+                },
+            },
+            prep_plan={"tasks": [], "timeline": []},
+            grocery_plan={"stores": []},
+            plan_summary="Draft week pending parent approval",
+        )
+        db.add(draft_plan)
+        db.flush()
+        print(f"  Created draft meal plan (next week): {draft_plan.id}")
+    else:
+        print(f"  Draft meal plan already exists: {existing_draft.id}")
+
+    # --- Pending purchase request — supports 'Convert/Approve request' smoke ---
+    existing_req = db.scalars(
+        select(PurchaseRequest)
+        .where(PurchaseRequest.family_id == family.id)
+        .where(PurchaseRequest.status == "pending")
+    ).first()
+    if not existing_req:
+        req = PurchaseRequest(
+            family_id=family.id,
+            requested_by_member_id=sadie.id,
+            type="grocery",
+            title="New soccer ball",
+            details="Mine is flat and we have practice Saturday",
+            urgency="soon",
+            status="pending",
+        )
+        db.add(req)
+        db.flush()
+        print(f"  Created pending purchase request: {req.id}")
+    else:
+        print(f"  Purchase request already pending: {existing_req.id}")
+
+    # --- Chore template + today's task instance for Sadie ---
+    existing_chore = db.scalars(
+        select(ChoreTemplate)
+        .where(ChoreTemplate.family_id == family.id)
+        .where(ChoreTemplate.name == "Feed the dog")
+    ).first()
+    if not existing_chore:
+        chore = ChoreTemplate(
+            family_id=family.id,
+            name="Feed the dog",
+            description="Breakfast scoop for Biscuit",
+            recurrence="daily",
+            due_time=time(7, 30),
+            assignment_type="fixed",
+            assignment_rule={"member_id": str(sadie.id)},
+        )
+        db.add(chore)
+        db.flush()
+        print(f"  Created chore template: {chore.name}")
+    else:
+        chore = existing_chore
+
+    today = date.today()
+    existing_task = db.scalars(
+        select(TaskInstance)
+        .where(TaskInstance.family_id == family.id)
+        .where(TaskInstance.family_member_id == sadie.id)
+        .where(TaskInstance.instance_date == today)
+        .where(TaskInstance.chore_template_id == chore.id)
+    ).first()
+    if not existing_task:
+        task = TaskInstance(
+            family_id=family.id,
+            family_member_id=sadie.id,
+            chore_template_id=chore.id,
+            instance_date=today,
+            due_at=datetime.combine(today, time(7, 30), tzinfo=timezone.utc),
+            is_completed=False,
+        )
+        db.add(task)
+        db.flush()
+        print(f"  Created task instance for Sadie today: {task.id}")
+    else:
+        print(f"  Task instance already exists for Sadie today: {existing_task.id}")
 
     db.commit()
     db.close()

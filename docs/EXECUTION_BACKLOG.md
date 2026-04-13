@@ -4,6 +4,13 @@ Last built: 2026-04-13 from `BACKEND_ROADMAP.md`, `FRONTEND_ROADMAP.md`,
 `AI_ROADMAP.md`, `docs/ROADMAP_RECONCILIATION.md`, `docs/release_candidate_report.md`,
 `docs/private_launch.md`.
 
+**Sprint 1 closeout status (2026-04-13):** items 1.2, 1.3, 2.1 (partial),
+2.2 (partial), 2.3, 2.4, 2.5 have landed. Items 1.1 and the investigations
+(#17/#18/#19) remain blocked on operator access to Railway logs, prod
+Postgres, and a deploy-aware smoke runner. See
+`docs/release_candidate_report.md` Sprint 1 closeout section and the
+per-item status notes below.
+
 This is a cross-product execution backlog. It is **not** a changelog and
 it is **not** a wish list. Every item here is already captured as a
 deferred / partial / unknown entry in one of the roadmaps; this document
@@ -57,6 +64,11 @@ Items that, if left broken, can degrade the single family currently using
 Scout. These are the only items that should block a fresh deploy today.
 
 ### 1.1 — Deployed AI-panel smoke (first-ever against Railway + Vercel)
+**Sprint 1 status: STILL OPEN** — blocked on operator access to Railway + Vercel
+from this environment. Playwright now asserts content + disabled-state + child
+surface **locally**, but the against-deployed-URL run has not been recorded.
+Operator checklist is in the Sprint 1 closeout notes.
+
 - **Area:** ai / ops
 - **Status:** PARTIAL (AI Roadmap §10, §11)
 - **Why it matters:** `ai-panel.spec.ts` has never been recorded as run
@@ -78,6 +90,12 @@ Scout. These are the only items that should block a fresh deploy today.
      real `X-Scout-Trace-Id`.
 
 ### 1.2 — ScoutPanel disabled-state handling
+**Sprint 1 status: IMPLEMENTED.** `scout-ui/lib/api.ts :: fetchReady()` +
+`scout-ui/components/ScoutLauncher.tsx` probe `/ready` on open and render
+a "Scout AI is unavailable right now" card when `ai_available=false`.
+Covered by new Playwright test in `ai-panel.spec.ts` that stubs `/ready`
+via `page.route()`.
+
 - **Area:** frontend
 - **Status:** PARTIAL (AI Roadmap §5, item 11 of ledger)
 - **Why it matters:** `ScoutPanel` does not probe `/ready.ai_available`
@@ -96,6 +114,14 @@ Scout. These are the only items that should block a fresh deploy today.
      asserts the disabled state.
 
 ### 1.3 — Decide production behavior for dev-mode ingestion buttons
+**Sprint 1 status: VERIFIED.** Audited `scout-ui/lib/config.ts`:
+`DEV_MODE = !process.env.EXPO_PUBLIC_API_URL`, evaluated at compile time
+via Metro inlining. Any CI or Vercel build sets `EXPO_PUBLIC_API_URL`,
+so `DEV_MODE=false`, so `{DEV_MODE && <DevToolsPanel />}` on the personal
+surface short-circuits and the ingestion buttons are not rendered. New
+`smoke-tests/tests/dev-mode.spec.ts` asserts the buttons are absent on
+the personal dashboard.
+
 - **Area:** frontend
 - **Status:** IMPLEMENTED — gate not audited (Frontend Roadmap §3)
 - **Why it matters:** personal dashboard renders Google Calendar + YNAB
@@ -119,6 +145,17 @@ Scout. These are the only items that should block a fresh deploy today.
 Should follow a launch-stabilization sprint (Bucket 1) immediately.
 
 ### 2.1 — Write-path E2E smoke suite
+**Sprint 1 status: PARTIAL.** `smoke-tests/tests/write-paths.spec.ts`
+(new file) ships 6 write-path tests: approve pending grocery, approve
+draft meal plan, run weekly payout, convert purchase request, child task
+completion, child meal-review submit. Seed extended in `backend/seed_smoke.py`
+with a draft weekly meal plan, pending purchase request, chore template,
+and today's task instance. Some tests include conditional skips when the
+seeded state is not reachable through the current UI (for example, the
+"approve draft meal plan" case if `meals/this-week` still surfaces the
+approved current-week plan). Those skips are annotated, not silent, and
+remain in the Next Sprint queue.
+
 - **Area:** frontend / full-stack
 - **Status:** PARTIAL (Frontend Roadmap §12; Reconciliation §2)
 - **Why it matters:** every main surface is read-path only in smoke.
@@ -141,6 +178,13 @@ Should follow a launch-stabilization sprint (Bucket 1) immediately.
   6. Parent converts a purchase request into a grocery item.
 
 ### 2.2 — AI panel verification depth
+**Sprint 1 status: PARTIAL.** Content assertion landed (ChatResponse.response
+must be non-empty and > 3 chars). Child-surface test landed. Disabled-state
+test landed. **Still open:** full AI tool round-trip through the UI, handoff
+card deep-link tap test, and confirmation round-trip through the browser.
+Backend confirmation plumbing is verified by the new pytest
+`TestPendingConfirmationPlumbing` class.
+
 - **Area:** ai / frontend
 - **Status:** PARTIAL (AI Roadmap §10; Frontend Roadmap §10)
 - **Why it matters:** the single AI-panel smoke test asserts only
@@ -165,6 +209,17 @@ Should follow a launch-stabilization sprint (Bucket 1) immediately.
      surfaces a confirm affordance (depends on 2.3 landing).
 
 ### 2.3 — Confirmation-flow UI inside ScoutPanel
+**Sprint 1 status: IMPLEMENTED.** Backend: `orchestrator.chat()` now
+detects `confirmation_required` in a tool result, breaks the loop, and
+returns a structured `pending_confirmation={tool_name, arguments, message}`
+in `ChatResponse`. Schema gained `ConfirmToolPayload`, `PendingConfirmation`.
+New `confirm_tool` direct path on `ChatRequest` bypasses the LLM and
+re-executes the tool with `confirmed=true`. Frontend: `ScoutLauncher.tsx`
+renders a confirm/cancel card when `result.pending_confirmation` is set;
+tapping Confirm calls `sendChatMessage("", {confirmTool})`. Covered by
+two new pytest classes in `test_ai_routes.py`. **Remaining:** browser
+Playwright round-trip of the confirm tap (open bug: still in backlog).
+
 - **Area:** frontend
 - **Status:** PARTIAL (AI Roadmap §5 and §3; Frontend Roadmap §10)
 - **Why it matters:** the backend confirmation gate on the 10
@@ -183,6 +238,15 @@ Should follow a launch-stabilization sprint (Bucket 1) immediately.
   3. Covered by item 2.2.5.
 
 ### 2.4 — Global frontend error boundary
+**Sprint 1 status: IMPLEMENTED.** New
+`scout-ui/components/ErrorBoundary.tsx` (React class component) wraps
+`AuthProvider` + `AppShell` in `scout-ui/app/_layout.tsx`. Renders a
+"Something went wrong — Reload" fallback and logs to stdout via
+`console.error("[Scout ErrorBoundary]", ...)`. No Playwright smoke test
+yet (render crash is hard to force through Expo Router without a
+development-only `/__boom` route). Manual verification path is
+documented in `FRONTEND_ROADMAP.md §11`.
+
 - **Area:** frontend
 - **Status:** IMPLEMENTED — per-component only (Frontend Roadmap §11)
 - **Why it matters:** a render crash anywhere in the Expo Router tree
@@ -198,6 +262,11 @@ Should follow a launch-stabilization sprint (Bucket 1) immediately.
      the boundary fallback renders.
 
 ### 2.5 — Meals subpages smoke
+**Sprint 1 status: IMPLEMENTED.** New
+`smoke-tests/tests/meals-subpages.spec.ts` covers `/meals/this-week`,
+`/meals/prep`, and `/meals/reviews`. Both subpages previously had zero
+coverage.
+
 - **Area:** frontend
 - **Status:** IMPLEMENTED (Frontend Roadmap §6; Reconciliation §2)
 - **Why it matters:** 539 total lines of real UI (`prep.tsx` +

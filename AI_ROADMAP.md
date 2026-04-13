@@ -178,39 +178,67 @@ No new AI features are introduced in this pass — this is reconciliation only.
 ---
 
 ## 5. ScoutPanel Chat UX (Frontend)
-**Status: PARTIAL**
+**Status: IMPLEMENTED** (Sprint 1 closeout, 2026-04-13 — was PARTIAL)
 
 **What exists**
-- `scout-ui/components/ScoutLauncher.tsx` (272 lines) — `ScoutPanel` slide-up
-  modal with message history, 6 quick-action chips, text input, and handoff
-  buttons driven by `result.handoff`.
+- `scout-ui/components/ScoutLauncher.tsx` — `ScoutPanel` slide-up modal with
+  message history, 6 quick-action chips, text input, handoff cards, and
+  (new) a confirmation card for confirmation-gated tools.
+- **Disabled-state handling (new):** on open, the panel calls
+  `fetchReady()` and renders a "Scout AI is unavailable right now" card
+  when `ai_available=false`. The chat UI never mounts in the disabled
+  state, so users cannot fire a request into a known-broken path.
+- **Confirmation-flow UI (new):** when the backend returns
+  `pending_confirmation`, the panel renders a confirm/cancel card with
+  the tool name + arguments summary. Confirm re-invokes `/api/ai/chat`
+  with a structured `confirm_tool` payload (bypassing the LLM round) and
+  executes the tool with `confirmed=true`. Cancel just dismisses.
 - Quick actions (verbatim): "What does today look like?", "What's off
   track?", "Add a task", "Add to grocery list", "Plan meals for next week",
   "What do the kids still need to finish?".
-- `scout-ui/lib/api.ts:340-364` — `sendChatMessage()` POSTs to
-  `/api/ai/chat` with a client-generated `X-Scout-Trace-Id`
-  (`scout-${Date.now()}-${random}`) and logs failures with the trace id.
-- Handoff button deep-links via `router.push(route_hint)` on tap.
-- Loading state: `ActivityIndicator` + "Thinking..." text while awaiting.
+- `scout-ui/lib/api.ts :: sendChatMessage` accepts an options object with
+  `confirmTool`; `fetchReady()` is a new helper that probes `/ready`.
+- Handoff cards deep-link via `router.push(route_hint)` on tap.
 
 **Evidence**
-- `ScoutLauncher.tsx:27-34` (quick actions), `ScoutLauncher.tsx:50-75`
-  (send loop), `ScoutLauncher.tsx:107-127` (handoff rendering).
-- `api.ts:340-364` (trace-id generation + error logging).
+- `ScoutLauncher.tsx` — disabled-state + confirmation card + handoff
+  rendering all in one component.
+- `lib/api.ts :: fetchReady, sendChatMessage(..., {confirmTool})` — new
+  typed surface.
+- Backend: `backend/app/ai/orchestrator.py :: chat()` now structurally
+  surfaces `pending_confirmation` in the HTTP response dict when a tool
+  result has `confirmation_required=true`, and `handoff` when a tool
+  result carries `entity_type + route_hint`. A separate `confirm_tool`
+  direct-execution path bypasses the LLM entirely.
+- Backend schema: `backend/app/schemas/ai.py` adds `ConfirmToolPayload`,
+  `HandoffPayload`, `PendingConfirmation`, extends `ChatRequest` and
+  `ChatResponse`.
+- `backend/tests/test_ai_routes.py :: TestPendingConfirmationPlumbing` —
+  two new tests (scripted provider proving pending_confirmation surfaces
+  structurally; zero-provider-calls proving the confirm_tool direct
+  path).
 
 **Verification strength**
-- One thin Playwright test covers the happy path only (see §10).
-- **No UI handling for `confirmation_required`** — a tool requiring
-  confirmation will silently not execute and the user gets free-form text.
-- **No streaming / no typing indicator** beyond a single spinner.
+- Backend: scripted-provider test proves pending_confirmation propagates
+  end-to-end through the orchestrator without needing a real Anthropic
+  call. Confirm-tool direct path test proves zero provider calls.
+- Frontend: `smoke-tests/tests/ai-panel.spec.ts` now asserts non-empty
+  assistant content, covers the child surface, and stubs `/ready` to
+  exercise the disabled-state card. Still one test file, but now 3 tests
+  with content assertions instead of 1 with only a "no error banner"
+  check.
+- **No streaming / no typing indicator** beyond a single spinner. Not
+  changed in this pass — tracked separately as AI Roadmap Phase A item.
 - **No conversation resume** — reopening the panel always starts fresh.
+  Not changed in this pass — tracked as Phase C.
 - **No error surface** beyond a single "Something went wrong" bubble on
   fetch failure.
 
 **Gaps**
-- Disabled-state handling: the panel does not check `/ready.ai_available`
-  before opening; if the key is missing the user fires a request that 500s.
-- No child-facing ScoutPanel variant or affordance.
+- Still no child-facing ScoutPanel variant (child and adult share the
+  panel UI; allowlist is enforced server-side).
+- Deployed browser smoke still has not been recorded against Railway +
+  Vercel (see §11 — operator checklist only).
 
 ---
 
@@ -322,37 +350,51 @@ No new AI features are introduced in this pass — this is reconciliation only.
 ---
 
 ## 10. Browser-Based AI Verification
-**Status: PARTIAL**
+**Status: PARTIAL** (Sprint 1 closeout expanded — still PARTIAL)
 
-**What exists**
-- `smoke-tests/tests/ai-panel.spec.ts` (94 lines) — a **single** test:
-  1. Probe `/ready` for `ai_available: true`; `test.skip()` if false.
-  2. Adult login → click "Scout AI" in the NavBar → assert the "What can I
-     help with?" header.
-  3. Click the "What does today look like?" quick action, await the
-     `/api/ai/chat` response.
-  4. Assert status < 500 and that "Something went wrong" is **not** visible.
+**What exists (after Sprint 1 closeout, 2026-04-13)**
+- `smoke-tests/tests/ai-panel.spec.ts` — **3 tests**:
+  1. **Content assertion test** (was the old happy-path test). Now
+     asserts `ChatResponse.response` is a non-empty string with length
+     > 3, not just "no error banner". Skips if `ai_available=false`.
+  2. **Disabled-state test** (new). Stubs the browser `/ready` call via
+     `page.route()` to return `ai_available: false` and asserts the panel
+     renders the "Scout AI is unavailable right now" card and does NOT
+     mount the quick-action chips.
+  3. **Child surface test** (new). Logs in as the child user, opens the
+     panel, and asserts either the chat UI, checking state, or disabled
+     state renders without a page-level error banner.
 
-**What it does NOT cover**
-- Actual tool execution (the test never asserts a tool was called).
-- Confirmation round-trip.
-- Role restrictions (no child or parent surface variant).
-- Handoff button deep-links.
-- Conversation resume / history reload.
-- Streaming (because streaming does not exist).
-- Disabled-state UI when `ai_available: false`.
+**What it STILL does NOT cover**
+- Full tool-execution round-trip through the UI (create a task, assert
+  it lands on the Personal screen). Requires stable seed/teardown and is
+  the single highest remaining test gap.
+- `confirmation_required` UI round-trip through the panel (click
+  confirm, observe a second `/api/ai/chat` request with `confirm_tool`
+  and a resulting handoff). Backend plumbing is verified by the new
+  pytest `TestPendingConfirmationPlumbing` class; browser round-trip is
+  still missing.
+- Handoff card deep-link taps (no test clicks a handoff card yet).
+- Streaming (does not exist).
+- Deployed browser verification against Railway + Vercel — still not
+  recorded.
 
 **Assertion strength**
-- **Weak.** The test passes even if the assistant bubble is empty or the
-  response is a stock "I can't help right now." The only hard assertion is
-  "no 5xx and no error banner." This is a launch-sufficiency gate, not a
-  behavior gate.
+- **Medium.** The suite now proves: (1) the `/api/ai/chat` response
+  carries a real non-empty `response` field, (2) the disabled state
+  renders when the backend says AI is off, (3) the child surface doesn't
+  explode when the panel opens. The biggest remaining gap is
+  write-through tool verification.
 
-**Next work**
-- Assert the assistant bubble renders non-empty text.
-- Add a second test that creates a task through the AI and then asserts
-  the task appears on the Personal screen.
-- Add a child-login test that tries a write and expects a denial.
+**Backlog items still open (ranked)**
+1. Full tool-execution round-trip through the browser (create task via
+   AI → verify on Personal).
+2. `confirmation_required` UI round-trip (confirm tap → second chat
+   call with confirm_tool → handoff card).
+3. Handoff card deep-link tap test.
+4. Deployed browser verification against Railway + Vercel — still an
+   operator checklist task (see §11 — no way to run it from CI without
+   a deploy-aware smoke job).
 
 ---
 

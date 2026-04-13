@@ -121,6 +121,54 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
     return api_messages
 
 
+def _detect_handoff(tool_result: dict | None) -> dict | None:
+    """A tool_result is a handoff if it came from tools._handoff() — it
+    has both entity_type and route_hint. Return a normalized dict so
+    the HTTP response can expose it structurally."""
+    if not isinstance(tool_result, dict):
+        return None
+    if "entity_type" not in tool_result or "route_hint" not in tool_result:
+        return None
+    return {
+        "entity_type": str(tool_result.get("entity_type", "")),
+        "entity_id": str(tool_result.get("entity_id", "")),
+        "route_hint": str(tool_result.get("route_hint", "")),
+        "summary": str(tool_result.get("summary", "")),
+    }
+
+
+def _build_chat_result(
+    *,
+    conversation_id: uuid.UUID,
+    response_text: str,
+    model: str,
+    tokens: dict,
+    tool_calls_made: int,
+    handoff: dict | None = None,
+    pending_confirmation: dict | None = None,
+) -> dict:
+    return {
+        "conversation_id": str(conversation_id),
+        "response": response_text,
+        "tool_calls_made": tool_calls_made,
+        "model": model,
+        "tokens": tokens,
+        "handoff": handoff,
+        "pending_confirmation": pending_confirmation,
+    }
+
+
+def _count_tool_rows(db: Session, conversation_id: uuid.UUID) -> int:
+    return sum(
+        1
+        for _ in db.scalars(
+            select(AIMessage)
+            .where(AIMessage.conversation_id == conversation_id)
+            .where(AIMessage.role == "tool")
+        ).all()
+    )
+
+
 def chat(
     db: Session,
     family_id: uuid.UUID,
@@ -128,8 +176,15 @@ def chat(
     surface: str,
     user_message: str,
     conversation_id: uuid.UUID | None = None,
+    confirm_tool: dict | None = None,
 ) -> dict:
-    """Execute a full chat turn including tool execution."""
+    """Execute a full chat turn including tool execution.
+
+    If ``confirm_tool`` is provided, the LLM round is skipped entirely:
+    the named tool is executed directly with ``confirmed=true`` inside
+    the existing conversation. This backs the ScoutPanel confirm-card
+    affordance for confirmation-gated shared-write tools.
+    """
     context = load_member_context(db, family_id, member_id)
     system_prompt = build_system_prompt(context, surface)
     role = context["member"]["role"]
@@ -139,13 +194,6 @@ def chat(
 
     conversation = get_or_create_conversation(db, family_id, member_id, surface, conversation_id)
 
-    # Persist user message
-    _persist_message(db, conversation.id, "user", content=user_message)
-
-    # Load conversation history
-    messages = _load_conversation_messages(db, conversation.id)
-
-    provider = get_provider()
     executor = ToolExecutor(
         db=db,
         family_id=family_id,
@@ -156,8 +204,59 @@ def chat(
         allowed_tools=allowed_tool_names,
     )
 
-    # Tool execution loop (bounded)
+    # --- Direct confirmation path: bypass LLM, execute tool with confirmed=true.
+    if confirm_tool is not None:
+        tool_name = confirm_tool.get("tool_name") or ""
+        args = dict(confirm_tool.get("arguments") or {})
+        args["confirmed"] = True
+
+        if user_message:
+            _persist_message(db, conversation.id, "user", content=user_message)
+
+        tool_result = executor.execute(tool_name, args)
+        synthetic_tool_id = f"confirm-{uuid.uuid4().hex[:8]}"
+        _persist_message(
+            db, conversation.id, "tool",
+            tool_results={"tool_use_id": synthetic_tool_id, "result": tool_result},
+        )
+
+        handoff = _detect_handoff(tool_result)
+        if isinstance(tool_result, dict) and tool_result.get("error"):
+            response_text = str(tool_result.get("error"))
+        elif handoff:
+            response_text = handoff["summary"] or f"Done — {tool_name} completed."
+        else:
+            response_text = f"Done — {tool_name} completed."
+
+        _persist_message(
+            db, conversation.id, "assistant",
+            content=response_text,
+            model="confirmation-direct",
+            token_usage={"input": 0, "output": 0},
+        )
+        db.commit()
+
+        return _build_chat_result(
+            conversation_id=conversation.id,
+            response_text=response_text,
+            model="confirmation-direct",
+            tokens={"input": 0, "output": 0},
+            tool_calls_made=_count_tool_rows(db, conversation.id),
+            handoff=handoff,
+            pending_confirmation=None,
+        )
+
+    # --- Normal LLM-driven turn.
+    # Persist user message first so the history load includes it.
+    _persist_message(db, conversation.id, "user", content=user_message)
+    messages = _load_conversation_messages(db, conversation.id)
+
+    provider = get_provider()
+
     final_response: AIResponse | None = None
+    handoff: dict | None = None
+    pending_confirmation: dict | None = None
+
     for _round in range(MAX_TOOL_ROUNDS):
         response = provider.chat(
             messages=messages,
@@ -166,11 +265,9 @@ def chat(
         )
 
         if not response.tool_calls:
-            # No tool calls — this is the final response
             final_response = response
             break
 
-        # Persist assistant message with tool calls
         tc_data = [{"id": tc.id, "name": tc.name, "input": tc.input} for tc in response.tool_calls]
         _persist_message(
             db, conversation.id, "assistant",
@@ -180,17 +277,36 @@ def chat(
             token_usage={"input": response.input_tokens, "output": response.output_tokens},
         )
 
-        # Execute ONE tool call (bounded, no autonomous multi-step)
         tc = response.tool_calls[0]
         tool_result = executor.execute(tc.name, tc.input)
 
-        # Persist tool result
         _persist_message(
             db, conversation.id, "tool",
             tool_results={"tool_use_id": tc.id, "result": tool_result},
         )
 
-        # Add to message history for next round
+        # Structurally surface confirmation_required: break the loop and expose
+        # the pending request in the HTTP response. The ScoutPanel renders a
+        # confirm/cancel card against this payload.
+        if isinstance(tool_result, dict) and tool_result.get("confirmation_required"):
+            pending_confirmation = {
+                "tool_name": str(tool_result.get("tool_name") or tc.name),
+                "arguments": dict(tool_result.get("arguments") or tc.input),
+                "message": str(
+                    tool_result.get("message")
+                    or "Please confirm this action before I run it."
+                ),
+            }
+            final_response = response
+            break
+
+        # Structurally surface handoff so the UI can deep-link into the
+        # entity. The LLM still gets the handoff in its tool_result for
+        # natural-language narration in a subsequent round.
+        detected = _detect_handoff(tool_result)
+        if detected is not None:
+            handoff = detected
+
         assistant_content = []
         if response.content:
             assistant_content.append({"type": "text", "text": response.content})
@@ -212,38 +328,38 @@ def chat(
             ],
         })
     else:
-        # Hit max rounds without a final text response
         final_response = response
 
-    # Persist final assistant message
+    # Build the final assistant text. If we broke on pending_confirmation, the
+    # last response.content may be empty — fall back to the confirmation message
+    # so the panel always has something to render.
+    response_text = final_response.content if final_response else ""
+    if pending_confirmation and not response_text:
+        response_text = pending_confirmation["message"]
+
     _persist_message(
         db, conversation.id, "assistant",
-        content=final_response.content if final_response else "",
+        content=response_text,
         model=final_response.model if final_response else None,
         token_usage={
             "input": final_response.input_tokens if final_response else 0,
             "output": final_response.output_tokens if final_response else 0,
         },
     )
-
     db.commit()
 
-    return {
-        "conversation_id": str(conversation.id),
-        "response": final_response.content if final_response else "",
-        "tool_calls_made": sum(
-            1 for m in db.scalars(
-                select(AIMessage)
-                .where(AIMessage.conversation_id == conversation.id)
-                .where(AIMessage.role == "tool")
-            ).all()
-        ),
-        "model": final_response.model if final_response else "",
-        "tokens": {
+    return _build_chat_result(
+        conversation_id=conversation.id,
+        response_text=response_text,
+        model=final_response.model if final_response else "",
+        tokens={
             "input": final_response.input_tokens if final_response else 0,
             "output": final_response.output_tokens if final_response else 0,
         },
-    }
+        tool_calls_made=_count_tool_rows(db, conversation.id),
+        handoff=handoff,
+        pending_confirmation=pending_confirmation,
+    )
 
 
 def generate_daily_brief(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> dict:

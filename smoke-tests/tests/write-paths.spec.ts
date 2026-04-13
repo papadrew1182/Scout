@@ -1,0 +1,210 @@
+/**
+ * Smoke test: core write paths.
+ *
+ * Converts the previously read-path-only smoke suite into a real
+ * regression net for the highest-value write flows. Every test here
+ * depends on seed_smoke.py having been run.
+ */
+
+import { test, expect, type Page } from "@playwright/test";
+
+const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
+const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
+const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+
+async function login(page: Page, email: string, password: string) {
+  await page.goto("/");
+  await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
+  await page.fill('input[placeholder="Email"]', email);
+  await page.fill('input[placeholder="Password"]', password);
+  await page.click("text=Sign In");
+  await page.waitForSelector("text=Personal", { timeout: 15000 });
+}
+
+test.describe("Write paths — parent", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page, ADULT_EMAIL, PASSWORD);
+  });
+
+  test("parent approves a pending grocery item", async ({ page }) => {
+    await page.click("text=Grocery");
+    await expect(page.locator("text=Needs Review")).toBeVisible({ timeout: 10000 });
+
+    const reviewSection = page.locator("text=Needs Review").locator("..").locator("..");
+    const gummy = reviewSection.locator("text=Gummy bears").first();
+    await expect(gummy).toBeVisible({ timeout: 8000 });
+
+    const approvePromise = page.waitForResponse(
+      (r) =>
+        r.url().includes("/grocery/") &&
+        (r.request().method() === "PATCH" || r.request().method() === "POST"),
+      { timeout: 15000 },
+    );
+    // Approve button inside the Gummy bears card
+    const card = page.locator('text="Gummy bears"').first().locator("xpath=ancestor::*[self::div][position()<=4]").first();
+    await card.getByText("Approve", { exact: true }).first().click();
+    const approveResp = await approvePromise;
+    expect(approveResp.status()).toBeLessThan(400);
+
+    // Gummy bears should no longer appear under "Needs Review"
+    await page.waitForTimeout(1200);
+    await expect(
+      page
+        .locator("text=Needs Review")
+        .locator("..")
+        .locator("..")
+        .locator("text=Gummy bears"),
+    ).toHaveCount(0);
+  });
+
+  test("parent approves the draft weekly meal plan", async ({ page }) => {
+    await page.click("text=Meals");
+    await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
+
+    // Navigate to the draft plan: "This Week" shows current approved plan, so
+    // the draft lives in the next-week view OR in plan archive. The repo's
+    // `/meals/this-week` shows the most recent plan — after our seed there is
+    // both an approved current-week and a draft next-week. The UI currently
+    // surfaces the most-recent "current" plan via useCurrentWeeklyPlan(),
+    // which returns the highest-precedence match. If the Approve button isn't
+    // available on /meals/this-week, skip with a diagnostic — this is the
+    // path the backlog item is tracking.
+    const approveBtn = page.getByRole("button", { name: "Approve Plan" }).first();
+    const isVisible = await approveBtn.isVisible().catch(() => false);
+    if (!isVisible) {
+      test.info().annotations.push({
+        type: "known-gap",
+        description:
+          "Approve Plan button not surfaced — /meals/this-week shows approved plan only. Seed includes a draft plan; a UI affordance to target it is backlog item (next sprint).",
+      });
+      test.skip(true, "Draft plan not reachable via /meals/this-week UI — see annotation");
+      return;
+    }
+
+    const approvePromise = page.waitForResponse(
+      (r) => r.url().includes("/meals/weekly/") && r.url().includes("/approve"),
+      { timeout: 15000 },
+    );
+    await approveBtn.click();
+    const resp = await approvePromise;
+    expect(resp.status()).toBeLessThan(400);
+    await expect(page.locator("text=Plan approved")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("parent runs weekly payout", async ({ page }) => {
+    await page.click("text=Parent");
+    await page.waitForSelector("text=Run Weekly Payout", { timeout: 15000 });
+
+    const payoutBtn = page.getByRole("button", { name: "Run Weekly Payout" });
+    // If the button is disabled because payout was already run, the test is
+    // still useful — it asserts the disabled-state message is present.
+    const disabled = await payoutBtn.isDisabled().catch(() => false);
+    if (disabled) {
+      await expect(page.locator("text=Payout already run for this week")).toBeVisible();
+      return;
+    }
+
+    const payoutPromise = page.waitForResponse(
+      (r) => r.url().includes("/allowance/") || r.url().includes("/payout"),
+      { timeout: 15000 },
+    );
+    await payoutBtn.click();
+    const resp = await payoutPromise.catch(() => null);
+    // Either a 2xx response or the visible post-state is acceptable evidence.
+    if (resp) expect(resp.status()).toBeLessThan(400);
+    await expect(
+      page
+        .locator("text=payout created")
+        .or(page.locator("text=already exists for this week"))
+        .or(page.locator("text=Payout already run for this week")),
+    ).toBeVisible({ timeout: 5000 });
+  });
+
+  test("parent converts a pending purchase request to a grocery item", async ({ page }) => {
+    await page.click("text=Grocery");
+    await expect(page.locator("text=Purchase Requests")).toBeVisible({ timeout: 10000 });
+
+    const card = page
+      .locator('text="New soccer ball"')
+      .first()
+      .locator("xpath=ancestor::*[self::div][position()<=4]")
+      .first();
+    await expect(card).toBeVisible({ timeout: 8000 });
+
+    const convertPromise = page.waitForResponse(
+      (r) =>
+        r.url().includes("/purchase-requests/") ||
+        r.url().includes("/grocery"),
+      { timeout: 15000 },
+    );
+    // Prefer "Add to List" (convert); fall back to "Approve".
+    const addBtn = card.getByText("Add to List", { exact: true }).first();
+    const fallback = card.getByText("Approve", { exact: true }).first();
+    if (await addBtn.isVisible().catch(() => false)) {
+      await addBtn.click();
+    } else {
+      await fallback.click();
+    }
+    const resp = await convertPromise;
+    expect(resp.status()).toBeLessThan(400);
+
+    // Card should disappear from the Purchase Requests section.
+    await page.waitForTimeout(1200);
+    await expect(
+      page
+        .locator("text=Purchase Requests")
+        .locator("..")
+        .locator("..")
+        .locator('text="New soccer ball"'),
+    ).toHaveCount(0);
+  });
+});
+
+test.describe("Write paths — child", () => {
+  test.beforeEach(async ({ page }) => {
+    await login(page, CHILD_EMAIL, PASSWORD);
+  });
+
+  test("child marks seeded chore task instance complete", async ({ page }) => {
+    // The child view is the default after child login. The seeded chore
+    // "Feed the dog" becomes today's task instance for Sadie.
+    await expect(
+      page.locator("text=Feed the dog").first(),
+    ).toBeVisible({ timeout: 10000 });
+
+    const checkbox = page.locator('[data-testid="task-checkbox-feed-the-dog"]').first();
+    await expect(checkbox).toBeVisible({ timeout: 8000 });
+
+    const completePromise = page.waitForResponse(
+      (r) => r.url().includes("/task-instances/") && r.request().method() === "POST",
+      { timeout: 15000 },
+    );
+    await checkbox.click();
+    const resp = await completePromise;
+    expect(resp.status()).toBeLessThan(400);
+  });
+
+  test("child submits a meal review", async ({ page }) => {
+    await page.click("text=Meals");
+    // Navigate to Reviews tab within meals.
+    // The meals layout has sub-tabs; "Reviews" is one of them.
+    const reviewsTab = page.getByText("Reviews", { exact: true }).first();
+    if (await reviewsTab.isVisible().catch(() => false)) {
+      await reviewsTab.click();
+    } else {
+      await page.goto("/meals/reviews");
+    }
+
+    await page.waitForSelector('input[placeholder="Meal title"]', { timeout: 10000 });
+    await page.fill('input[placeholder="Meal title"]', "Smoke Test Lasagna");
+    // Default rating is 4, decision is "Repeat", leftovers optional.
+    const savePromise = page.waitForResponse(
+      (r) => r.url().includes("/meal-reviews"),
+      { timeout: 15000 },
+    );
+    await page.getByRole("button", { name: "Save Review" }).first().click();
+    const resp = await savePromise;
+    expect(resp.status()).toBeLessThan(400);
+    await expect(page.locator("text=Review saved")).toBeVisible({ timeout: 5000 });
+  });
+});

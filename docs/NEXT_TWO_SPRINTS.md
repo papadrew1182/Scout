@@ -2,6 +2,14 @@
 
 Last built: 2026-04-13. Source: `docs/EXECUTION_BACKLOG.md`.
 
+**Sprint 1 closeout update (2026-04-13):** Items 1.2, 1.3, 2.3, 2.4, 2.5
+are IMPLEMENTED. Items 2.1 and 2.2 are PARTIAL (6 write-path tests + 3
+AI tests landed; AI full tool round-trip and confirmation UI round-trip
+through the browser remain). Items 1.1, 17, 18, 19 remain BLOCKED on
+operator access to Railway logs, prod Postgres, and a deploy-aware smoke
+runner. See `docs/release_candidate_report.md` for the new Sprint 1
+closeout section.
+
 This document picks specific items off the ranked backlog and arranges
 them into two executable sprints. It intentionally excludes items that
 belong in "later / strategic" (Backlog Bucket 4) and items that need

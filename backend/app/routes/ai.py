@@ -41,7 +41,11 @@ def ai_chat(
     if body.family_id:
         actor.require_family(body.family_id)
 
-    logger.info("ai_chat_start trace=%s member=%s surface=%s", trace_id, actor.member_id, body.surface)
+    logger.info(
+        "ai_chat_start trace=%s member=%s surface=%s confirm=%s",
+        trace_id, actor.member_id, body.surface,
+        bool(body.confirm_tool),
+    )
     try:
         result = orchestrator.chat(
             db=db,
@@ -50,8 +54,15 @@ def ai_chat(
             surface=body.surface,
             user_message=body.message,
             conversation_id=body.conversation_id,
+            confirm_tool=body.confirm_tool.model_dump() if body.confirm_tool else None,
         )
-        logger.info("ai_chat_success trace=%s conversation=%s", trace_id, result.get("conversation_id"))
+        logger.info(
+            "ai_chat_success trace=%s conversation=%s handoff=%s pending=%s",
+            trace_id,
+            result.get("conversation_id"),
+            bool(result.get("handoff")),
+            bool(result.get("pending_confirmation")),
+        )
         return ChatResponse(**result)
     except Exception as e:
         logger.error("ai_chat_fail trace=%s error=%s", trace_id, str(e)[:200])

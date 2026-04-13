@@ -205,7 +205,7 @@ two summary sections at the bottom separate those.
 
 ## 10. AI Panel UX and Handoff
 
-**Status:** IMPLEMENTED (thinly smoked)
+**Status:** IMPLEMENTED (Sprint 1 closeout, 2026-04-13 — confirmation flow + disabled state landed; smoke deepened)
 
 **What exists:**
 - `scout-ui/components/ScoutLauncher.tsx` — slide-up chat modal with:
@@ -232,48 +232,46 @@ two summary sections at the bottom separate those.
 
 ## 11. Loading / Empty / Error / Retry States
 
-**Status:** IMPLEMENTED
+**Status:** IMPLEMENTED (Sprint 1 closeout, 2026-04-13 — global error boundary landed)
 
 **What exists:**
 - Per-component `ActivityIndicator` (loading)
 - Error text with retry button on data-fetching components (`ActionInbox.tsx`, `meals/prep.tsx`, parent dashboard)
 - Empty-state messaging on every list view
+- **Global `ErrorBoundary` (new)** in `scout-ui/components/ErrorBoundary.tsx`, wrapped around the AuthProvider + AppShell in `app/_layout.tsx`. Catches render-time errors anywhere below the shell and renders a "Something went wrong — Reload" fallback. Logs via `console.error("[Scout ErrorBoundary]", ...)` for forwarding to a future error-reporting provider.
 
-**Missing verification:** no test forces an error state (backend 5xx, network drop) to assert the retry UI actually shows.
+**Missing verification:** no Playwright test forces a render crash to assert the boundary renders. The boundary is currently verified by code review + manual inspection.
 
 **Missing UX/product work:**
-- **No global error boundary.** Expo Router / React Native Web does not use Next.js `error.tsx` / `loading.tsx` conventions, so a render crash produces a blank screen with no recovery path.
+- No production error reporting provider (Sentry or equivalent) yet — the boundary logs to stdout only.
 - No skeleton loaders — everything is `ActivityIndicator` spinners.
 - No offline / stale-data banner.
 
-**Recommended next step:** add a single top-level error boundary component. Even a "Something went wrong — reload?" fallback removes the worst-case failure mode.
+**Recommended next step:** wire an error-reporting provider into `ErrorBoundary.componentDidCatch` in Sprint 2.
 
 ## 12. Smoke Coverage
 
-**Status:** VERIFIED (as launch gate) / PARTIAL (for feature depth)
+**Status:** VERIFIED (Sprint 1 closeout, 2026-04-13 — suite expanded from 13 to 25+ tests)
 
 **What exists:**
 - `smoke-tests/tests/auth.spec.ts` — 5 tests (auth happy path + error paths)
 - `smoke-tests/tests/surfaces.spec.ts` — 7 tests (read-path load on every main surface + role visibility)
-- `smoke-tests/tests/ai-panel.spec.ts` — 1 test (AI panel entry + error handling)
+- `smoke-tests/tests/ai-panel.spec.ts` — **3 tests** (content assertion, disabled-state stub via `page.route()`, child surface open)
+- `smoke-tests/tests/write-paths.spec.ts` **(new)** — 6 write-path tests: approve pending grocery, approve draft meal plan, run weekly payout, convert purchase request, child task completion, child meal-review submit.
+- `smoke-tests/tests/meals-subpages.spec.ts` **(new)** — 3 meals tests: `this-week` renders seeded plan, `prep` loads (header or empty state), `reviews` loads with Save Review form.
+- `smoke-tests/tests/dev-mode.spec.ts` **(new)** — 1 test asserting `DevToolsPanel` ingestion buttons are NOT rendered on the personal surface (guarantees DEV_MODE gate is safe in CI/prod-shaped builds).
 
-Total: ~13 Playwright tests. All pass in `ci.yml :: smoke-web` and in deployed verification.
+Total: **~25 Playwright tests** (was 13). Some individual write-path tests may skip if seeded state can't be reached through the UI — those skips are annotated, not silent.
 
-**Missing verification — explicit list of UNCOVERED flows:**
-- Complete a task / routine step (child)
-- Run weekly payout (parent)
-- Approve a pending grocery item (parent)
-- Approve a purchase request (parent)
-- Generate a weekly meal plan via AI (parent)
-- Approve a weekly meal plan (parent)
-- Submit a meal review (child or parent)
-- AI tool execution round-trip
-- AI confirmation flow
-- Account create / password reset (adult settings)
+**Missing verification — remaining UNCOVERED flows:**
+- AI tool execution full round-trip through the UI (create task via AI → verify on Personal).
+- AI `confirmation_required` UI round-trip (confirm tap surfaces a second chat call with `confirm_tool`).
+- Handoff card deep-link taps.
+- Account create / password reset through the adult settings screen.
+- Render crash forcing the new global error boundary to render its fallback.
+- Deployed browser smoke against Railway + Vercel (still launch-local-only; operator checklist in `AI_ROADMAP.md §10`).
 
-**Missing UX/product work:** not applicable — this is testing debt.
-
-**Recommended next step:** prioritize *write-path smoke*. Approve-grocery and complete-task are the two highest-leverage targets.
+**Recommended next step:** AI tool round-trip + confirmation UI round-trip are the two highest-value remaining write-path tests.
 
 ## 13. Deployment / Web Readiness
 

@@ -4,6 +4,7 @@ import { Slot } from "expo-router";
 
 import { AuthProvider, useAuth } from "../lib/auth";
 import { setApiToken, setApiFamilyId } from "../lib/api";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { LoginScreen } from "../components/LoginScreen";
 import { NavBar } from "../components/NavBar";
 import { ScoutPanel } from "../components/ScoutLauncher";
@@ -42,8 +43,10 @@ function AppShell() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

@@ -31,16 +31,21 @@ export function TaskCard({ task, name, isRoutine, routineId, description, onTogg
     onToggle();
   };
 
+  const safeTestId = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
   return (
     <Pressable
       style={[styles.card, done && styles.cardDone]}
       onPress={hasDetails ? () => setExpanded(!expanded) : undefined}
+      testID={`task-card-${safeTestId}`}
     >
       <View style={styles.row}>
         <Pressable
           style={[styles.checkbox, done && styles.checkboxDone]}
           onPress={handleCheckbox}
           hitSlop={8}
+          testID={`task-checkbox-${safeTestId}`}
+          accessibilityLabel={`Mark ${name} complete`}
         >
           {done && <Text style={styles.checkmark}>✓</Text>}
         </Pressable>

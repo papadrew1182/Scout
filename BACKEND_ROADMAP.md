@@ -173,22 +173,32 @@ Gaps:
   dedicated route module if Action Inbox gains filtering/pagination.
 
 ## 7. AI Orchestration
-Status: **VERIFIED** (see `AI_ROADMAP.md` for depth)
+Status: **VERIFIED** (updated 2026-04-13; see `AI_ROADMAP.md` for depth)
 
 Scope at the backend layer:
 - Anthropic provider abstraction
 - Role-aware context loader
-- 17-tool registry wrapping existing services
+- 29 tool registry wrapping existing services (was previously mis-stated as 17)
 - Role × surface permission enforcement
-- Confirmation-gated shared writes
+- Confirmation-gated shared writes (10 tools in `CONFIRMATION_REQUIRED`)
 - Bounded 5-round tool-execution loop
 - Full audit logging per tool call
+- **(Sprint 1 closeout, 2026-04-13)** Structural surfacing of
+  `pending_confirmation` and `handoff` in `ChatResponse`, plus a new
+  `confirm_tool` direct-execution path in `ChatRequest` that bypasses
+  the LLM round. This backs the ScoutPanel confirm-card affordance.
 
 Evidence:
-- `backend/app/ai/provider.py`, `context.py`, `tools.py` (994 lines), `orchestrator.py`
+- `backend/app/ai/provider.py`, `context.py`, `tools.py` (994 lines),
+  `orchestrator.py` (extended with `_detect_handoff`, `_build_chat_result`,
+  and a `confirm_tool` direct path)
 - `backend/app/routes/ai.py` — 7 endpoints including chat, daily brief, weekly plan
+- `backend/app/schemas/ai.py` — `ConfirmToolPayload`, `HandoffPayload`,
+  `PendingConfirmation`, extended `ChatRequest`/`ChatResponse`
 - Migration: `010_ai_orchestration.sql`
-- Tests: `test_ai_context.py` (13), `test_ai_routes.py` (8), `test_ai_tools.py` (18)
+- Tests: `test_ai_context.py` (10), `test_ai_routes.py` (now 8 including
+  `TestPendingConfirmationPlumbing` — scripted-provider pending test and
+  zero-provider-call confirm_tool test), `test_ai_tools.py` (14)
 
 Gaps:
 - Provider is **request/response only** — no streaming. Captured in AI Roadmap.
