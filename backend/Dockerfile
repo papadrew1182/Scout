@@ -6,7 +6,6 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
-COPY database/migrations/ ./migrations/
 
 EXPOSE 8000
 CMD ["bash", "start.sh"]
