@@ -96,6 +96,17 @@ class _FakeToolCall:
         self.input = input
 
 
+def _assistant_text(msg: dict) -> str:
+    """Extract text from an Anthropic-format assistant message that may
+    be a plain string OR a content-blocks list."""
+    c = msg.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(b.get("text", "") for b in c if b.get("type") == "text")
+    return ""
+
+
 class _ScriptedProvider:
     """Provider that returns pre-canned AIResponses, one per chat() call."""
 
@@ -168,6 +179,104 @@ class TestPendingConfirmationPlumbing:
 
         # Handoff must be absent on the confirmation path.
         assert result.get("handoff") is None
+
+    def test_history_replay_is_monotonic_across_tool_turns(
+        self, db: Session, family, adults
+    ):
+        """Regression for the 'second message fails after a tool turn'
+        bug.
+
+        Cause: PostgreSQL's now() default returns the transaction start
+        time, so multi-row flushes in a single turn all got identical
+        created_at values. _load_conversation_messages then sorted by
+        created_at and produced nondeterministic ordering, occasionally
+        putting the tool_result row before the tool_use row. Anthropic
+        rejected that history with 'unexpected tool_use_id found in
+        tool_result blocks' on every follow-up turn.
+
+        Fix: migration 017 switched ai_messages.created_at to
+        clock_timestamp(), and _load_conversation_messages now uses
+        (created_at, id) as the sort key for defensive stability.
+        """
+        from app.ai import orchestrator
+        from app.ai.orchestrator import _persist_message, _load_conversation_messages
+        from app.models.ai import AIConversation
+
+        andrew = adults["robert"]
+        conv = AIConversation(
+            family_id=family.id,
+            family_member_id=andrew.id,
+            surface="personal",
+        )
+        db.add(conv)
+        db.flush()
+
+        # Persist exactly what the orchestrator persists for one
+        # tool-use turn: user message, assistant with tool_use, tool
+        # result, final assistant text. Single flush → same
+        # transaction → tests the clock_timestamp path.
+        _persist_message(db, conv.id, "user", content="What's the weather?")
+        _persist_message(
+            db, conv.id, "assistant",
+            content=None,
+            tool_calls=[{"id": "toolu_test_abc", "name": "get_weather", "input": {}}],
+            model="fake",
+        )
+        _persist_message(
+            db, conv.id, "tool",
+            tool_results={"tool_use_id": "toolu_test_abc", "result": {"days": []}},
+        )
+        _persist_message(
+            db, conv.id, "assistant",
+            content="Weather is fine.",
+            model="fake",
+        )
+        db.flush()
+
+        # Now simulate the second turn: a new user message is persisted,
+        # history is reloaded, and the replay must put messages in
+        # strict chronological order — NOT whatever physical order the
+        # DB returned them in.
+        _persist_message(db, conv.id, "user", content="Thanks! What day is it?")
+        db.flush()
+
+        api_messages = _load_conversation_messages(db, conv.id)
+
+        # Expect five messages in Anthropic format:
+        #   [0] user           "What's the weather?"
+        #   [1] assistant      [tool_use]
+        #   [2] user           [tool_result]      ← synthesized from role='tool'
+        #   [3] assistant      "Weather is fine."
+        #   [4] user           "Thanks! What day is it?"
+        assert len(api_messages) == 5
+        assert api_messages[0]["role"] == "user"
+        assert api_messages[0]["content"] == "What's the weather?"
+
+        assert api_messages[1]["role"] == "assistant"
+        # Must be a content-blocks list with the tool_use block.
+        assert isinstance(api_messages[1]["content"], list)
+        tool_use_block = next(
+            b for b in api_messages[1]["content"] if b.get("type") == "tool_use"
+        )
+        assert tool_use_block["id"] == "toolu_test_abc"
+
+        # The tool_result MUST come at index 2 — immediately after its
+        # corresponding tool_use. This is what Anthropic enforces.
+        assert api_messages[2]["role"] == "user"
+        assert isinstance(api_messages[2]["content"], list)
+        tool_result_block = next(
+            b for b in api_messages[2]["content"] if b.get("type") == "tool_result"
+        )
+        assert tool_result_block["tool_use_id"] == "toolu_test_abc"
+
+        assert api_messages[3]["role"] == "assistant"
+        # Final text should be a string (assistant with content only)
+        # or a content-blocks list with just a text block.
+        assert "Weather is fine" in _assistant_text(api_messages[3])
+
+        assert api_messages[4]["role"] == "user"
+        assert api_messages[4]["content"] == "Thanks! What day is it?"
+
 
     def test_confirm_tool_direct_path_skips_provider(
         self, db: Session, family, adults, monkeypatch

@@ -78,12 +78,22 @@ def _persist_message(
 
 
 def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: int = 40) -> list[dict]:
-    """Load recent messages in Anthropic API format."""
+    """Load recent messages in Anthropic API format.
+
+    Ordering: (created_at DESC, id DESC) for the windowing query, then
+    reversed in Python → (created_at ASC, id ASC) for replay. The
+    secondary `id` key is defensive: with clock_timestamp() defaults
+    (migration 017) multi-row flushes get distinct microsecond
+    timestamps, but the id tiebreaker protects against any future
+    regression or clock adjustment. Replay order must be exact —
+    Anthropic rejects any history where a tool_result is not
+    immediately preceded by its matching tool_use.
+    """
     msgs = list(
         db.scalars(
             select(AIMessage)
             .where(AIMessage.conversation_id == conversation_id)
-            .order_by(AIMessage.created_at.desc())
+            .order_by(AIMessage.created_at.desc(), AIMessage.id.desc())
             .limit(limit)
         ).all()
     )
