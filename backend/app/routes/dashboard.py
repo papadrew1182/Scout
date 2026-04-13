@@ -119,6 +119,29 @@ def get_action_item(
     }
 
 
+@router.get("/homework/summary")
+def homework_summary_route(
+    family_id: uuid.UUID,
+    days: int = Query(7, ge=1, le=60),
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Parent-facing homework rollup. Adult-only — kids don't see
+    their own activity aggregated this way."""
+    from fastapi import HTTPException, status as http_status
+    from app.ai.homework import homework_summary
+    from app.models.foundation import FamilyMember as _FM
+
+    actor.require_family(family_id)
+    member = db.get(_FM, actor.member_id)
+    if not member or member.role != "adult":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Homework summary is adult-only",
+        )
+    return homework_summary(db, family_id=family_id, days=days)
+
+
 @router.post("/action-items/{item_id}/resolve")
 def resolve_action_item(
     family_id: uuid.UUID,

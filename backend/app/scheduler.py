@@ -47,6 +47,9 @@ from app.models.scheduled import ScheduledRun
 logger = logging.getLogger("scout.scheduler")
 
 MORNING_BRIEF_HOUR = int(os.environ.get("SCOUT_MORNING_BRIEF_HOUR", "6"))
+# Friday evening retro — Python weekday() is 0=Mon..6=Sun, so 4=Fri.
+WEEKLY_RETRO_WEEKDAY = int(os.environ.get("SCOUT_WEEKLY_RETRO_WEEKDAY", "4"))
+WEEKLY_RETRO_HOUR = int(os.environ.get("SCOUT_WEEKLY_RETRO_HOUR", "18"))
 TICK_INTERVAL_MINUTES = int(os.environ.get("SCOUT_SCHEDULER_TICK_MINUTES", "5"))
 
 _scheduler: BackgroundScheduler | None = None
@@ -88,18 +91,29 @@ def stop_scheduler() -> None:
 def _tick(db_factory: Callable[[], Session]) -> None:
     """Scheduler tick: one pass over all families + jobs.
 
-    The production path wraps each ``run_morning_brief_tick`` in a
-    commit/rollback boundary so one family's failure doesn't poison
-    the next. Failures are logged; the scheduler thread stays alive.
+    The production path wraps each job in its own commit/rollback
+    boundary so one family's failure doesn't poison the next.
+    Failures are logged; the scheduler thread stays alive.
     """
     now_utc = datetime.now(pytz.UTC)
+
     db = db_factory()
     try:
         run_morning_brief_tick(db, now_utc=now_utc)
         db.commit()
     except Exception as e:
         db.rollback()
-        logger.exception("scheduler_tick_failed: %s", e)
+        logger.exception("morning_brief_tick_failed: %s", e)
+    finally:
+        db.close()
+
+    db = db_factory()
+    try:
+        run_weekly_retro_tick(db, now_utc=now_utc)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("weekly_retro_tick_failed: %s", e)
     finally:
         db.close()
 
@@ -254,3 +268,148 @@ def run_morning_brief_for_member(
             "status": "error",
             "error": str(e)[:200],
         }
+
+
+# ---------------------------------------------------------------------------
+# Weekly retro
+# ---------------------------------------------------------------------------
+
+
+def run_weekly_retro_tick(db: Session, *, now_utc: datetime) -> list[dict]:
+    """For each family, if today is the configured retro weekday AND the
+    local hour matches the configured retro hour, generate a weekly
+    retro for the just-completed week. Dedupe by week_monday so the
+    job fires exactly once per family per week regardless of how many
+    ticks it sees during the target hour."""
+    results: list[dict] = []
+
+    families = list(db.scalars(select(Family)).all())
+    for fam in families:
+        try:
+            tz = pytz.timezone(fam.timezone or "UTC")
+        except Exception:
+            tz = pytz.UTC
+        local = now_utc.astimezone(tz)
+        if local.weekday() != WEEKLY_RETRO_WEEKDAY:
+            continue
+        if local.hour != WEEKLY_RETRO_HOUR:
+            continue
+        if local.minute >= TICK_INTERVAL_MINUTES:
+            continue
+
+        # The retro is for the CURRENT week (Monday..today inclusive).
+        week_monday = (local - timedelta(days=local.weekday())).date()
+        out = run_weekly_retro_for_family(
+            db, family_id=fam.id, week_start=week_monday
+        )
+        results.append(out)
+    return results
+
+
+def run_weekly_retro_for_family(
+    db: Session, *, family_id, week_start: date
+) -> dict:
+    """Generate one weekly retro for one family. Dedupe-safe via
+    scout_scheduled_runs (member_id NULL, run_date=week_start).
+
+    Transaction-neutral: caller owns commit. Follows the same
+    savepoint-for-dedupe pattern as morning brief."""
+    from app.ai import orchestrator
+    start_ts = datetime.now(pytz.UTC)
+
+    try:
+        with db.begin_nested():
+            mutex = ScheduledRun(
+                job_name="weekly_retro",
+                family_id=family_id,
+                member_id=None,
+                run_date=week_start,
+                status="success",
+            )
+            db.add(mutex)
+            db.flush()
+    except IntegrityError:
+        return {
+            "family_id": str(family_id),
+            "week_start": week_start.isoformat(),
+            "status": "skipped",
+            "reason": "already_ran_this_week",
+        }
+
+    try:
+        # Build the data bundle from existing persisted state. This is
+        # the SAME data a parent could see in the app — the retro
+        # doesn't invent facts.
+        from app.ai.retro import build_retro_context, generate_retro_narrative
+
+        context = build_retro_context(db, family_id=family_id, week_start=week_start)
+        narrative = generate_retro_narrative(context)
+
+        title = f"Week of {week_start.isoformat()} retro"
+        action = ParentActionItem(
+            family_id=family_id,
+            # Retro is for the whole family — attribute to an arbitrary
+            # adult so created_by is non-null. Pick the first active
+            # adult we find.
+            created_by_member_id=_first_adult_id(db, family_id),
+            action_type="weekly_retro",
+            title=title,
+            detail=narrative,
+            entity_type="weekly_retro",
+            entity_id=None,
+        )
+        db.add(action)
+        db.flush()
+
+        mutex.duration_ms = int(
+            (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+        )
+        mutex.result = {
+            "action_item_id": str(action.id),
+            "narrative_length": len(narrative),
+        }
+        db.flush()
+        logger.info(
+            "weekly_retro_ok family=%s week=%s",
+            family_id, week_start,
+        )
+        return {
+            "family_id": str(family_id),
+            "week_start": week_start.isoformat(),
+            "status": "success",
+            "action_item_id": str(action.id),
+        }
+    except Exception as e:
+        try:
+            mutex.status = "error"
+            mutex.error = str(e)[:500]
+            mutex.duration_ms = int(
+                (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+            )
+            db.flush()
+        except Exception:
+            pass
+        logger.error(
+            "weekly_retro_fail family=%s week=%s: %s",
+            family_id, week_start, str(e)[:200],
+        )
+        return {
+            "family_id": str(family_id),
+            "week_start": week_start.isoformat(),
+            "status": "error",
+            "error": str(e)[:200],
+        }
+
+
+def _first_adult_id(db: Session, family_id):
+    """Return any active adult member id for a family, or None. Used
+    purely for created_by_member_id on family-scoped action items where
+    no single member "owns" the item (retro, anomaly alert, etc.)."""
+    row = db.scalars(
+        select(FamilyMember)
+        .where(FamilyMember.family_id == family_id)
+        .where(FamilyMember.role == "adult")
+        .where(FamilyMember.is_active.is_(True))
+        .limit(1)
+    ).first()
+    return row.id if row else None

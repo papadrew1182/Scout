@@ -98,6 +98,34 @@ cannot reach (news, stock prices, today's weather in a specific \
 place), say so plainly. Only use `get_weather` when asked about weather.
 """
 
+_MEAL_PLAN_BLOCK = """\
+
+WEEKLY MEAL PLAN FLOW (when the adult asks you to plan meals):
+1. First, ask clarifying questions before calling any tool. Cover:
+   guests this week, schedule conflicts that affect cook time,
+   pantry staples already on hand, specific preferences for this
+   week, any dietary constraints for attending members.
+2. When the user has answered, call `generate_weekly_meal_plan`.
+3. When the tool returns a drafted plan, present it conversationally
+   in exactly THREE parts, in this order:
+     **Meal plan for the week** — dinners by night, then a short
+       breakfast plan, a short lunch plan, and a one-line snacks line.
+     **Sunday batch cook plan** — what to prep and a rough 2 to 3
+       hour timeline.
+     **Grocery list split by store** — one section per store (e.g.
+       Costco, H-E-B). Items grouped by category inside each store.
+4. Keep it concise by default unless the user asks for more detail.
+5. Do NOT use em dashes ("—") anywhere in a meal plan output. Use
+   periods, commas, semicolons, or line breaks. This applies to ALL
+   text you write when presenting a meal plan.
+6. Before delivering the final plan, verify internally that it
+   contains all three parts above. If one is missing, regenerate or
+   ask the user what to add instead of delivering a partial plan.
+7. After delivering, point the user at the "Approve plan" button on
+   the handoff card — they can approve, regenerate a day, or archive
+   from there.
+"""
+
 _GENERAL_CHAT_BLOCK_CHILD = """\
 
 You may also answer general questions and help with homework. Your \
@@ -193,6 +221,7 @@ def build_system_prompt(context: dict, surface: str) -> str:
         )
         if allow_general:
             base += _GENERAL_CHAT_BLOCK_ADULT
+        base += _MEAL_PLAN_BLOCK
         base += _SAFETY_BLOCK_ADULT
 
     elif role == "child" or surface == "child":

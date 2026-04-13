@@ -22,6 +22,7 @@ from app.ai.context import (
     get_allowed_tools_for_surface,
     load_member_context,
 )
+from app.ai.homework import record_homework_turn
 from app.ai.moderation import check_user_message
 from app.ai.provider import AIResponse, AnthropicProvider, ToolDefinition, get_provider
 from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor, _audit
@@ -134,19 +135,44 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
 
 
 def _detect_handoff(tool_result: dict | None) -> dict | None:
-    """A tool_result is a handoff if it came from tools._handoff() — it
-    has both entity_type and route_hint. Return a normalized dict so
-    the HTTP response can expose it structurally."""
+    """Return a normalized handoff dict if the tool produced one.
+
+    Two patterns are supported:
+
+    1. **Nested** (the common case in ``app.ai.tools``): the tool
+       returns ``{"created": ..., "handoff": {...}}`` or
+       ``{"status": "ready", "handoff": {...}}``. We look under the
+       ``handoff`` key.
+    2. **Flat**: the tool result IS the raw handoff dict (returned
+       directly from ``_handoff(...)``). Kept for backwards
+       compatibility in case any future tool adopts the pattern.
+
+    Before this change, only the flat pattern was recognized, so no
+    tool in the registry produced a handoff card at the HTTP response
+    layer — every handoff was silently lost. The ScoutPanel's handoff
+    card support has existed since Sprint 1 but never actually
+    rendered in production until now.
+    """
     if not isinstance(tool_result, dict):
         return None
-    if "entity_type" not in tool_result or "route_hint" not in tool_result:
-        return None
-    return {
-        "entity_type": str(tool_result.get("entity_type", "")),
-        "entity_id": str(tool_result.get("entity_id", "")),
-        "route_hint": str(tool_result.get("route_hint", "")),
-        "summary": str(tool_result.get("summary", "")),
-    }
+
+    def _normalize(d: dict) -> dict | None:
+        if "entity_type" not in d or "route_hint" not in d:
+            return None
+        return {
+            "entity_type": str(d.get("entity_type", "")),
+            "entity_id": str(d.get("entity_id", "")),
+            "route_hint": str(d.get("route_hint", "")),
+            "summary": str(d.get("summary", "")),
+        }
+
+    nested = tool_result.get("handoff")
+    if isinstance(nested, dict):
+        resolved = _normalize(nested)
+        if resolved is not None:
+            return resolved
+
+    return _normalize(tool_result)
 
 
 def _build_chat_result(
@@ -382,6 +408,17 @@ def chat(
             pending_confirmation=None,
         )
 
+    # Homework detection — cheap keyword classifier. No-op for adults.
+    record_homework_turn(
+        db,
+        family_id=family_id,
+        member_id=member_id,
+        conversation_id=conversation.id,
+        message=user_message,
+        role=role,
+        surface=surface,
+    )
+
     messages = _load_conversation_messages(db, conversation.id)
 
     provider = get_provider()
@@ -599,6 +636,17 @@ def chat_stream(
             "pending_confirmation": None,
         }
         return
+
+    # Homework detection — cheap keyword classifier. No-op for adults.
+    record_homework_turn(
+        db,
+        family_id=family_id,
+        member_id=member_id,
+        conversation_id=conversation.id,
+        message=user_message,
+        role=role,
+        surface=surface,
+    )
 
     messages = _load_conversation_messages(db, conversation.id)
     provider = get_provider()

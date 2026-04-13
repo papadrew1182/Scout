@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { NeedSomething } from "../../components/NeedSomething";
+import { ReceiptCaptureButton } from "../../components/ReceiptCaptureButton";
 import {
   fetchGroceryItems,
   fetchPendingReviewItems,
@@ -110,6 +111,10 @@ export default function GroceryPage() {
     <ScrollView style={shared.pageContainer} contentContainerStyle={shared.pageContent}>
       <View style={shared.headerBlock}>
         <Text style={shared.headerTitle}>Grocery List</Text>
+      </View>
+
+      <View style={{ marginBottom: 12 }}>
+        <ReceiptCaptureButton onAdded={() => load()} />
       </View>
 
       <NeedSomething onComplete={load} />

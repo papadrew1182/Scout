@@ -336,6 +336,23 @@ export function fetchParentDashboardInsight(): Promise<{
   return get(`${familyUrl()}/dashboard/parent/insight`);
 }
 
+export interface HomeworkChildRollup {
+  member_id: string;
+  first_name: string;
+  sessions: number;
+  subjects: Record<string, number>;
+  last_at: string | null;
+}
+export interface HomeworkSummary {
+  days: number;
+  total_sessions: number;
+  children: HomeworkChildRollup[];
+}
+
+export function fetchHomeworkSummary(days: number = 7): Promise<HomeworkSummary> {
+  return get(`${familyUrl()}/homework/summary?days=${days}`);
+}
+
 export function fetchChildDashboard(): Promise<any> {
   return get(`${familyUrl()}/dashboard/child`);
 }
@@ -541,6 +558,38 @@ export interface ReadyState {
   auth_required?: boolean;
   environment?: string;
   reason?: string;
+}
+
+export interface ReceiptItem {
+  title: string;
+  quantity: number | null;
+  unit: string | null;
+  category: string | null;
+  confidence: number;
+}
+export interface ReceiptExtractResult {
+  items: ReceiptItem[];
+  model: string;
+  tokens: { input: number; output: number };
+}
+
+export async function extractReceipt(blob: Blob, filename: string = "receipt.jpg"): Promise<ReceiptExtractResult> {
+  const form = new FormData();
+  form.append("image", blob, filename);
+  const res = await fetch(`${API_BASE_URL}/api/ai/receipt`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+  });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Receipt extraction failed (${res.status}): ${txt.slice(0, 200)}`);
+  }
+  return (await res.json()) as ReceiptExtractResult;
 }
 
 export async function transcribeAudio(blob: Blob): Promise<{ text: string; provider: string }> {

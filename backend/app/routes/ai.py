@@ -187,6 +187,84 @@ async def ai_transcribe(
     }
 
 
+@router.post("/receipt")
+async def ai_receipt(
+    image: UploadFile = File(...),
+    actor: Actor = Depends(get_current_actor),
+):
+    """Extract grocery items from a receipt photo.
+
+    Vision-powered by Claude. Returns a list of proposals; does NOT
+    write grocery rows. The frontend renders an editable review card
+    and the user confirms each item, which then hits the existing
+    ``create_grocery_item`` path (family-scoped, audited, etc.).
+    """
+    from app.ai.receipt import (
+        ALLOWED_MIME,
+        MAX_UPLOAD_BYTES,
+        extract_items_from_receipt,
+    )
+    from app.config import settings
+
+    if not settings.ai_available:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="AI provider not configured.",
+        )
+
+    content_type = (image.content_type or "").lower()
+    if content_type not in ALLOWED_MIME:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported image type: {content_type}. Use JPEG, PNG, or WEBP.",
+        )
+
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image exceeds {MAX_UPLOAD_BYTES} bytes.",
+        )
+
+    try:
+        result = extract_items_from_receipt(data, content_type)
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(e)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(
+            "receipt_extract_fail actor=%s err=%s",
+            actor.member_id, str(e)[:200],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Vision provider failed.",
+        )
+
+    return {
+        "items": [
+            {
+                "title": p.title,
+                "quantity": p.quantity,
+                "unit": p.unit,
+                "category": p.category,
+                "confidence": p.confidence,
+            }
+            for p in result.items
+        ],
+        "model": result.model,
+        "tokens": {
+            "input": result.input_tokens,
+            "output": result.output_tokens,
+        },
+    }
+
+
 @router.post("/brief/daily", response_model=BriefResponse)
 def daily_brief(
     body: BriefRequest,

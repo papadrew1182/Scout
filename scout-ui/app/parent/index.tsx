@@ -19,7 +19,9 @@ import {
   fetchUnpaidBills,
   createWeeklyPayout,
   fetchParentDashboardInsight,
+  fetchHomeworkSummary,
   PayoutError,
+  type HomeworkSummary,
 } from "../../lib/api";
 import { calculatePayout, sortMealsByType } from "../../lib/constants";
 import { todayStr, weekStartStr, weekEndStr, formatEventTime, formatDueDate, sourceLabel } from "../../lib/format";
@@ -285,6 +287,7 @@ export default function ParentDashboard() {
   const [actionMsg, setActionMsg] = useState<{ text: string; isError: boolean } | null>(null);
   const [payoutRan, setPayoutRan] = useState(false);
   const [aiInsight, setAiInsight] = useState<{ narrative: string; status: string } | null>(null);
+  const [homework, setHomework] = useState<HomeworkSummary | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -352,6 +355,14 @@ export default function ParentDashboard() {
       })
       .catch(() => {
         /* silent — fallback is the deterministic banner above */
+      });
+    fetchHomeworkSummary(7)
+      .then((res) => {
+        if (cancelled) return;
+        if (res && res.total_sessions > 0) setHomework(res);
+      })
+      .catch(() => {
+        /* silent — card is hidden if zero sessions or fetch fails */
       });
     return () => {
       cancelled = true;
@@ -452,6 +463,31 @@ export default function ParentDashboard() {
           ]}
         >
           <Text style={s.insightText}>{aiInsight.narrative}</Text>
+        </View>
+      )}
+
+      {/* ---- Homework summary (hidden when no sessions in the last 7 days) ---- */}
+      {homework && homework.total_sessions > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Kids homework this week</Text>
+          <Text style={styles.cardSubtle}>
+            {homework.total_sessions} total session{homework.total_sessions === 1 ? "" : "s"} across the family
+          </Text>
+          {homework.children.map((c) => {
+            const subjLine = Object.entries(c.subjects)
+              .sort((a, b) => b[1] - a[1])
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(", ");
+            return (
+              <View key={c.member_id} style={{ marginTop: 8 }}>
+                <Text style={styles.homeworkName}>{c.first_name}</Text>
+                <Text style={styles.homeworkLine}>
+                  {c.sessions} session{c.sessions === 1 ? "" : "s"}
+                  {subjLine ? ` · ${subjLine}` : ""}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       )}
 
@@ -674,6 +710,16 @@ const s = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 0.5,
+  },
+  homeworkName: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  homeworkLine: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 2,
   },
 });
 
