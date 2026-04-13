@@ -1,347 +1,280 @@
 # Scout Backend Roadmap
 
+Last reconciled: 2026-04-12 against commit `9481f8f` on `main`.
+
+This roadmap is organized by backend capability area. It is the planning layer for
+the backend — not a changelog dump. Each section lists current status, evidence,
+gaps, and next work. See `docs/ROADMAP_RECONCILIATION.md` for the cross-surface
+summary that answers "what is actually done?"
+
 ## Status Legend
-- DONE
-- PARTIAL
-- NEXT
-- PLANNED
-- BLOCKED
 
-## 0. Foundation
-Status: DONE
+- **VERIFIED** — present in code AND exercised by passing tests, smoke coverage,
+  or deployed verification.
+- **IMPLEMENTED** — present in code but not strongly verified end-to-end.
+- **PARTIAL** — only part of the intended surface exists.
+- **DEFERRED** — intentionally postponed; reason captured below.
+- **UNKNOWN** — not enough evidence in the repo to judge either way.
 
-Includes:
-- families
-- family_members
-- user_accounts
-- sessions
-- role_tiers
-- role_tier_overrides
-- connector_configs
-- connector_mappings
+## 0. Foundation / Family Model
+Status: **VERIFIED**
 
-Completed:
-- schema
-- migrations
-- seeds
-- backend scaffolding
-- tests
+Scope:
+- `families`, `family_members`, `user_accounts`, `sessions`
+- `role_tiers`, `role_tier_overrides`
+- `connector_configs`, `connector_mappings`
 
-## 1. Life Management
-Status: DONE
+Evidence:
+- `backend/app/models/foundation.py`
+- `backend/app/services/family_service.py`
+- `backend/app/routes/families.py`
+- `database/foundation.sql`, migration `001_foundation_connectors.sql`
+- `backend/tests/test_tenant_isolation.py` enforces family scoping
+- No hardcoded `FAMILY_ID` anywhere in routes/services; `/api/auth/me` returns family context
+- Bootstrap is disabled when any account exists (fail-closed in production)
 
-Includes:
-- routines
-- routine_steps
-- chore_templates
-- task_instances
-- task_instance_step_completions
-- daily_wins
-- allowance_ledger
+Gaps:
+- None known. Connector infrastructure is scaffolded but external sync is tracked
+  under §9 Integrations.
 
-Completed:
-- schema
-- migrations
-- seeds
-- backend scaffolding
-- tests
-- step completion rollup
+## 1. Auth / Sessions / Accounts
+Status: **VERIFIED**
 
-Notes:
-- currently the most complete vertical slice in Scout
+Scope:
+- Email/password login, bearer-token sessions, rate limiting
+- Bootstrap (first-run only, disabled after accounts exist)
+- Password change, admin-initiated password reset
+- Session listing/revocation, per-member account lifecycle
 
-## 2. Calendar / Scheduling
-Status: DONE
+Evidence:
+- `backend/app/routes/auth.py`, `backend/app/services/auth_service.py`
+- Endpoints: `POST /api/auth/login` (10/5min rate limit), `logout`, `me`,
+  `bootstrap`, `password/change`, `password/reset`, `sessions`, `accounts`
+- `backend/tests/test_auth.py` (40 tests covering login, logout, sessions,
+  bootstrap, password, role enforcement)
+- `SCOUT_AUTH_REQUIRED=true` enforced at startup in production
+- Verified in deployed private-launch smoke (see `docs/private_launch.md`)
 
-Includes:
-- events
-- event_attendees
+Gaps:
+- Rate limiter is in-memory. Acceptable for single-instance backend; see
+  Deferred Ledger for multi-instance risk.
+- No OAuth / SSO. Not in scope for private family launch.
 
-Completed in this package:
-- schema (events + event_attendees)
-- migration: 003_calendar.sql
-- seed: 003_calendar_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (CRUD + recurrence instance overrides)
-- routes (events + attendees)
-- recurrence handling via RRULE text field (application-side expansion)
-- recurrence_parent_id edited-instance behavior with unique override constraint
-- source tracking (scout | google_cal | ical) via CHECK constraint
-- is_hearth_visible flag
-- optional task_instance_id linkage
-- connector_mappings pattern preserved (events use internal_table='events')
-- minimal test scaffold
+## 2. Household Ops — Routines, Chores, Allowance, Daily Wins
+Status: **VERIFIED**
 
-Notes:
-- Recurrence expansion is intentionally NOT in the database. Application code
-  expands RRULE strings and applies edited-instance overrides at query time.
-- iCal connector support resolved by package 2.1 (migration 004).
+Scope:
+- `routines`, `routine_steps`, `chore_templates`
+- `task_instances`, `task_instance_step_completions`
+- `daily_wins`, `allowance_ledger`
+- Step-completion rollup, weekly payout calculation
 
-## 2.1 Connector iCal Support (follow-up to Calendar)
-Status: DONE
+Evidence:
+- `backend/app/models/life_management.py`
+- Services: `routine_service.py`, `chore_service.py`, `daily_win_service.py`,
+  `payout_service.py`
+- Routes: `routines.py`, `chores.py`, `task_instances.py`, `daily_wins.py`,
+  `allowance.py`
+- Tests: `test_daily_wins.py` (11), `test_payout.py` (13), `test_task_generation.py`
+- Used on parent + child dashboards in production smoke.
 
-Completed in this package:
-- migration: 004_connector_ical_support.sql
-- extended connector_configs.connector_name CHECK to include 'ical'
-- extended connector_mappings.connector_name CHECK to include 'ical'
-- updated 003_calendar_seed.sql to insert the previously deferred iCal mapping
-- regression test: tests/test_connector_ical.py
+Gaps:
+- Bonus / penalty mechanics (parent-applied adjustments) not backed by a
+  dedicated endpoint. UI currently stubs these. See Deferred Ledger.
 
-Notes:
-- No ORM, schema, or service code changes required — both models use plain
-  String fields with no Python-side enum. CHECK enforcement is database-only.
+## 3. Calendar / Scheduling
+Status: **VERIFIED**
 
-## 3. Meals
-Status: DONE
+Scope:
+- `events`, `event_attendees`
+- RRULE-based recurrence (application-side expansion)
+- Edited-instance overrides, source tracking (`scout | google_cal | ical`)
+- `is_hearth_visible` flag, optional `task_instance_id` linkage
 
-Includes:
-- meal_plans
-- meals
-- dietary_preferences
+Evidence:
+- `backend/app/models/calendar.py`, `services/calendar_service.py`,
+  `routes/calendar.py`
+- Migrations: `003_calendar.sql`, `004_connector_ical_support.sql`
+- Tests: `test_calendar.py`, `test_connector_ical.py`
+- Calendar data rendered on parent + personal + child dashboards in smoke runs.
 
-Completed in this package:
-- schema (meal_plans + meals + dietary_preferences)
-- migration: 005_meals.sql
-- seed: 005_meals_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (meal plans CRUD, meals CRUD with date/range filtering, dietary preferences CRUD)
-- routes (/meal-plans, /meals, /members/{id}/dietary-preferences)
-- weekly plan structure with Monday week_start CHECK
-- meal_type CHECK in ('breakfast', 'lunch', 'dinner', 'snack')
-- one-meal-per-type-per-day uniqueness
-- meals can exist with or without a parent plan
-- minimal test scaffold
+Gaps:
+- Recurrence expansion is deliberately app-side, not DB-side. No DB view or
+  materialized table of concrete instances. This is intentional; listed for
+  clarity.
 
-Notes:
-- Recipes, grocery lists, and nutrition tracking are intentionally out of scope.
-- dietary_preferences is a thin hook table not yet referenced by meals.
-  Future packages can add nutritional/restriction logic on top.
-- "What are we eating today?" is a single indexed query:
-  GET /families/{id}/meals?meal_date={today}
+## 4. Tasks / Notes / Finance / Health
+Status: **VERIFIED**
 
-## 4. Parent Rewards / Allowance Management
-Status: PARTIAL
+### Personal Tasks
+- Model + service + routes; top-N, due-today, complete transition
+- `backend/tests/test_personal_tasks.py` (11 tests)
 
-What exists:
-- daily_wins
-- allowance_ledger
-- payout endpoint
-- parent UI shell
+### Notes (Second Brain)
+- Model + service + routes with ILIKE search, archive/unarchive
+- `backend/tests/test_notes.py`
+- No full-text index, no vector store, no tags. Intentionally minimal.
 
-What’s missing on backend:
-- school rewards / bonus / penalty backend actions if needed later
+### Finance (Bills)
+- Model + service + routes: upcoming / overdue / unpaid, pay / unpay
+- `source` CHECK includes `ynab` for future connector
+- `backend/tests/test_finance.py`
 
-## 5. Personal Task Layer
-Status: DONE
+### Health / Fitness
+- `health_summaries`, `activity_records` with source tracking
+- `backend/tests/test_health_fitness.py`
+- No ingestion engines yet — see §9 Integrations.
 
-Includes:
-- personal_tasks
+Gaps:
+- No rollups / aggregated family views for health. Intentional for v1.
 
-Completed in this package:
-- schema (personal_tasks)
-- migration: 006_personal_tasks.sql
-- seed: 006_personal_tasks_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (CRUD, top-N, due-today, complete transition)
-- routes (/personal-tasks with /top, /due-today, /{id}/complete)
-- status CHECK ('pending', 'in_progress', 'done', 'cancelled')
-- priority CHECK ('low', 'medium', 'high', 'urgent')
-- completed_at consistency CHECK (set iff status = done)
-- optional event_id linkage to calendar events
-- "Top 5 Tasks" query: incomplete + priority-then-due ordering
-- minimal test scaffold
+## 5. Meals
+Status: **VERIFIED**
 
-Notes:
-- Intentionally separate table from task_instances. Routines/chores remain
-  the child execution model; personal_tasks serves adult/general use.
-- No subtasks, dependencies, or project hierarchy. Out of scope.
-- The Top N service supports any limit (default 5) and any assigned member.
+Scope:
+- `meal_plans`, `meals`, `dietary_preferences`
+- One-meal-per-type-per-day uniqueness
+- Weekly plan with Monday `week_start` CHECK
+- **AI-driven weekly plan generation** (see AI Roadmap §5 for the workflow)
+- Staple meal suggestions
 
-## 6. Second Brain
-Status: DONE
+Evidence:
+- `backend/app/models/meals.py`
+- Services: `meals_service.py` (221 lines), `weekly_meal_plan_service.py` (790 lines)
+- `backend/app/routes/meals.py` (25 route functions)
+- Migrations: `005_meals.sql`, `013_meals_weekly_plans.sql`
+- Tests: `test_meals.py` (15), `test_meals_routes.py` (39), `test_weekly_meal_plans.py` (39)
 
-Includes:
-- notes
+Gaps:
+- No recipe library, no nutrition tracking — intentional.
+- `dietary_preferences` exists but is not wired into AI meal generation yet.
+  See Deferred Ledger.
 
-Completed in this package:
-- schema (notes)
-- migration: 007_second_brain.sql
-- seed: 007_second_brain_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (CRUD, recent, ILIKE search, archive/unarchive)
-- routes (/notes with /recent, /search, /{id}/archive, /{id}/unarchive)
-- title-not-blank CHECK
-- per-member ownership + family scoping
-- optional category text field
-- minimal test scaffold
+## 6. Grocery / Purchase Requests / Parent Action Items
+Status: **VERIFIED** (new since prior roadmap)
 
-Notes:
-- Search is ILIKE on title + body. No full-text index, no vector store.
-- No tags, no inter-note links, no attachments. Intentionally minimal.
-- is_archived enables soft retirement without deletion.
-- Archived notes are excluded from default list and recent queries unless
-  explicitly requested via include_archived=true.
+Scope:
+- `grocery_items` with parent review/approve/reject flow
+- `purchase_requests` with approve/reject/convert-to-grocery
+- `parent_action_items` surfaced via dashboard
 
-## 7. Finance
-Status: DONE
+Evidence:
+- `backend/app/models/grocery.py`, `models/action_items.py`
+- `backend/app/services/grocery_service.py` (396 lines)
+- `backend/app/routes/grocery.py` (11 route functions)
+- Migrations: `011_grocery_purchase_requests.sql`, `012_parent_action_items.sql`
+- Tests: `test_grocery.py` (26 tests)
+- Action inbox rendered on parent dashboard; bidirectional child → parent flow
+  verified in deployed smoke.
 
-Includes:
-- bills
+Gaps:
+- `parent_action_items` has models but no dedicated route module; surfaced only
+  through the dashboard aggregation service. Fine for current UX; worth a
+  dedicated route module if Action Inbox gains filtering/pagination.
 
-Completed in this package:
-- schema (bills)
-- migration: 008_finance.sql
-- seed: 008_finance_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (CRUD, upcoming/overdue/unpaid helpers, pay/unpay transitions)
-- routes (/bills with /upcoming, /overdue, /unpaid, /{id}/pay, /{id}/unpay)
-- status CHECK ('upcoming', 'paid', 'overdue', 'cancelled')
-- source CHECK ('scout', 'ynab') for future YNAB connector compatibility
-- amount_cents non-negative CHECK
-- title-not-blank CHECK
-- paid_at consistency CHECK (set iff status = paid)
-- minimal test scaffold
-- example connector_mappings rows linking YNAB-sourced bills to YNAB scheduled txn ids
+## 7. AI Orchestration
+Status: **VERIFIED** (see `AI_ROADMAP.md` for depth)
 
-Notes:
-- No budget engine. No account reconciliation. No recurring expansion —
-  a recurring monthly bill is multiple one-off bill rows.
-- External IDs (e.g., YNAB transaction ids) live in connector_mappings only.
-- Overdue retrieval surfaces both bills explicitly flagged 'overdue' and
-  bills still 'upcoming' whose due_date has passed.
+Scope at the backend layer:
+- Anthropic provider abstraction
+- Role-aware context loader
+- 17-tool registry wrapping existing services
+- Role × surface permission enforcement
+- Confirmation-gated shared writes
+- Bounded 5-round tool-execution loop
+- Full audit logging per tool call
 
-## 8. Health / Fitness
-Status: DONE
+Evidence:
+- `backend/app/ai/provider.py`, `context.py`, `tools.py` (994 lines), `orchestrator.py`
+- `backend/app/routes/ai.py` — 7 endpoints including chat, daily brief, weekly plan
+- Migration: `010_ai_orchestration.sql`
+- Tests: `test_ai_context.py` (13), `test_ai_routes.py` (8), `test_ai_tools.py` (18)
 
-Includes:
-- health_summaries
-- activity_records
+Gaps:
+- Provider is **request/response only** — no streaming. Captured in AI Roadmap.
+- `send_notification_or_create_action` tool logs but does not deliver.
+- No background job, no autonomous loop.
 
-Completed in this package:
-- schema (health_summaries + activity_records)
-- migration: 009_health_fitness.sql
-- seed: 009_health_fitness_seed.sql
-- ORM models
-- Pydantic schemas
-- service layer (CRUD, latest summary, recent activity, list filters)
-- routes (/health/summaries with /latest, /health/activity with /recent)
-- source CHECK ('scout', 'apple_health', 'nike_run_club') for both tables
-- activity_type CHECK ('run','walk','bike','swim','strength','yoga','other')
-- ended_at >= started_at CHECK on activity_records
-- non-negative numeric CHECKs on steps, active_minutes, resting_heart_rate,
-  sleep_minutes, weight_grams, duration_seconds, distance_meters, calories
-- one-summary-per-member-per-date uniqueness
-- minimal test scaffold
-- example connector_mappings row linking an Apple Health summary
+## 8. Dashboard Aggregation
+Status: **VERIFIED**
 
-Notes:
-- All metric columns are nullable so partial data from a single source is fine.
-- No workout-program engine. No nutrition tracking. No goals/streaks logic.
-- No sync engines yet — source field is for future connector compatibility only.
-- A future package can add rollups (weekly/monthly summaries) and aggregate
-  family-level views without changing this schema.
+- Cross-domain read service assembling personal, parent, and child views.
+- `backend/tests/test_dashboard.py` (11 tests)
+- Powers action inbox, kids-today status, weekly progress on parent surface.
 
-## 9. Integrations
-Status: PARTIAL
+## 9. Integrations / Connectors
+Status: **PARTIAL**
 
-Includes:
-- shared upsert helper (services/integrations/base.py)
-- Google Calendar v1 ingestion
-- YNAB v1 ingestion
-- Apple Health stub (501)
-- Nike Run Club stub (501)
-- Internal ingestion routes
+Scope in place:
+- Shared upsert helper `services/integrations/base.py` using `connector_mappings`
+- Google Calendar v1 ingestion (payload schema + batch + source-of-truth conflict)
+- YNAB v1 ingestion (preserves Scout-side paid state on re-ingestion)
+- Apple Health / Nike Run Club stub endpoints (501)
+- Internal ingestion POST routes for dev-mode triggers
 
-Completed in this package:
-- generic ingestion entry point (upsert_via_mapping) backed by connector_mappings
-- source-of-truth enforcement (SourceConflictError when external sync targets a scout row)
-- Google Calendar payload schema + ingest_event + ingest_events_batch
-- YNAB payload schema + ingest_scheduled_transaction + batch
-- POST /integrations/google-calendar/ingest
-- POST /integrations/ynab/ingest
-- duplicate prevention via existing uq_connector_mappings_external constraint
-- mapping-orphan recovery (mapping points at deleted internal_id → fresh create)
-- YNAB ingestion preserves Scout-side state (status, paid_at) on re-ingestion
-- minimal test scaffold (Google Calendar create / update / source conflict / dedup,
-  YNAB create / update preserving paid status / dedup, tenant isolation)
+Evidence:
+- `backend/tests/test_integrations.py` covers create/update/source-conflict/dedup
+- Dev-mode ingestion buttons wired into the personal dashboard for smoke runs.
 
-What remains (intentionally not built):
-- real OAuth flows for any connector
-- real API clients (Google API, YNAB API)
-- webhook receivers
-- background sync schedulers / queues
-- delta sync (incremental fetch since last sync)
-- conflict resolution beyond source-of-truth (e.g., concurrent edit merging)
-- Apple Health full ingestion
-- Nike Run Club full ingestion (also requires connector_mappings CHECK extension)
+Deliberately not built (see Deferred Ledger):
+- Real OAuth flows for any connector
+- Real API clients (Google API, YNAB API, Apple Health, Nike)
+- Webhook receivers
+- Background sync schedulers / queues
+- Delta sync
 - iCal feed parsing
 - Hearth bridge
-- batch error handling (currently each payload is independent; one bad payload
-  in a batch raises and rolls back that single ingestion)
-- audit log of ingestion operations
-- rate limiting / retry logic
-- credential rotation handling
+- Ingestion audit log
+- Rate limiting / retry / credential rotation for external APIs
 
-## 10. Intelligence Layer
-Status: DONE
+## 10. Testing / CI / Release Automation
+Status: **VERIFIED**
 
-Includes:
-- ai_conversations
-- ai_messages
-- ai_tool_audit
+Current surface:
+- 20 backend test files, ~320 tests passing (per `docs/release_candidate_report.md`)
+- `backend/tests/` uses pytest + Postgres 16 + fresh schema per run
+- `.github/workflows/ci.yml` jobs: `backend-tests`, `frontend-types`, `smoke-web`
+- 12 Playwright smoke tests in `smoke-tests/` (auth + core surfaces + AI panel)
+- `scripts/release_check.py` — pytest + tsc + migrate + seed + smoke
+- `scripts/wait_for_url.py` — readiness wait for deploy verification
 
-Completed in this package:
-- schema (ai_conversations + ai_messages + ai_tool_audit)
-- migration: 010_ai_orchestration.sql
-- ORM models (AIConversation, AIMessage, AIToolAudit)
-- Anthropic provider abstraction with tool-use support
-- Role-aware context loader (adult/child/parent surface differentiation)
-- System prompt assembly with prompt injection resistance
-- 17-tool registry wrapping existing services (no domain logic duplication)
-- Tool permission enforcement by role + surface
-- Write confirmation enforcement for shared-data-affecting tools
-- One-tool-at-a-time execution with bounded 5-round loop
-- Full audit logging for every tool execution (success/error/denied/confirmation)
-- Chat orchestration engine with conversation persistence
-- Daily brief, weekly plan, and staple meal suggestion endpoints
-- Pydantic request/response schemas
-- Routes: POST /api/ai/chat, POST /api/ai/brief/daily, POST /api/ai/plans/weekly,
-  POST /api/ai/meals/staples, GET /api/ai/conversations, GET /api/ai/conversations/{id}/messages,
-  GET /api/ai/audit
-- Tests: tool permissions, execution, confirmation, family isolation, audit logging,
-  context loading, prompt assembly, conversation state
+Gaps:
+- No load testing. Acceptable at private launch scale.
+- No backend chaos / fault injection suite.
+- Smoke coverage for AI is thin — see AI Roadmap §9.
 
-Notes:
-- Provider is Anthropic-first. Abstraction is clean enough for a second provider.
-- Tool execution is synchronous, one call at a time, max 5 rounds per chat turn.
-- Child surface is read-only (no write tools allowed).
-- External text in notes/events/connectors is treated as DATA in the prompt, not instructions.
-- Notification delivery is logged but not yet implemented (send_notification_or_create_action).
-- No background jobs, no autonomous loops, no real-time streaming in v1.
+## 11. Deployment
+Status: **VERIFIED** (in production for private launch as of 2026-04-12)
 
-## Suggested Build Order
-1. Foundation
-2. Life Management
-3. Calendar / Scheduling
-4. Meals
-5. Parent reward-management backend refinements if needed
-6. Personal task layer
-7. Second Brain
-8. Finance
-9. Health / Fitness
-10. Integration engines
-11. Intelligence layer orchestration
+Artifacts:
+- `backend/Dockerfile` (Python 3.12 slim + `start.sh`)
+- `scout-ui/Dockerfile`, `docker-compose.yml`
+- `backend/railway.json`, `scout-ui/vercel.json`, `scout-ui/railway.json`
+- `backend/seed.py` run post-migration for family bootstrap
+- Production env: `SCOUT_ENVIRONMENT=production`, `SCOUT_AUTH_REQUIRED=true`,
+  `SCOUT_ENABLE_BOOTSTRAP=false`, `SCOUT_ANTHROPIC_API_KEY` set
 
-## Update Rules
-After each backend package:
-- update the status of the affected section
-- add a short “Completed in this package” bullet list
-- move the next backend package to Status: NEXT
-- do not rewrite unrelated sections
-- preserve history and clarity
-- keep this roadmap practical, not aspirational
+Verification:
+- Backend: `https://scout-backend-production-9991.up.railway.app` (healthy)
+- Frontend: `https://scout-ui-gamma.vercel.app`
+- 9/9 deployed smoke tests passed (commit `c29a5d0`)
+
+Gaps:
+- Rate limiter and bootstrap state are process-local. See Deferred Ledger
+  for multi-instance hardening.
+- No blue/green or rolling-release strategy beyond Railway's default.
+
+## Deferred Backend Debt Ledger
+
+| Item | Why deferred | Launch impact | Next window |
+|---|---|---|---|
+| Real OAuth for Google Calendar / YNAB / Apple Health / Nike | No external customer demand at private launch; dev-mode ingestion is enough | None for single family | Later |
+| Webhook receivers + background sync schedulers | Same as above; no live external data to react to | None | Later |
+| iCal feed parsing | Connector CHECK supports `ical` but parsing not written | None | Later |
+| Ingestion audit log | Basic service-level logging is sufficient for v1 | None | Next sprint if integrations ship |
+| Multi-instance safe rate limiter | Single-instance backend on Railway | None today; risk if we horizontally scale | Before any horizontal scale-out |
+| Bonus / penalty allowance adjustments | UI stubs exist; model change + endpoint needed | None — payout path works without it | Next sprint |
+| Streaming AI responses | Request/response works; streaming is UX debt | Perceived latency on long replies | See AI Roadmap |
+| Notification delivery for AI `send_notification_or_create_action` | Currently logged only; no delivery channel chosen | None — Action Inbox covers the need | Later |
+| `dietary_preferences` → AI meal generation wiring | Table exists but generator ignores it | Low — AI still produces usable plans | Next sprint |
+| Dedicated `parent_action_items` route module | Dashboard aggregation covers current UX | None | When action inbox needs filtering |
