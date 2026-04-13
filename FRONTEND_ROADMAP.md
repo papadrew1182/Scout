@@ -378,3 +378,71 @@ Passed the launch gate; not strategically done:
 - Does `ScoutLauncher` render the AI `result.handoff` button correctly for every entity type? Only the chat response has been smoke-checked.
 - Is the parent household insight banner's `off_track` / `at_risk` logic reviewed by a product owner, or is it a rough heuristic nobody has validated?
 - Does `sendChatMessage` gracefully handle a 60s timeout without tearing the panel state? No test forces this.
+- Raw `grep -c "test("` across `smoke-tests/tests/*.spec.ts` shows 13 test declarations (auth 5 + surfaces 7 + ai-panel 1). `docs/release_candidate_report.md` (commit `549723b`) records 12/12 at preflight. Either a test was added post-preflight or the preflight count missed one — needs a fresh `npx playwright test` run to confirm.
+
+---
+
+## Top 10 Frontend Deferred Items
+
+Prioritized deferred work, worst-impact-first:
+
+1. **Write-path smoke suite** (§12) — task completion, grocery approve, run weekly payout, meal-plan approve, meal review submit. Converts read-only smoke into a real regression net. Highest leverage; no backend dependency.
+2. **Global error boundary** (§11) — single top-level `ErrorBoundary` in `_layout.tsx`. Cheapest fix for the worst-case blank-screen failure mode.
+3. **AI panel tool-call + confirmation smoke** (§10) — at least one write-tool round-trip asserted, including `confirmation_required: true` branch. Covers the highest-risk interaction surface.
+4. **Meals `prep.tsx` + `reviews.tsx` smoke** (§6) — code exists (122 and 417 lines respectively) but both pages are UNKNOWN until exercised by at least a page-load assertion.
+5. **AI response streaming pipeline** (§10) — request/response works but there's no token-streaming UI. Biggest perceived-latency issue in the product. Blocks on AI Roadmap Phase A.
+6. **Confirmation-flow UI inside ScoutLauncher** (§10) — backend returns `confirmation_required: true` on gated writes but the panel has no affordance to confirm, so users re-ask in plain English.
+7. **Parent payout bonus / penalty handlers** (§4) — UI buttons are rendered but "not implemented yet". Blocked on backend endpoints landing.
+8. **Dev-mode ingestion button prod audit** (§3) — the `DEV_MODE` gate has not been validated against the production Vercel build; behavior is UNKNOWN.
+9. **RexOS / Exxir personal-surface panels** (§3) — product decision: build, remove, or re-label as "coming soon". Placeholder copy only today.
+10. **Production error reporting (Sentry or equivalent)** (§13) — production JS errors are currently invisible. No provider chosen.
+
+See the full `Front-end Deferred Ledger` table above for the long tail (skeleton loaders, Web Vitals, accessibility, mobile-web, multi-member session switching, offline/PWA, etc.).
+
+---
+
+## 5 Strongest Frontend Surfaces
+
+Ranked by evidence strength and launch-readiness:
+
+1. **Auth UX** (§2) — 5 smoke tests (adult login, child login, bad password, sign-out, invalid-token recovery). Most-covered surface in the repo.
+2. **Settings — Accounts & Access** (§8) — role visibility asserted both ways (adult sees, child does not); session management flows exist; page loads asserted for both roles.
+3. **App Shell / Nav / Scout Launcher** (§1) — transitively smoked by every surface test; role-gated nav verified; shell has been stable across all releases.
+4. **Deployment / Web Readiness** (§13) — Docker + Vercel + Railway all green; deployed smoke passing at `scout-ui-gamma.vercel.app`; 9/9 deployed smoke pass per `release_candidate_report.md` at commit `c29a5d0`; 12/12 at preflight `549723b`.
+5. **Shared UX / Platform Systems** (§14) — `lib/auth.tsx`, `lib/api.ts` with trace IDs, reusable components (`ActionInbox`, `NeedSomething`, `TaskCard`, `StepList`, `DataCard`); used across every surface and stable.
+
+---
+
+## 5 Weakest or Least-Verified Frontend Areas
+
+Ranked by verification gap and product risk:
+
+1. **AI Panel / ScoutLauncher** (§10) — only 1 smoke test (entry point + error branch). No tool execution, confirmation, conversation resume, handoff button, child-allowlist, or streaming coverage. Highest-risk surface per test-coverage-per-line-of-code.
+2. **Meals subpages `prep.tsx` + `reviews.tsx`** (§6) — 122 + 417 lines of real code but zero smoke coverage. Both marked UNKNOWN.
+3. **Write paths across Parent / Grocery / Child surfaces** (§4, §5, §7) — every main surface has read-path smoke but zero write-path smoke. Task completion, payout run, grocery approve, purchase-request convert, meal-plan approve are all blind spots.
+4. **Loading / Error / Retry states** (§11) — per-component handling exists but there is **no global error boundary**. A render crash anywhere produces a blank screen with no recovery path.
+5. **Personal surface placeholder panels** (§3) — RexOS + Exxir panels are stub copy, dev-mode ingestion buttons are ungated for prod. Not broken, but carries product-decision debt.
+
+---
+
+## File summary
+
+**Scope:** 14 sections covering every shipped frontend surface + platform system, each with `status`, `what exists`, `evidence`, `missing verification`, `missing UX / product work`, and `recommended next step`.
+
+**Status distribution** (of the 14 sections):
+- `VERIFIED`: 10 (shell/nav, auth, personal, parent, child, grocery, settings, action inbox, deployment, shared platform)
+- `IMPLEMENTED`: 3 (meals, AI panel, loading/error/retry)
+- `VERIFIED as launch gate / PARTIAL for depth`: 1 (smoke coverage)
+
+Meals is labeled "VERIFIED (core) / IMPLEMENTED (subpages)" reflecting the mixed state of `this-week.tsx` (VERIFIED) vs `prep.tsx` / `reviews.tsx` (UNKNOWN without a smoke or audit).
+
+**Key reconciliation notes:**
+- The frontend is **private-launch ready** (12/12 smoke passing at commit `549723b`, all critical surfaces covered by at least a page-load test, all role-gating verified both ways).
+- It is **not strategically complete** — the gap between "launch-sufficient" and "complete" is primarily write-path smoke coverage, AI panel depth, and the global error boundary.
+- AI panel is the single biggest verification risk per surface area.
+- Backend coverage (320 tests per preflight) partially offsets the frontend write-path gap, but regressions in UI wiring would still escape CI.
+
+**Freshness:**
+- Branch: `docs/roadmap-reconciliation`
+- Last reconciled: 2026-04-13
+- Reference commits: `c527fdf` (previous reconciliation), `9481f8f` (AI chat schema fix, added `X-Scout-Trace-Id`), `549723b` (launch preflight)
