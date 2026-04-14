@@ -290,9 +290,9 @@ class TestActivityRetrieval:
                 started_at=_dt(2026, 4, 9, h),
             ))
         results = list_recent_activity(db, family.id, andrew.id, limit=10)
-        hours = [r.started_at.hour for r in results]
-        # Compare ordering ignoring tz conversion (all same tz)
-        assert hours == sorted(hours, reverse=True)
+        timestamps = [r.started_at for r in results]
+        # Results must be ordered newest-first by full timestamp (not just hour)
+        assert timestamps == sorted(timestamps, reverse=True)
 
     def test_recent_limit_respected(self, db: Session, family, adults):
         andrew = adults["robert"]
