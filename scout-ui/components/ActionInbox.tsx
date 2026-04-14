@@ -35,6 +35,7 @@ function actionTypeLabel(type: string): string {
     case "meal_plan_review": return "Meal Plan";
     case "moderation_alert": return "Scout Safety";
     case "daily_brief": return "Morning brief";
+    case "weekly_retro": return "Weekly retro";
     default: return "Action";
   }
 }
@@ -46,6 +47,7 @@ function actionTypeColor(type: string): string {
     case "meal_plan_review": return colors.accent;
     case "moderation_alert": return colors.negative;
     case "daily_brief": return colors.accent;
+    case "weekly_retro": return colors.accent;
     default: return colors.textMuted;
   }
 }
@@ -71,7 +73,8 @@ export function ActionInbox() {
   useEffect(() => { load(); }, [load]);
 
   const handleTap = (item: ActionItem) => {
-    if (item.action_type === "daily_brief") {
+    // Items with long-form detail text use the shared /brief/[id] view.
+    if (item.action_type === "daily_brief" || item.action_type === "weekly_retro") {
       router.push(`/brief/${item.id}` as any);
     } else if (item.entity_type === "grocery_item" || item.entity_type === "purchase_request") {
       router.push("/grocery");

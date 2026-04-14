@@ -444,7 +444,7 @@ def _build_session(db: Session, member_id) -> str:
     sess = SessionModel(
         user_account_id=account.id,
         token=token,
-        expires_at=datetime.utcnow() + timedelta(hours=1),
+        expires_at=datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1),
     )
     db.add(sess)
     db.commit()

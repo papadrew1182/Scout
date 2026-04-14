@@ -310,7 +310,15 @@ SYSTEM_PROMPT = (
     "Hard rules: at least one dinner per weekday that applies, prep tasks must fit a 2-3 hour "
     "Sunday window, grocery stores grouped by a primary bulk store (e.g. Costco) and a secondary "
     "store, each grocery item must belong to a store. Do not include nutrition tracking. "
-    "Do not return a prose blob as the primary structure."
+    "Do not return a prose blob as the primary structure. "
+    "Respect constraints.dietary: every entry is a per-member preference or "
+    "restriction (allergies, intolerances, aversions, religious / ethical "
+    "exclusions). If any member has a nut allergy, no dinner may use peanuts, "
+    "tree nuts, nut oils, or pesto. If any member is vegetarian, at least one "
+    "dinner per week must be a complete vegetarian meal they can eat as-is; "
+    "do not plan around them with 'they can just skip the meat'. Apply the "
+    "same logic to gluten-free, dairy-free, shellfish, pork, and any "
+    "member-specific 'do not like' labels."
 )
 
 

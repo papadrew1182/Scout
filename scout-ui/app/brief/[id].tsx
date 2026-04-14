@@ -138,10 +138,10 @@ function labelForType(t: string): string {
   switch (t) {
     case "daily_brief":
       return "Morning brief";
-    case "moderation_alert":
-      return "Scout Safety";
     case "weekly_retro":
       return "Weekly retro";
+    case "moderation_alert":
+      return "Scout Safety";
     default:
       return "Action item";
   }

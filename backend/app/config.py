@@ -14,7 +14,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     ai_chat_model: str = "claude-sonnet-4-20250514"
     ai_summary_model: str = "claude-sonnet-4-20250514"
-    ai_classification_model: str = "claude-haiku-4-20250414"
+    # Default the classification model to the same sonnet version that
+    # the chat path uses. A prior default (claude-haiku-4-20250414) was
+    # a fabricated model id that returned 404 from Anthropic, which
+    # silently forced every classification caller (off-track insight,
+    # weekly retro narrative) into the template fallback. Operators who
+    # want to optimize cost can set SCOUT_AI_CLASSIFICATION_MODEL to a
+    # real haiku variant the account has access to.
+    ai_classification_model: str = "claude-sonnet-4-20250514"
     ai_max_tokens: int = 2048
     ai_temperature: float = 0.3
     ai_request_timeout: int = 60
