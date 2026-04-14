@@ -56,10 +56,15 @@ test.describe("Write paths — parent", () => {
     const gummy = reviewSection.locator("text=Gummy bears").first();
     await expect(gummy).toBeVisible({ timeout: 8000 });
 
+    // Frontend routes this through updateGroceryItem(id, {approval_status})
+    // which PATCHes /families/{fid}/groceries/items/{id} (PLURAL
+    // "groceries" + "/items/" segment). The earlier matcher used
+    // "/grocery/" (singular, no "/items/") and never fired — the
+    // approve click still landed, but waitForResponse just timed out.
     const approvePromise = page.waitForResponse(
       (r) =>
-        r.url().includes("/grocery/") &&
-        (r.request().method() === "PATCH" || r.request().method() === "POST"),
+        r.url().includes("/groceries/items/") &&
+        r.request().method() === "PATCH",
       { timeout: 15000 },
     );
     // Approve button inside the Gummy bears card
