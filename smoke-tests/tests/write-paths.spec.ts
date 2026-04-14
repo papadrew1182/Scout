@@ -24,10 +24,13 @@ async function login(page: Page, email: string, password: string) {
 
 // Pull the authenticated member's own id out of localStorage so tests can
 // navigate directly to routes like /child/[memberId] without relying on a
-// particular default-landing behavior.
+// particular default-landing behavior. The real storage key is
+// "scout_session_token" (see scout-ui/lib/auth.tsx:TOKEN_KEY) — an earlier
+// version of this helper read "scout_token" and silently got null, which
+// sent an unauthenticated /api/auth/me request and tripped the 401 path.
 async function currentMemberId(page: Page): Promise<string> {
   const headers = await page.evaluate(() => {
-    const token = localStorage.getItem("scout_token");
+    const token = localStorage.getItem("scout_session_token");
     return token ? { Authorization: `Bearer ${token}` } : {};
   });
   const res = await page.request.get(`${API_URL}/api/auth/me`, { headers });
@@ -124,13 +127,20 @@ test.describe("Write paths — parent", () => {
     );
     await payoutBtn.click();
     const resp = await payoutPromise.catch(() => null);
-    // Either a 2xx response or the visible post-state is acceptable evidence.
-    if (resp) expect(resp.status()).toBeLessThan(400);
+    // 2xx = payout created; 409 = payout already exists for this week
+    // (also a valid idempotent response). Anything >= 500 is a real
+    // regression the test should catch.
+    if (resp) expect(resp.status()).toBeLessThan(500);
+    // Post-state: the button transitions to the disabled "Payout already
+    // run for this week" label. Both the action-message Text AND the
+    // button Text render that string, which trips strict-mode when the
+    // locator resolves to 2 elements. Scope to the first match.
     await expect(
       page
         .locator("text=payout created")
         .or(page.locator("text=already exists for this week"))
-        .or(page.locator("text=Payout already run for this week")),
+        .or(page.locator("text=Payout already run for this week"))
+        .first(),
     ).toBeVisible({ timeout: 5000 });
   });
 
@@ -211,8 +221,11 @@ test.describe("Write paths — child", () => {
     await page.waitForSelector('input[placeholder="Meal title"]', { timeout: 10000 });
     await page.fill('input[placeholder="Meal title"]', "Smoke Test Lasagna");
     // Default rating is 4, decision is "Repeat", leftovers optional.
+    // Actual endpoint is POST /families/{fid}/meals/reviews — match on
+    // the "meals/reviews" suffix. The earlier matcher "/meal-reviews"
+    // (with a hyphen) never matched and always timed out.
     const savePromise = page.waitForResponse(
-      (r) => r.url().includes("/meal-reviews"),
+      (r) => r.url().includes("/meals/reviews") && r.request().method() === "POST",
       { timeout: 15000 },
     );
     await page.getByRole("button", { name: "Save Review" }).first().click();

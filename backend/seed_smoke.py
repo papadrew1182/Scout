@@ -177,14 +177,21 @@ def seed_smoke():
     else:
         print(f"  Draft meal plan already exists: {existing_plan.id}")
 
-    # --- Parent action item (from child grocery submission) ---
-    existing_action = db.scalars(
-        select(ParentActionItem)
-        .where(ParentActionItem.family_id == family.id)
-        .where(ParentActionItem.status == "pending")
+    # --- Pending-review grocery item (supports "parent approves a
+    # pending grocery item" smoke). Previously this block checked
+    # "any pending ParentActionItem" as the idempotency key, which
+    # meant once the first smoke run approved Gummy bears and
+    # resolved the action item, subsequent runs would not re-seed —
+    # the "Needs Review" section then disappeared from /grocery and
+    # the smoke test failed on element-not-found. Fixed by keying on
+    # the Gummy bears GroceryItem in pending_review state directly.
+    existing_gummy = db.scalars(
+        select(GroceryItem)
+        .where(GroceryItem.family_id == family.id)
+        .where(GroceryItem.title == "Gummy bears")
+        .where(GroceryItem.approval_status == "pending_review")
     ).first()
-    if not existing_action:
-        # Child adds a grocery item (pending review)
+    if not existing_gummy:
         child_item = GroceryItem(
             family_id=family.id, added_by_member_id=sadie.id,
             title="Gummy bears", source="manual",
@@ -200,9 +207,9 @@ def seed_smoke():
         )
         db.add(action)
         db.flush()
-        print(f"  Created parent action item: {action.id}")
+        print(f"  Re-seeded Gummy bears grocery item + action: {action.id}")
     else:
-        print(f"  Action item already exists: {existing_action.id}")
+        print(f"  Gummy bears pending-review grocery item already present: {existing_gummy.id}")
 
     # --- Pending purchase request — supports 'Convert/Approve request' smoke ---
     existing_req = db.scalars(
