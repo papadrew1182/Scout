@@ -217,7 +217,7 @@ def seed_smoke():
             type="grocery",
             title="New soccer ball",
             details="Mine is flat and we have practice Saturday",
-            urgency="soon",
+            urgency="normal",
             status="pending",
         )
         db.add(req)
