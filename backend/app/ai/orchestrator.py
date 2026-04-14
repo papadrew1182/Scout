@@ -97,9 +97,22 @@ def get_or_create_conversation(
     surface: str,
     conversation_id: uuid.UUID | None = None,
 ) -> AIConversation:
+    """Resume an active conversation by id, otherwise create a new one.
+
+    QA fix (test_qa BUG #2): we also require the resumed conversation
+    to have ``status='active'``. Without that check, a client holding
+    a stale conversation_id can keep posting into an 'ended' or
+    'archived' thread after the user has explicitly tapped
+    "New chat". The Tier 3 F12 resumable endpoint already filters
+    inactive threads; this closes the direct-by-id bypass."""
     if conversation_id:
         conv = db.get(AIConversation, conversation_id)
-        if conv and conv.family_id == family_id and conv.family_member_id == member_id:
+        if (
+            conv
+            and conv.family_id == family_id
+            and conv.family_member_id == member_id
+            and conv.status == "active"
+        ):
             return conv
 
     conv = AIConversation(
@@ -147,6 +160,14 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
     regression or clock adjustment. Replay order must be exact —
     Anthropic rejects any history where a tool_result is not
     immediately preceded by its matching tool_use.
+
+    QA fix (test_qa BUG #1): we also strip any orphan ``tool_use``
+    blocks whose id does not have a matching ``tool_result`` anywhere
+    in the loaded window. Sources of orphans include stream interrupts
+    mid-turn, legacy pre-migration-017 rows, and any historical bug in
+    a handler that persisted the assistant-with-tool_calls row before
+    raising. Leaving them in place 400s the next Anthropic call and
+    wedges the whole conversation for the user.
     """
     msgs = list(
         db.scalars(
@@ -158,6 +179,16 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
     )
     msgs.reverse()
 
+    # First pass: collect every tool_use id and every tool_result id so
+    # we know which tool_use blocks are paired. We look at ALL tool
+    # rows because a tool_result may appear multiple positions later.
+    paired_ids: set[str] = set()
+    for m in msgs:
+        if m.role == "tool" and m.tool_results:
+            tid = m.tool_results.get("tool_use_id")
+            if tid:
+                paired_ids.add(str(tid))
+
     api_messages = []
     for m in msgs:
         if m.role == "user":
@@ -168,6 +199,10 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
                 content_blocks.append({"type": "text", "text": m.content})
             if m.tool_calls:
                 for tc in m.tool_calls:
+                    tc_id = str(tc.get("id", ""))
+                    # Drop unpaired tool_use blocks — they break replay.
+                    if tc_id not in paired_ids:
+                        continue
                     content_blocks.append({
                         "type": "tool_use",
                         "id": tc["id"],
@@ -178,12 +213,18 @@ def _load_conversation_messages(db: Session, conversation_id: uuid.UUID, limit: 
                 api_messages.append({"role": "assistant", "content": content_blocks})
         elif m.role == "tool":
             if m.tool_results:
+                tid = str(m.tool_results.get("tool_use_id", ""))
+                # Belt-and-suspenders: skip a tool_result whose
+                # tool_use id never appears in any earlier assistant
+                # row. Anthropic rejects orphan tool_results too.
+                if not tid:
+                    continue
                 api_messages.append({
                     "role": "user",
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": m.tool_results.get("tool_use_id", ""),
+                            "tool_use_id": tid,
                             "content": json.dumps(m.tool_results.get("result", {})),
                         }
                     ],

@@ -36,11 +36,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import threading
+import time
 import uuid
+from collections import deque
 from datetime import datetime
 
 import pytz
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -53,6 +56,40 @@ from app.models.tier5 import ScoutMCPToken
 logger = logging.getLogger("scout.mcp.http")
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
+
+
+# ---------------------------------------------------------------------------
+# In-process rate limiter (QA hardening, Tier 5 handoff item #4)
+#
+# Keyed on token_hash, stores recent call timestamps in a deque, and
+# counts calls inside a rolling 60-second window. Process-local —
+# multi-instance deployments get per-instance quota which is fine at
+# current scale. Future work can swap this for Redis-backed if it
+# becomes a problem.
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT_WINDOW_SEC = 60.0
+_rate_buckets: dict[str, deque[float]] = {}
+_rate_lock = threading.Lock()
+
+
+def _rate_limit_check(token_hash: str, limit_per_minute: int) -> tuple[bool, float]:
+    """Returns (allowed, retry_after_seconds). ``limit_per_minute<=0``
+    disables the check. Thread-safe for the Uvicorn worker pool."""
+    if limit_per_minute <= 0:
+        return True, 0.0
+    now = time.monotonic()
+    cutoff = now - _RATE_LIMIT_WINDOW_SEC
+    with _rate_lock:
+        bucket = _rate_buckets.setdefault(token_hash, deque())
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= limit_per_minute:
+            oldest = bucket[0]
+            retry_after = max(1.0, _RATE_LIMIT_WINDOW_SEC - (now - oldest))
+            return False, retry_after
+        bucket.append(now)
+        return True, 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -236,12 +273,31 @@ def list_mcp_tools(
 def call_mcp_tool(
     body: ToolCallRequest,
     request: Request,
+    response: Response,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     _require_remote_enabled()
+    if not body.name or not body.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="tool name is required",
+        )
     token_row = _resolve_bearer(db, authorization)
     db.commit()
+
+    # Per-token rolling-minute quota. Returns 429 with a Retry-After
+    # header so clients can back off cleanly.
+    allowed, retry_after = _rate_limit_check(
+        token_row.token_hash, settings.mcp_remote_rate_limit_per_minute
+    )
+    if not allowed:
+        response.headers["Retry-After"] = str(int(retry_after))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded; retry in ~{int(retry_after)}s",
+            headers={"Retry-After": str(int(retry_after))},
+        )
 
     from app.ai.tools import _audit
     from scout_mcp.server import dispatch_tool

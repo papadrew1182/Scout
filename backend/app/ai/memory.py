@@ -140,28 +140,37 @@ def record_auto_structured_memory(
     plan. These land as ``active`` directly because approval already
     happened upstream.
 
-    Light dedupe: if an active row with the same (family, type,
-    scope, content) already exists, we refresh ``last_confirmed_at``
-    on the existing row instead of creating a duplicate."""
+    QA fix (test_qa BUG #4): the dedupe now compares a *normalized*
+    form of the content — lowercase, whitespace-collapsed, trailing
+    punctuation stripped — so trivial variants of the same sentence
+    collapse to one row. The stored content stays exactly what the
+    first writer provided; a parent who wants a different casing
+    can edit the row."""
     if memory_type not in MEMORY_TYPES:
         memory_type = "other"
     normalized_content = content.strip()
     if not normalized_content:
         return None
     scope_value = _coerce_scope(scope)
+    candidate_key = _normalize_for_dedupe(normalized_content)
 
-    existing = db.scalars(
-        select(FamilyMemory)
-        .where(FamilyMemory.family_id == family_id)
-        .where(FamilyMemory.memory_type == memory_type)
-        .where(FamilyMemory.scope == scope_value)
-        .where(FamilyMemory.status == "active")
-        .where(FamilyMemory.content == normalized_content)
-    ).first()
-    if existing is not None:
-        existing.last_confirmed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
-        db.flush()
-        return existing
+    # Scan the small set of active rows in the same bucket and
+    # compare on the normalized key. Family memory tables are
+    # intentionally small — a full pass is fine.
+    candidates = list(
+        db.scalars(
+            select(FamilyMemory)
+            .where(FamilyMemory.family_id == family_id)
+            .where(FamilyMemory.memory_type == memory_type)
+            .where(FamilyMemory.scope == scope_value)
+            .where(FamilyMemory.status == "active")
+        ).all()
+    )
+    for existing in candidates:
+        if _normalize_for_dedupe(existing.content or "") == candidate_key:
+            existing.last_confirmed_at = datetime.now(pytz.UTC).replace(tzinfo=None)
+            db.flush()
+            return existing
 
     row = FamilyMemory(
         family_id=family_id,
@@ -341,3 +350,14 @@ def _coerce_scope(scope: str | None) -> str:
     if scope in ("parent", "family", "child"):
         return scope
     return "family"
+
+
+def _normalize_for_dedupe(text: str) -> str:
+    """Collapse trivial whitespace/case variants for near-duplicate
+    matching. Lowercases, trims, joins runs of whitespace, and
+    strips trailing sentence punctuation. Used ONLY for dedupe —
+    never for prompt injection or display."""
+    if not text:
+        return ""
+    collapsed = " ".join(text.lower().split())
+    return collapsed.rstrip(".!?,;: ")

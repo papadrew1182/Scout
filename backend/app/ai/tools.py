@@ -773,7 +773,14 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
     from sqlalchemy import select
 
     summary = args.get("summary") or ""
-    bundle_apply_id = args.get("bundle_apply_id") or ""
+    # QA fix (test_qa BUG #3): if the caller omits bundle_apply_id we
+    # auto-generate a server-side fallback so we always write a
+    # ledger row for audit. Idempotency only kicks in when the
+    # caller supplies a stable id, but missing the id should not
+    # mean missing the audit trail.
+    caller_bundle_id = (args.get("bundle_apply_id") or "").strip()
+    auto_generated_bundle_id = not caller_bundle_id
+    bundle_apply_id = caller_bundle_id or f"auto-{uuid.uuid4().hex}"
     tasks = args.get("tasks") or []
     events = args.get("events") or []
     grocery_items = args.get("grocery_items") or []
@@ -787,7 +794,10 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
 
     # Idempotency: if a prior row exists for this bundle_apply_id +
     # family, return the stored result. Double-taps become no-ops.
-    if bundle_apply_id:
+    # Only caller-supplied ids trigger dedupe — auto-generated ones
+    # are unique per call by construction so the lookup would always
+    # miss anyway.
+    if not auto_generated_bundle_id:
         existing = executor.db.scalars(
             select(PlannerBundleApply)
             .where(PlannerBundleApply.family_id == executor.family_id)
@@ -882,48 +892,46 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
                 applied["grocery_items_created"] += 1
 
             # Ledger row inside the same savepoint so a later failure
-            # still rolls it back — idempotency only applies to
-            # successful bundles.
-            if bundle_apply_id:
-                ledger = PlannerBundleApply(
-                    bundle_apply_id=bundle_apply_id,
-                    family_id=executor.family_id,
-                    actor_member_id=executor.actor_member_id,
-                    conversation_id=executor.conversation_id,
-                    status="applied",
-                    tasks_created=applied["tasks_created"],
-                    events_created=applied["events_created"],
-                    grocery_items_created=applied["grocery_items_created"],
-                    errors=[],
-                    summary=summary,
-                )
-                executor.db.add(ledger)
-                executor.db.flush()
+            # still rolls it back. Always written now (auto-generated
+            # id when the caller omits one) so audit is never silent.
+            ledger = PlannerBundleApply(
+                bundle_apply_id=bundle_apply_id,
+                family_id=executor.family_id,
+                actor_member_id=executor.actor_member_id,
+                conversation_id=executor.conversation_id,
+                status="applied",
+                tasks_created=applied["tasks_created"],
+                events_created=applied["events_created"],
+                grocery_items_created=applied["grocery_items_created"],
+                errors=[],
+                summary=summary,
+            )
+            executor.db.add(ledger)
+            executor.db.flush()
     except Exception as exc:
         # Savepoint has rolled back. Nothing landed. Record a
         # failure ledger row in its own savepoint (so a second
         # apply with the same id gets the failure back) and return
         # a clean error to the UI.
         err_msg = str(exc)[:500]
-        if bundle_apply_id:
-            try:
-                with executor.db.begin_nested():
-                    fail = PlannerBundleApply(
-                        bundle_apply_id=bundle_apply_id,
-                        family_id=executor.family_id,
-                        actor_member_id=executor.actor_member_id,
-                        conversation_id=executor.conversation_id,
-                        status="failed",
-                        tasks_created=0,
-                        events_created=0,
-                        grocery_items_created=0,
-                        errors=[err_msg],
-                        summary=summary,
-                    )
-                    executor.db.add(fail)
-                    executor.db.flush()
-            except Exception:
-                pass
+        try:
+            with executor.db.begin_nested():
+                fail = PlannerBundleApply(
+                    bundle_apply_id=bundle_apply_id,
+                    family_id=executor.family_id,
+                    actor_member_id=executor.actor_member_id,
+                    conversation_id=executor.conversation_id,
+                    status="failed",
+                    tasks_created=0,
+                    events_created=0,
+                    grocery_items_created=0,
+                    errors=[err_msg],
+                    summary=summary,
+                )
+                executor.db.add(fail)
+                executor.db.flush()
+        except Exception:
+            pass
         return {
             "status": "failed",
             "summary": summary,
@@ -962,7 +970,7 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
         "summary": summary,
         "applied": applied,
         "errors": [],
-        "bundle_apply_id": bundle_apply_id or None,
+        "bundle_apply_id": bundle_apply_id,
         "handoff": _handoff(
             "weekly_plan_bundle",
             "bundle",

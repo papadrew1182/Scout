@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Tier 5 F19 — remote MCP toggle. When false, only the stdio
     # server is available and the /mcp HTTP endpoints 404.
     mcp_remote_enabled: bool = False
+    # QA hardening: minimum per-token rate limit so one runaway
+    # client can't peg the DB through /mcp/tools/call. Window is a
+    # rolling minute. Set to 0 to disable (not recommended).
+    mcp_remote_rate_limit_per_minute: int = 60
 
     # Tier 5 F20 — memory injection budget. At most N active
     # memories are included in any single prompt build, and each is
