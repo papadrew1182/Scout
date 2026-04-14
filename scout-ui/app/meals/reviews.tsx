@@ -284,6 +284,8 @@ export default function ReviewsPage() {
           style={[shared.button, !mealTitle.trim() && shared.buttonDisabled]}
           onPress={submit}
           disabled={busy || !mealTitle.trim()}
+          accessibilityLabel="Save Review"
+          accessibilityRole="button"
         >
           <Text
             style={[shared.buttonText, !mealTitle.trim() && shared.buttonTextDisabled]}

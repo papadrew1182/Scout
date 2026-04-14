@@ -265,10 +265,22 @@ export default function ThisWeekPage() {
 
           {isAdult && status === "draft" && (
             <>
-              <Pressable style={shared.button} onPress={handleApprove} disabled={busy}>
+              <Pressable
+                style={shared.button}
+                onPress={handleApprove}
+                disabled={busy}
+                accessibilityLabel="Approve Plan"
+                accessibilityRole="button"
+              >
                 <Text style={shared.buttonText}>Approve Plan</Text>
               </Pressable>
-              <Pressable style={[shared.button, s.archiveBtn]} onPress={handleArchive} disabled={busy}>
+              <Pressable
+                style={[shared.button, s.archiveBtn]}
+                onPress={handleArchive}
+                disabled={busy}
+                accessibilityLabel="Archive Draft"
+                accessibilityRole="button"
+              >
                 <Text style={shared.buttonText}>Archive Draft</Text>
               </Pressable>
             </>
