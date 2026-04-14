@@ -3,14 +3,18 @@
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta
 
+import pytz
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai import orchestrator
+from app.ai.pricing import build_usage_report
 from app.auth import Actor, get_current_actor
+from app.config import settings
 from app.database import get_db
 from app.models.ai import AIConversation, AIMessage, AIToolAudit
 from app.schemas.ai import (
@@ -20,12 +24,15 @@ from app.schemas.ai import (
     ChatResponse,
     ConversationRead,
     MessageRead,
+    ResumableConversation,
     StapleMealsRequest,
     StapleMealsResponse,
     ToolAuditRead,
     WeeklyPlanRequest,
     WeeklyPlanResponse,
 )
+
+RESUME_FRESHNESS_MINUTES = 30
 
 logger = logging.getLogger("scout.ai.routes")
 
@@ -326,6 +333,114 @@ def list_conversations(
     return list(db.scalars(stmt).all())
 
 
+@router.get("/conversations/resumable", response_model=ResumableConversation)
+def get_resumable_conversation(
+    surface: str = Query("personal", pattern="^(personal|parent|child)$"),
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Return the most recent conversation that is SAFE to auto-resume
+    for this actor on this surface, or a null envelope if none fit.
+
+    Exclusion rules (all must pass):
+      - status = 'active' (an 'ended' conversation was explicitly
+        closed by the user via POST /conversations/{id}/end)
+      - conversation_kind != 'moderation' (child was blocked — never
+        auto-resume these; parent gets a separate alert anyway)
+      - updated_at >= now - RESUME_FRESHNESS_MINUTES (30 min default)
+      - last message is NOT a pending confirmation (we don't want the
+        panel to silently pop back up on a dangerous in-flight write)
+      - last assistant turn wasn't a moderation-blocked or error model
+    """
+    cutoff = datetime.now(pytz.UTC).replace(tzinfo=None) - timedelta(
+        minutes=RESUME_FRESHNESS_MINUTES
+    )
+    candidates = list(
+        db.scalars(
+            select(AIConversation)
+            .where(AIConversation.family_id == actor.family_id)
+            .where(AIConversation.family_member_id == actor.member_id)
+            .where(AIConversation.surface == surface)
+            .where(AIConversation.status == "active")
+            .where(AIConversation.conversation_kind != "moderation")
+            .where(AIConversation.updated_at >= cutoff)
+            .order_by(AIConversation.updated_at.desc())
+            .limit(5)
+        ).all()
+    )
+
+    for conv in candidates:
+        last_msg = db.scalars(
+            select(AIMessage)
+            .where(AIMessage.conversation_id == conv.id)
+            .order_by(AIMessage.created_at.desc(), AIMessage.id.desc())
+            .limit(1)
+        ).first()
+        if not last_msg:
+            continue
+
+        # Gate: pending confirmation in-flight.
+        if last_msg.role == "tool" and last_msg.tool_results:
+            result = last_msg.tool_results.get("result") or {}
+            if isinstance(result, dict) and result.get("confirmation_required"):
+                continue
+
+        # Gate: error or moderation-blocked terminal state.
+        if last_msg.role == "assistant" and last_msg.model in (
+            "moderation-blocked",
+        ):
+            continue
+
+        # Pick first user message for the preview snippet — that's what
+        # the UI should show as "you were asking about…".
+        first_user = db.scalars(
+            select(AIMessage)
+            .where(AIMessage.conversation_id == conv.id)
+            .where(AIMessage.role == "user")
+            .order_by(AIMessage.created_at.asc(), AIMessage.id.asc())
+            .limit(1)
+        ).first()
+        preview = (first_user.content or "") if first_user else ""
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+
+        return ResumableConversation(
+            conversation_id=conv.id,
+            updated_at=conv.updated_at,
+            preview=preview,
+            kind=conv.conversation_kind,
+        )
+
+    return ResumableConversation(
+        conversation_id=None, updated_at=None, preview=None, kind=None
+    )
+
+
+@router.post("/conversations/{conversation_id}/end")
+def end_conversation(
+    conversation_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Mark a conversation ended so it drops out of the resumable set.
+
+    Used by the 'Start new chat' affordance in ScoutPanel. The row is
+    preserved for history/audit — only status flips. Idempotent."""
+    conv = db.get(AIConversation, conversation_id)
+    if (
+        not conv
+        or conv.family_id != actor.family_id
+        or conv.family_member_id != actor.member_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found"
+        )
+    if conv.status == "active":
+        conv.status = "ended"
+        db.commit()
+    return {"conversation_id": str(conv.id), "status": conv.status}
+
+
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageRead])
 def list_messages(
     conversation_id: uuid.UUID,
@@ -343,6 +458,27 @@ def list_messages(
         .order_by(AIMessage.created_at)
     )
     return list(db.scalars(stmt).all())
+
+
+@router.get("/usage")
+def ai_usage_report(
+    days: int = Query(7, ge=1, le=90),
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Parent-facing AI usage + approximate cost rollup.
+
+    Aggregates ``ai_messages.token_usage`` across the family's
+    conversations over the last N days (default 7). Returns per-day,
+    per-model, and per-member breakdowns plus a soft-cap warning
+    flag. Adult-only — kids shouldn't see the family's AI bill."""
+    actor.require_adult()
+    return build_usage_report(
+        db,
+        family_id=actor.family_id,
+        days=days,
+        soft_cap_usd=settings.ai_weekly_soft_cap_usd,
+    )
 
 
 @router.get("/audit", response_model=list[ToolAuditRead])

@@ -75,6 +75,7 @@ def load_member_context(db: Session, family_id: uuid.UUID, member_id: uuid.UUID)
             "birthdate": str(member.birthdate) if member.birthdate else None,
             "grade_level": member.grade_level,
             "learning_notes": member.learning_notes,
+            "personality_notes": member.personality_notes,
         },
         "role_tier": role_tier.name if role_tier else None,
         "permissions": permissions,
@@ -175,6 +176,26 @@ Content rules:
 """
 
 
+_PERSONALITY_NOTES_MAX_CHARS = 800
+
+
+def _sanitize_parent_notes(raw: str | None) -> str:
+    """Strip control chars and cap length on parent-authored coaching
+    text. We trust adults, but the prompt-injection rule from the
+    safety block still applies: user-authored text is data, not
+    instructions. Collapsing whitespace keeps line-break chaining from
+    visually reshaping later prompt sections, and the length cap keeps
+    the budget bounded no matter what a parent pastes in."""
+    if not raw:
+        return ""
+    # Strip ASCII control chars (including CR/LF/TAB), collapse runs.
+    cleaned_chars = [c if c >= " " else " " for c in raw]
+    collapsed = " ".join("".join(cleaned_chars).split())
+    if len(collapsed) > _PERSONALITY_NOTES_MAX_CHARS:
+        collapsed = collapsed[:_PERSONALITY_NOTES_MAX_CHARS].rstrip() + "…"
+    return collapsed
+
+
 def build_system_prompt(context: dict, surface: str) -> str:
     """Assemble the system prompt based on loaded context."""
     member = context["member"]
@@ -252,6 +273,17 @@ def build_system_prompt(context: dict, surface: str) -> str:
             base += (
                 f"\nNotes from this child's parents about how to teach them: "
                 f"{member['learning_notes']}\n"
+            )
+        # Parent coaching (personality / tone) is injected on the CHILD
+        # surface only. Sanitized to strip control chars and cap length
+        # so a hostile or accidentally-pasted blob can't reshape the
+        # rest of the system prompt.
+        personality = _sanitize_parent_notes(member.get("personality_notes"))
+        if personality:
+            base += (
+                f"\nCoaching notes from this child's parents about how to "
+                f"talk to them (tone, encouragement, handling frustration): "
+                f"{personality}\n"
             )
         if allow_general and allow_homework:
             base += _GENERAL_CHAT_BLOCK_CHILD

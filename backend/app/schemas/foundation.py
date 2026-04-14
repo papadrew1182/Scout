@@ -59,6 +59,7 @@ class FamilyMemberRead(BaseModel):
     birthdate: date | None
     grade_level: str | None = None
     learning_notes: str | None = None
+    personality_notes: str | None = None
     read_aloud_enabled: bool = False
     is_active: bool
     created_at: datetime
@@ -70,4 +71,5 @@ class FamilyMemberRead(BaseModel):
 class FamilyMemberLearningUpdate(BaseModel):
     grade_level: str | None = Field(default=None, max_length=40)
     learning_notes: str | None = Field(default=None, max_length=2000)
+    personality_notes: str | None = Field(default=None, max_length=1000)
     read_aloud_enabled: bool | None = None

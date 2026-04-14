@@ -21,6 +21,9 @@ import {
   sendChatMessage,
   sendChatMessageStream,
   fetchReady,
+  fetchResumableConversation,
+  fetchConversationMessages,
+  endConversation,
   type AIHandoff,
   type AIPendingConfirmation,
   type StreamEvent,
@@ -66,6 +69,10 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
   const [readyState, setReadyState] = useState<ReadyState>("checking");
   const [readyReason, setReadyReason] = useState<string | null>(null);
   const [transcribeAvailable, setTranscribeAvailable] = useState(false);
+  // Tier 3 F12: note rendered at the top of the thread when we
+  // auto-resumed a recent conversation. Cleared when the user taps
+  // "New chat" or closes the panel.
+  const [resumeNote, setResumeNote] = useState<string | null>(null);
 
   // Probe backend /ready whenever the panel becomes visible so we never mount
   // the chat UI on top of a known-broken AI path. Cheap and cached-by-open.
@@ -94,6 +101,82 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
       cancelled = true;
     };
   }, [visible]);
+
+  // Tier 3 F12 — auto-resume within a 30-minute freshness window, if
+  // the backend says there's a safe conversation to pick back up. We
+  // only try this when the panel opens with no existing thread
+  // in-flight (conversationId undefined). The "safe" filter is
+  // authoritative on the server; the client just trusts what comes
+  // back. Moderation, pending-confirmation, and error states are
+  // filtered out at the endpoint.
+  useEffect(() => {
+    if (!visible) return;
+    if (readyState !== "ok") return;
+    if (conversationId) return;
+    if (messages.length > 0) return;
+    let cancelled = false;
+    fetchResumableConversation(surface)
+      .then(async (r) => {
+        if (cancelled || !r.conversation_id) return;
+        // Seed prior messages from history so the UI isn't empty.
+        try {
+          const familyId = member?.family_id;
+          if (!familyId) return;
+          const history = await fetchConversationMessages(r.conversation_id, familyId);
+          if (cancelled) return;
+          const replay: ChatMessage[] = [];
+          for (const m of history) {
+            if (m.role === "user" && m.content) {
+              replay.push({ role: "user", content: m.content });
+            } else if (m.role === "assistant" && m.content) {
+              replay.push({ role: "assistant", content: m.content });
+            }
+          }
+          if (replay.length > 0) {
+            setMessages(replay);
+            setConversationId(r.conversation_id);
+            const minutes = r.updated_at
+              ? Math.max(
+                  1,
+                  Math.round(
+                    (Date.now() - new Date(r.updated_at).getTime()) / 60000,
+                  ),
+                )
+              : null;
+            setResumeNote(
+              minutes !== null
+                ? `Continued from ${minutes} min ago`
+                : "Continued from your last chat",
+            );
+          }
+        } catch {
+          // Swallow: start fresh if history fetch fails.
+        }
+      })
+      .catch(() => {
+        // Swallow: start fresh on any resumable-probe failure.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, readyState, conversationId, messages.length, surface, member?.family_id]);
+
+  // Tier 3 F12 — "Start new chat". Explicitly ends the current
+  // conversation on the server so it drops out of the resumable set,
+  // then resets panel state. Safe to call with no active thread.
+  const startNewChat = useCallback(async () => {
+    if (conversationId) {
+      try {
+        await endConversation(conversationId);
+      } catch {
+        // Swallow: the reset still matters even if the server call fails.
+      }
+    }
+    setMessages([]);
+    setConversationId(undefined);
+    setInput("");
+    setResumeNote(null);
+  }, [conversationId]);
 
   // Read-aloud: when a child member has read_aloud_enabled, speak each
   // newly-finalized assistant bubble via window.speechSynthesis. Skip
@@ -297,9 +380,16 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
       <View style={styles.panel}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Scout</Text>
-          <Pressable onPress={onClose}>
-            <Text style={styles.closeBtn}>Close</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            {(messages.length > 0 || conversationId) && (
+              <Pressable onPress={startNewChat} style={styles.headerActionBtn}>
+                <Text style={styles.headerActionText}>New chat</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={onClose} style={styles.headerActionBtn}>
+              <Text style={styles.closeBtn}>Close</Text>
+            </Pressable>
+          </View>
         </View>
 
         {readyState === "checking" && (
@@ -326,6 +416,12 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
         {readyState === "ok" && (
           <>
             <ScrollView style={styles.messageArea} contentContainerStyle={styles.messageContent}>
+              {resumeNote && (
+                <View style={styles.resumeBanner}>
+                  <Text style={styles.resumeBannerText}>{resumeNote}</Text>
+                </View>
+              )}
+
               {messages.length === 0 && (
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyTitle}>What can I help with?</Text>
@@ -488,6 +584,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   closeBtn: { color: colors.textMuted, fontSize: 14, fontWeight: "600" },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  headerActionBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  headerActionText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  resumeBanner: {
+    backgroundColor: colors.accentBg,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 10,
+    alignSelf: "flex-start",
+  },
+  resumeBannerText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: "600",
+  },
 
   messageArea: { flex: 1 },
   messageContent: { padding: 16, paddingBottom: 8 },

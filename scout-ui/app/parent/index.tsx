@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { ActionInbox } from "../../components/ActionInbox";
+import { AIUsageCard } from "../../components/AIUsageCard";
 import { NeedSomething } from "../../components/NeedSomething";
 import {
   fetchMembers,
@@ -493,6 +494,9 @@ export default function ParentDashboard() {
 
       {/* ---- Action Inbox ---- */}
       <ActionInbox />
+
+      {/* ---- AI usage / cost rollup (Tier 3 F11) ---- */}
+      <AIUsageCard />
 
       {/* ---- 1. Family Schedule ---- */}
       <FamilyScheduleSection />

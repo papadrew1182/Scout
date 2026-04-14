@@ -100,6 +100,20 @@ class ConversationRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ResumableConversation(BaseModel):
+    """Envelope returned by GET /api/ai/conversations/resumable.
+
+    All fields null when no prior conversation qualifies for
+    auto-resume. `preview` is the first user message trimmed to 120
+    chars so the UI can show "You were asking about..." without
+    fetching the full thread."""
+
+    conversation_id: uuid.UUID | None
+    updated_at: datetime | None
+    preview: str | None
+    kind: str | None
+
+
 class MessageRead(BaseModel):
     id: uuid.UUID
     conversation_id: uuid.UUID

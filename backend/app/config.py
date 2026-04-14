@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     ai_temperature: float = 0.3
     ai_request_timeout: int = 60
     ai_max_requests_per_minute: int = 30
+    # Soft cap the cost dashboard uses to decide whether to paint a
+    # warning. Set to 0 to disable the warning entirely (dashboard
+    # still renders the numbers). Operators override via env.
+    ai_weekly_soft_cap_usd: float = 5.0
 
     # Audio transcription (voice input). When unset, the transcribe
     # endpoint returns 501 and the frontend hides the mic button.

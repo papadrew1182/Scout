@@ -50,6 +50,15 @@ MORNING_BRIEF_HOUR = int(os.environ.get("SCOUT_MORNING_BRIEF_HOUR", "6"))
 # Friday evening retro — Python weekday() is 0=Mon..6=Sun, so 4=Fri.
 WEEKLY_RETRO_WEEKDAY = int(os.environ.get("SCOUT_WEEKLY_RETRO_WEEKDAY", "4"))
 WEEKLY_RETRO_HOUR = int(os.environ.get("SCOUT_WEEKLY_RETRO_HOUR", "18"))
+# Daily moderation digest — evening local time, after most kid chat
+# activity has settled. Dedupe key is (family_id, local_date).
+MODERATION_DIGEST_HOUR = int(os.environ.get("SCOUT_MODERATION_DIGEST_HOUR", "20"))
+# Skip the digest unless at least this many moderation_alert rows
+# landed today. 0 or 1 events don't need a rollup — the live alerts
+# already surface in the inbox.
+MODERATION_DIGEST_MIN_EVENTS = int(
+    os.environ.get("SCOUT_MODERATION_DIGEST_MIN_EVENTS", "2")
+)
 TICK_INTERVAL_MINUTES = int(os.environ.get("SCOUT_SCHEDULER_TICK_MINUTES", "5"))
 
 _scheduler: BackgroundScheduler | None = None
@@ -114,6 +123,16 @@ def _tick(db_factory: Callable[[], Session]) -> None:
     except Exception as e:
         db.rollback()
         logger.exception("weekly_retro_tick_failed: %s", e)
+    finally:
+        db.close()
+
+    db = db_factory()
+    try:
+        run_moderation_digest_tick(db, now_utc=now_utc)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("moderation_digest_tick_failed: %s", e)
     finally:
         db.close()
 
@@ -413,3 +432,241 @@ def _first_adult_id(db: Session, family_id):
         .limit(1)
     ).first()
     return row.id if row else None
+
+
+# ---------------------------------------------------------------------------
+# Daily moderation digest
+# ---------------------------------------------------------------------------
+
+import re
+
+_MODERATION_CATEGORY_RE = re.compile(r"\(([^)]+)\)\s*$")
+
+
+def run_moderation_digest_tick(db: Session, *, now_utc: datetime) -> list[dict]:
+    """For each family, if the local clock is inside the
+    MODERATION_DIGEST_HOUR window, roll up the day's moderation_alert
+    action items into a single `moderation_digest` row.
+
+    The digest is a summary — no raw blocked content is included in
+    the detail text. Parents who want to see the full context tap the
+    individual live alerts (which still exist independently).
+
+    Dedupe: (job_name='moderation_digest', family_id, member_id=NULL,
+    run_date=local_date). The mutex inserts first, so skipped
+    zero/one-event days don't spin back up on the next tick."""
+    results: list[dict] = []
+    families = list(db.scalars(select(Family)).all())
+    for fam in families:
+        try:
+            tz = pytz.timezone(fam.timezone or "UTC")
+        except Exception:
+            tz = pytz.UTC
+        local = now_utc.astimezone(tz)
+        if local.hour != MODERATION_DIGEST_HOUR:
+            continue
+        if local.minute >= TICK_INTERVAL_MINUTES:
+            continue
+        run_date = local.date()
+        out = run_moderation_digest_for_family(
+            db, family_id=fam.id, run_date=run_date, tz=tz
+        )
+        results.append(out)
+    return results
+
+
+def run_moderation_digest_for_family(
+    db: Session,
+    *,
+    family_id,
+    run_date: date,
+    tz: pytz.BaseTzInfo | None = None,
+) -> dict:
+    """Generate the daily moderation digest for one family.
+
+    Transaction-neutral: caller owns commit. Follows the same
+    savepoint-for-dedupe pattern as morning brief + weekly retro.
+    Skips entirely (still consuming the mutex) when fewer than
+    MODERATION_DIGEST_MIN_EVENTS alerts landed on this local day —
+    live alerts already surface in the inbox for small counts."""
+    start_ts = datetime.now(pytz.UTC)
+
+    try:
+        with db.begin_nested():
+            mutex = ScheduledRun(
+                job_name="moderation_digest",
+                family_id=family_id,
+                member_id=None,
+                run_date=run_date,
+                status="success",
+            )
+            db.add(mutex)
+            db.flush()
+    except IntegrityError:
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "skipped",
+            "reason": "already_ran_today",
+        }
+
+    # Window is the local calendar day. Alerts are timestamped UTC,
+    # so we compute UTC bounds from the local-day bounds.
+    tzinfo = tz or pytz.UTC
+    day_start_local = tzinfo.localize(
+        datetime.combine(run_date, datetime.min.time())
+    )
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start_utc = day_start_local.astimezone(pytz.UTC).replace(tzinfo=None)
+    day_end_utc = day_end_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
+    alerts = list(
+        db.scalars(
+            select(ParentActionItem)
+            .where(ParentActionItem.family_id == family_id)
+            .where(ParentActionItem.action_type == "moderation_alert")
+            .where(ParentActionItem.created_at >= day_start_utc)
+            .where(ParentActionItem.created_at < day_end_utc)
+            .order_by(ParentActionItem.created_at.asc())
+        ).all()
+    )
+
+    if len(alerts) < MODERATION_DIGEST_MIN_EVENTS:
+        mutex.status = "success"
+        mutex.result = {"event_count": len(alerts), "created_digest": False}
+        mutex.duration_ms = int(
+            (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+        )
+        db.flush()
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "success",
+            "created_digest": False,
+            "event_count": len(alerts),
+        }
+
+    try:
+        # Aggregate by child (created_by_member_id) + category.
+        by_child: dict = {}
+        child_names: dict = {}
+        for a in alerts:
+            bucket = by_child.setdefault(
+                a.created_by_member_id,
+                {"count": 0, "categories": {}, "times": []},
+            )
+            bucket["count"] += 1
+            category = _extract_category(a.title)
+            bucket["categories"][category] = bucket["categories"].get(category, 0) + 1
+            # Render local time for the summary line.
+            local_time = a.created_at.replace(tzinfo=pytz.UTC).astimezone(tzinfo)
+            bucket["times"].append(_format_12h(local_time))
+
+        # Resolve child first names in one query.
+        members = list(
+            db.scalars(
+                select(FamilyMember).where(
+                    FamilyMember.id.in_(list(by_child.keys()))
+                )
+            ).all()
+        )
+        for m in members:
+            child_names[m.id] = m.first_name
+
+        # Render a privacy-safe digest. No raw blocked text — only
+        # counts, categories, and timestamps.
+        lines: list[str] = [
+            f"Scout blocked {len(alerts)} messages from your children today.",
+            "",
+        ]
+        for child_id, bucket in by_child.items():
+            name = child_names.get(child_id, "A child")
+            cat_line = ", ".join(
+                f"{cat}: {cnt}" for cat, cnt in sorted(bucket["categories"].items())
+            )
+            lines.append(
+                f"- {name}: {bucket['count']} block{'s' if bucket['count'] != 1 else ''} ({cat_line})"
+            )
+            if bucket["times"]:
+                lines.append("    times: " + ", ".join(bucket["times"]))
+        lines.extend(
+            [
+                "",
+                "Original blocked text is not shown here. Tap individual alerts in the inbox if you want more context, or open Settings → Scout AI to adjust how Scout handles these topics.",
+            ]
+        )
+        detail = "\n".join(lines)
+
+        digest = ParentActionItem(
+            family_id=family_id,
+            created_by_member_id=_first_adult_id(db, family_id),
+            action_type="moderation_digest",
+            title=f"{len(alerts)} moderation alerts today",
+            detail=detail,
+            entity_type="moderation_digest",
+            entity_id=None,
+        )
+        db.add(digest)
+        db.flush()
+
+        mutex.duration_ms = int(
+            (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+        )
+        mutex.result = {
+            "action_item_id": str(digest.id),
+            "event_count": len(alerts),
+            "created_digest": True,
+        }
+        db.flush()
+        logger.info(
+            "moderation_digest_ok family=%s date=%s events=%s",
+            family_id, run_date, len(alerts),
+        )
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "success",
+            "created_digest": True,
+            "event_count": len(alerts),
+            "action_item_id": str(digest.id),
+        }
+    except Exception as e:
+        try:
+            mutex.status = "error"
+            mutex.error = str(e)[:500]
+            mutex.duration_ms = int(
+                (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+            )
+            db.flush()
+        except Exception:
+            pass
+        logger.error(
+            "moderation_digest_fail family=%s date=%s: %s",
+            family_id, run_date, str(e)[:200],
+        )
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "error",
+            "error": str(e)[:200],
+        }
+
+
+def _format_12h(dt: datetime) -> str:
+    """Cross-platform 12-hour clock formatter. %-I isn't available on
+    Windows and %#I isn't on Linux, so we strip the leading zero
+    manually after a plain %I:%M %p."""
+    s = dt.strftime("%I:%M %p")
+    if s.startswith("0"):
+        s = s[1:]
+    return s
+
+
+def _extract_category(title: str) -> str:
+    """Parse the bracketed category from a moderation_alert title like
+    'Scout blocked a sensitive message (profanity)'. Returns 'unknown'
+    when the pattern doesn't match — never raises."""
+    if not title:
+        return "unknown"
+    m = _MODERATION_CATEGORY_RE.search(title)
+    return (m.group(1) if m else "unknown") or "unknown"

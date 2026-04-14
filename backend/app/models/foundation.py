@@ -34,6 +34,11 @@ class FamilyMember(Base):
     birthdate: Mapped[date | None] = mapped_column(Date)
     grade_level: Mapped[str | None] = mapped_column(Text)
     learning_notes: Mapped[str | None] = mapped_column(Text)
+    # Parent-only coaching layer: tone, encouragement style, frustration
+    # handling. Separate from learning_notes so parents can tune how
+    # Scout *talks* to a child without mixing it into academic support
+    # context. Only injected into the child-surface system prompt.
+    personality_notes: Mapped[str | None] = mapped_column(Text)
     read_aloud_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

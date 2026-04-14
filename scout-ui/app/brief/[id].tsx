@@ -140,6 +140,8 @@ function labelForType(t: string): string {
       return "Morning brief";
     case "weekly_retro":
       return "Weekly retro";
+    case "moderation_digest":
+      return "Safety digest";
     case "moderation_alert":
       return "Scout Safety";
     default:

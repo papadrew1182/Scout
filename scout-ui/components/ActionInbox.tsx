@@ -34,6 +34,7 @@ function actionTypeLabel(type: string): string {
     case "purchase_request": return "Request";
     case "meal_plan_review": return "Meal Plan";
     case "moderation_alert": return "Scout Safety";
+    case "moderation_digest": return "Safety digest";
     case "daily_brief": return "Morning brief";
     case "weekly_retro": return "Weekly retro";
     default: return "Action";
@@ -46,6 +47,7 @@ function actionTypeColor(type: string): string {
     case "purchase_request": return colors.warning;
     case "meal_plan_review": return colors.accent;
     case "moderation_alert": return colors.negative;
+    case "moderation_digest": return colors.warning;
     case "daily_brief": return colors.accent;
     case "weekly_retro": return colors.accent;
     default: return colors.textMuted;
@@ -74,7 +76,11 @@ export function ActionInbox() {
 
   const handleTap = (item: ActionItem) => {
     // Items with long-form detail text use the shared /brief/[id] view.
-    if (item.action_type === "daily_brief" || item.action_type === "weekly_retro") {
+    if (
+      item.action_type === "daily_brief" ||
+      item.action_type === "weekly_retro" ||
+      item.action_type === "moderation_digest"
+    ) {
       router.push(`/brief/${item.id}` as any);
     } else if (item.entity_type === "grocery_item" || item.entity_type === "purchase_request") {
       router.push("/grocery");

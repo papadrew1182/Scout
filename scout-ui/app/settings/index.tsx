@@ -410,7 +410,7 @@ function AIChatSection() {
   const [homeInput, setHomeInput] = useState("");
   const [children, setChildren] = useState<FamilyMember[]>([]);
   const [kidDrafts, setKidDrafts] = useState<
-    Record<string, { grade_level: string; learning_notes: string }>
+    Record<string, { grade_level: string; learning_notes: string; personality_notes: string }>
   >({});
 
   const load = useCallback(async () => {
@@ -422,11 +422,15 @@ function AIChatSection() {
       setHomeInput(s.home_location ?? "");
       const kids = members.filter((m) => m.role === "child");
       setChildren(kids);
-      const drafts: Record<string, { grade_level: string; learning_notes: string }> = {};
+      const drafts: Record<
+        string,
+        { grade_level: string; learning_notes: string; personality_notes: string }
+      > = {};
       for (const k of kids) {
         drafts[k.id] = {
           grade_level: k.grade_level ?? "",
           learning_notes: k.learning_notes ?? "",
+          personality_notes: k.personality_notes ?? "",
         };
       }
       setKidDrafts(drafts);
@@ -484,6 +488,7 @@ function AIChatSection() {
       const updated = await updateMemberLearning(childId, {
         grade_level: draft.grade_level || null,
         learning_notes: draft.learning_notes || null,
+        personality_notes: draft.personality_notes || null,
       });
       setChildren((prev) => prev.map((c) => (c.id === childId ? updated : c)));
       setMsg({ text: `Saved learning info for ${updated.first_name}.`, error: false });
@@ -607,7 +612,11 @@ function AIChatSection() {
           </Text>
 
           {children.map((kid) => {
-            const draft = kidDrafts[kid.id] ?? { grade_level: "", learning_notes: "" };
+            const draft = kidDrafts[kid.id] ?? {
+              grade_level: "",
+              learning_notes: "",
+              personality_notes: "",
+            };
             return (
               <View key={kid.id} style={s.kidBlock}>
                 <Text style={s.kidName}>{kid.first_name}</Text>
@@ -623,6 +632,7 @@ function AIChatSection() {
                   placeholder="Grade (e.g. K, 3rd, 8th)"
                   placeholderTextColor={colors.textPlaceholder}
                 />
+                <Text style={s.fieldLabel}>Learning context</Text>
                 <TextInput
                   style={[s.input, { minHeight: 60 }]}
                   value={draft.learning_notes}
@@ -632,9 +642,24 @@ function AIChatSection() {
                       [kid.id]: { ...prev[kid.id], learning_notes: t },
                     }))
                   }
-                  placeholder="Notes (strengths, struggles, reading level…)"
+                  placeholder="Strengths, struggles, reading level, IEP accommodations…"
                   placeholderTextColor={colors.textPlaceholder}
                   multiline
+                />
+                <Text style={s.fieldLabel}>How to talk to them</Text>
+                <TextInput
+                  style={[s.input, { minHeight: 60 }]}
+                  value={draft.personality_notes}
+                  onChangeText={(t) =>
+                    setKidDrafts((prev) => ({
+                      ...prev,
+                      [kid.id]: { ...prev[kid.id], personality_notes: t },
+                    }))
+                  }
+                  placeholder="Tone, encouragement style, how Scout should handle frustration…"
+                  placeholderTextColor={colors.textPlaceholder}
+                  multiline
+                  maxLength={1000}
                 />
                 <Pressable
                   style={[shared.buttonSmall, { marginTop: 8, alignSelf: "flex-start" }]}
@@ -732,5 +757,13 @@ const s = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     marginBottom: 4,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 10,
   },
 });

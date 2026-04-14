@@ -753,8 +753,89 @@ export function updateMemberLearning(
   payload: {
     grade_level?: string | null;
     learning_notes?: string | null;
+    personality_notes?: string | null;
     read_aloud_enabled?: boolean;
   },
 ): Promise<FamilyMember> {
   return patch(`${familyUrl()}/members/${memberId}/learning`, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Conversation resume + end (Tier 3 Feature 12)
+// ---------------------------------------------------------------------------
+
+export interface ResumableConversation {
+  conversation_id: string | null;
+  updated_at: string | null;
+  preview: string | null;
+  kind: string | null;
+}
+
+export function fetchResumableConversation(
+  surface: string = "personal",
+): Promise<ResumableConversation> {
+  return get(
+    `${API_BASE_URL}/api/ai/conversations/resumable?surface=${encodeURIComponent(surface)}`,
+  );
+}
+
+export function fetchConversationMessages(
+  conversationId: string,
+  familyId: string,
+): Promise<Array<{
+  id: string;
+  role: string;
+  content: string | null;
+  tool_calls: unknown;
+  tool_results: unknown;
+  model: string | null;
+  created_at: string;
+}>> {
+  return get(
+    `${API_BASE_URL}/api/ai/conversations/${conversationId}/messages?family_id=${familyId}`,
+  );
+}
+
+export function endConversation(conversationId: string): Promise<{ conversation_id: string; status: string }> {
+  return post(`${API_BASE_URL}/api/ai/conversations/${conversationId}/end`);
+}
+
+// ---------------------------------------------------------------------------
+// AI usage / cost rollup (Tier 3 Feature 11)
+// ---------------------------------------------------------------------------
+
+export interface AIUsageReport {
+  days: number;
+  as_of: string;
+  total_messages: number;
+  total_tokens: { input: number; output: number };
+  approx_cost_usd: number;
+  soft_cap_usd: number;
+  cap_warning: boolean;
+  by_day: Array<{
+    date: string;
+    messages: number;
+    input: number;
+    output: number;
+    cost_usd: number;
+  }>;
+  by_model: Array<{
+    model: string;
+    messages: number;
+    input: number;
+    output: number;
+    cost_usd: number;
+  }>;
+  by_member: Array<{
+    member_id: string;
+    first_name: string;
+    messages: number;
+    input: number;
+    output: number;
+    cost_usd: number;
+  }>;
+}
+
+export function fetchAIUsage(days: number = 7): Promise<AIUsageReport> {
+  return get(`${API_BASE_URL}/api/ai/usage?days=${days}`);
 }
