@@ -400,6 +400,7 @@ export interface SendChatOptions {
   surface?: string;
   conversationId?: string;
   confirmTool?: { tool_name: string; arguments: Record<string, unknown> };
+  intent?: "chat" | "weekly_plan";
 }
 
 export async function sendChatMessage(
@@ -422,6 +423,7 @@ export async function sendChatMessage(
   };
   if (opts.conversationId) body.conversation_id = opts.conversationId;
   if (opts.confirmTool) body.confirm_tool = opts.confirmTool;
+  if (opts.intent) body.intent = opts.intent;
 
   const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
     method: "POST",
@@ -468,15 +470,16 @@ export interface StreamHandlers {
  */
 export async function sendChatMessageStream(
   message: string,
-  opts: { surface?: string; conversationId?: string },
+  opts: { surface?: string; conversationId?: string; intent?: "chat" | "weekly_plan" },
   handlers: StreamHandlers,
 ): Promise<void> {
   const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const body = {
+  const body: Record<string, unknown> = {
     surface: opts.surface ?? "personal",
     message,
     conversation_id: opts.conversationId || undefined,
   };
+  if (opts.intent) body.intent = opts.intent;
 
   let res: Response;
   try {

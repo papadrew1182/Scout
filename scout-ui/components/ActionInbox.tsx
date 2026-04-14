@@ -37,6 +37,7 @@ function actionTypeLabel(type: string): string {
     case "moderation_digest": return "Safety digest";
     case "daily_brief": return "Morning brief";
     case "weekly_retro": return "Weekly retro";
+    case "anomaly_alert": return "Scout noticed";
     default: return "Action";
   }
 }
@@ -50,6 +51,7 @@ function actionTypeColor(type: string): string {
     case "moderation_digest": return colors.warning;
     case "daily_brief": return colors.accent;
     case "weekly_retro": return colors.accent;
+    case "anomaly_alert": return colors.warning;
     default: return colors.textMuted;
   }
 }
@@ -79,7 +81,8 @@ export function ActionInbox() {
     if (
       item.action_type === "daily_brief" ||
       item.action_type === "weekly_retro" ||
-      item.action_type === "moderation_digest"
+      item.action_type === "moderation_digest" ||
+      item.action_type === "anomaly_alert"
     ) {
       router.push(`/brief/${item.id}` as any);
     } else if (item.entity_type === "grocery_item" || item.entity_type === "purchase_request") {

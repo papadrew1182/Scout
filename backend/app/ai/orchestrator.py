@@ -30,6 +30,64 @@ from app.models.ai import AIConversation, AIMessage
 
 
 MAX_TOOL_ROUNDS = 5
+# Tier 4 F15: weekly planner unlocks a longer loop so it can gather
+# context → clarify → draft → bulk-confirm without hitting the normal
+# 5-round ceiling. The intent field on ChatRequest is the only thing
+# that enables this path; default chat still uses MAX_TOOL_ROUNDS.
+MAX_PLANNER_ROUNDS = 20
+
+
+def _rounds_for_intent(intent: str | None) -> int:
+    if intent == "weekly_plan":
+        return MAX_PLANNER_ROUNDS
+    return MAX_TOOL_ROUNDS
+
+
+_PLANNER_SUFFIX = """
+
+WEEKLY PLANNING MODE (intent=weekly_plan):
+You are in a long-form planning session for the upcoming week. You
+have a larger tool budget than normal chat. Work in this order:
+
+1. First, gather context by reading current state:
+   - get_today_context
+   - list_events for the week ahead
+   - list_tasks (incomplete only)
+   - list_chores_or_routines
+   - get_current_weekly_meal_plan and get_meal_review_summary
+   - list_purchase_requests
+
+2. Ask clarifying questions before drafting anything. Cover: known
+   schedule conflicts, guests, pantry staples, dietary constraints
+   for the week, anything unusual the parent is thinking about.
+
+3. Draft the proposed plan IN CHAT TEXT ONLY (do not call any
+   write tools yet). Include:
+     * task changes (adds, reassignments, deletions)
+     * meal plan updates (follow the standard meal-plan rules below)
+     * calendar suggestions (new events, moved events)
+     * grocery impacts (what will need to be added)
+
+4. Present one concise review of everything, then call
+   ``apply_weekly_plan_bundle`` with the full bundle. That tool will
+   return confirmation_required — the ScoutPanel will show a single
+   approve / cancel card to the parent. On approve, the bundle
+   executes atomically. On cancel, nothing is written and you can
+   revise.
+
+MEAL PLAN RULES apply inside planning mode the same as outside:
+three-part structure (week plan / batch cook / grocery by store),
+no em dashes, concise by default, verify structure before delivery.
+
+NEVER call task / event / meal-plan write tools directly while in
+weekly_plan intent. All writes go through ``apply_weekly_plan_bundle``
+so the parent sees ONE bulk confirmation card, not a stream of
+individual confirms.
+"""
+
+
+def _append_planner_suffix(base_prompt: str) -> str:
+    return base_prompt + _PLANNER_SUFFIX
 
 
 def get_or_create_conversation(
@@ -285,6 +343,7 @@ def chat(
     user_message: str,
     conversation_id: uuid.UUID | None = None,
     confirm_tool: dict | None = None,
+    intent: str = "chat",
 ) -> dict:
     """Execute a full chat turn including tool execution.
 
@@ -292,9 +351,14 @@ def chat(
     the named tool is executed directly with ``confirmed=true`` inside
     the existing conversation. This backs the ScoutPanel confirm-card
     affordance for confirmation-gated shared-write tools.
+
+    ``intent`` routes to the appropriate tool-loop cap and optional
+    planner prompt suffix. Default 'chat' preserves existing behavior.
     """
     context = load_member_context(db, family_id, member_id)
     system_prompt = build_system_prompt(context, surface)
+    if intent == "weekly_plan":
+        system_prompt = _append_planner_suffix(system_prompt)
     role = context["member"]["role"]
 
     allowed_tool_names = get_allowed_tools_for_surface(role, surface)
@@ -428,7 +492,8 @@ def chat(
     pending_confirmation: dict | None = None
     turn_tool_calls = 0  # incremented each time the executor runs a tool this turn
 
-    for _round in range(MAX_TOOL_ROUNDS):
+    max_rounds = _rounds_for_intent(intent)
+    for _round in range(max_rounds):
         response = provider.chat(
             messages=messages,
             system=system_prompt,
@@ -546,6 +611,7 @@ def chat_stream(
     surface: str,
     user_message: str,
     conversation_id: uuid.UUID | None = None,
+    intent: str = "chat",
 ) -> Iterator[dict]:
     """Streaming version of chat().
 
@@ -570,6 +636,8 @@ def chat_stream(
     """
     context = load_member_context(db, family_id, member_id)
     system_prompt = build_system_prompt(context, surface)
+    if intent == "weekly_plan":
+        system_prompt = _append_planner_suffix(system_prompt)
     role = context["member"]["role"]
 
     allowed_tool_names = get_allowed_tools_for_surface(role, surface)
@@ -659,7 +727,8 @@ def chat_stream(
     pending_confirmation: dict | None = None
     turn_tool_calls = 0
 
-    for _round in range(MAX_TOOL_ROUNDS):
+    max_rounds = _rounds_for_intent(intent)
+    for _round in range(max_rounds):
         # Collect this round's streamed events from Anthropic.
         round_text = ""
         round_tool_calls: list[dict] = []
@@ -792,7 +861,7 @@ def chat_stream(
             ],
         })
     else:
-        # Hit MAX_TOOL_ROUNDS without a clean end_turn. Persist whatever
+        # Hit max_rounds without a clean end_turn. Persist whatever
         # we have and let the client see 'done' with the accumulated text.
         _persist_message(
             db, conversation.id, "assistant",

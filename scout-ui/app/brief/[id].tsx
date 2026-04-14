@@ -144,6 +144,8 @@ function labelForType(t: string): string {
       return "Safety digest";
     case "moderation_alert":
       return "Scout Safety";
+    case "anomaly_alert":
+      return "Scout noticed";
     default:
       return "Action item";
   }

@@ -55,11 +55,15 @@ interface Props {
   onClose: () => void;
   surface?: string;
   memberId?: string;
+  // Tier 4 F15: when set to "weekly_plan", chat sends carry the
+  // planner intent and the backend unlocks the longer tool loop +
+  // planner prompt suffix. Default chat is unaffected.
+  intent?: "chat" | "weekly_plan";
 }
 
 type ReadyState = "checking" | "ok" | "disabled" | "error";
 
-export function ScoutPanel({ visible, onClose, surface = "personal", memberId }: Props) {
+export function ScoutPanel({ visible, onClose, surface = "personal", memberId, intent }: Props) {
   const router = useRouter();
   const { member } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -290,7 +294,7 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
       try {
         await sendChatMessageStream(
           text.trim(),
-          { surface, conversationId },
+          { surface, conversationId, intent },
           {
             onEvent: handleEvent,
             onError: (err) => {
@@ -317,7 +321,11 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
         });
         if (shouldFallback) {
           try {
-            const result = await sendChatMessage(text.trim(), surface, conversationId);
+            const result = await sendChatMessage(text.trim(), {
+              surface,
+              conversationId,
+              intent,
+            });
             setConversationId(result.conversation_id);
             patchLast((m) => ({
               ...m,
@@ -340,7 +348,7 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId }:
 
       setLoading(false);
     },
-    [surface, conversationId, loading],
+    [surface, conversationId, loading, intent],
   );
 
   const confirmPendingTool = useCallback(

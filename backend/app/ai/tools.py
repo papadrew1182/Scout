@@ -44,6 +44,11 @@ CONFIRMATION_REQUIRED = {
     "convert_purchase_request_to_grocery_item",
     "approve_weekly_meal_plan",
     "regenerate_meal_day",
+    # Tier 4 F15: bulk weekly plan bundle. Gated just like any other
+    # shared-write tool — the planner is explicitly designed to end
+    # with ONE confirmation card rather than a cascade of individual
+    # confirms.
+    "apply_weekly_plan_bundle",
 }
 
 
@@ -726,6 +731,130 @@ def _get_weather(executor: ToolExecutor, args: dict) -> dict:
 # Handler registry
 # ============================================================================
 
+# ---- Tier 4 F15: bulk weekly plan bundle -----------------------------------
+
+
+def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
+    """Apply a bulk weekly plan: tasks, events, grocery adds, and an
+    optional meal-plan summary reference. Gated via CONFIRMATION_REQUIRED,
+    so the first call returns ``confirmation_required=True`` and the
+    ScoutPanel renders a single review card. The second call (with
+    ``confirmed=True``, typically via the confirm_tool direct path)
+    writes the bundle.
+
+    Atomicity note: the existing Scout service layer commits inside
+    each create_* call, so strict all-or-nothing semantics would
+    require bypassing validation. Instead, this tool applies entries
+    best-effort: each well-formed entry either writes or reports a
+    per-item error. The final result always includes ``applied``
+    counts and any ``errors`` so the parent sees exactly what landed.
+
+    Expected args shape:
+        {
+          "summary": "plain text recap for the parent",
+          "tasks": [{"assigned_to": "<uuid>", "title": "...", "priority": "medium"}],
+          "events": [{"title": "...", "starts_at": "...", "ends_at": "..."}],
+          "grocery_items": [{"title": "..."}],
+          "meal_plan_reference": "<plan_id-or-null>",
+          "confirmed": true  # set by confirm_tool path
+        }
+    """
+    # Extract and validate the bundle shape defensively. Anything
+    # missing or wrong-typed becomes an empty list so we never blow up
+    # on partial inputs from Claude.
+    summary = args.get("summary") or ""
+    tasks = args.get("tasks") or []
+    events = args.get("events") or []
+    grocery_items = args.get("grocery_items") or []
+    meal_plan_reference = args.get("meal_plan_reference")
+
+    tasks = [t for t in tasks if isinstance(t, dict) and t.get("title")]
+    events = [e for e in events if isinstance(e, dict) and e.get("title")]
+    grocery_items = [
+        g for g in grocery_items if isinstance(g, dict) and g.get("title")
+    ]
+
+    applied = {
+        "tasks_created": 0,
+        "events_created": 0,
+        "grocery_items_created": 0,
+        "meal_plan_reference": meal_plan_reference,
+    }
+    errors: list[str] = []
+
+    from app.schemas.grocery import GroceryItemCreate
+    from app.services import grocery_service
+
+    for t in tasks:
+        try:
+            payload = PersonalTaskCreate(
+                assigned_to=uuid.UUID(t["assigned_to"]) if t.get("assigned_to") else executor.actor_member_id,
+                created_by=executor.actor_member_id,
+                title=t["title"],
+                description=t.get("description"),
+                priority=t.get("priority", "medium"),
+                due_at=t.get("due_at"),
+            )
+            personal_tasks_service.create_personal_task(
+                executor.db, executor.family_id, payload
+            )
+            applied["tasks_created"] += 1
+        except Exception as exc:
+            errors.append(f"task '{t.get('title')}': {exc}")
+
+    for e in events:
+        try:
+            epayload = EventCreate(
+                created_by=executor.actor_member_id,
+                title=e["title"],
+                description=e.get("description"),
+                location=e.get("location"),
+                starts_at=datetime.fromisoformat(e["starts_at"]),
+                ends_at=datetime.fromisoformat(e["ends_at"]),
+                all_day=e.get("all_day", False),
+            )
+            calendar_service.create_event(
+                executor.db, executor.family_id, epayload
+            )
+            applied["events_created"] += 1
+        except Exception as exc:
+            errors.append(f"event '{e.get('title')}': {exc}")
+
+    for g in grocery_items:
+        try:
+            gpayload = GroceryItemCreate(
+                title=g["title"],
+                quantity=g.get("quantity"),
+                unit=g.get("unit"),
+                category=g.get("category"),
+                preferred_store=g.get("preferred_store"),
+                notes=g.get("notes"),
+            )
+            grocery_service.create_grocery_item(
+                executor.db, executor.family_id, executor.actor_member_id, gpayload
+            )
+            applied["grocery_items_created"] += 1
+        except Exception as exc:
+            errors.append(f"grocery '{g.get('title')}': {exc}")
+
+    return {
+        "status": "applied",
+        "summary": summary,
+        "applied": applied,
+        "errors": errors,
+        "handoff": _handoff(
+            "weekly_plan_bundle",
+            "bundle",
+            "/parent",
+            (
+                f"Weekly plan applied: {applied['tasks_created']} tasks, "
+                f"{applied['events_created']} events, "
+                f"{applied['grocery_items_created']} grocery items."
+            ),
+        ),
+    }
+
+
 _TOOL_HANDLERS: dict[str, Any] = {
     "get_today_context": _get_today_context,
     "list_tasks": _list_tasks,
@@ -757,6 +886,7 @@ _TOOL_HANDLERS: dict[str, Any] = {
     "add_meal_review": _add_meal_review,
     "get_meal_review_summary": _get_meal_review_summary,
     "get_weather": _get_weather,
+    "apply_weekly_plan_bundle": _apply_weekly_plan_bundle,
 }
 
 
@@ -1144,6 +1274,81 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 },
             },
             "required": [],
+        },
+    ),
+    "apply_weekly_plan_bundle": ToolDefinition(
+        name="apply_weekly_plan_bundle",
+        description=(
+            "Weekly-plan-only bulk write tool. Applies a proposed "
+            "bundle of task, event, and grocery changes in a single "
+            "atomic confirmation. The first call returns "
+            "confirmation_required=True so the ScoutPanel can render "
+            "ONE review card to the parent. The second call (via the "
+            "confirm flow) actually writes the bundle. Use this only "
+            "in weekly_plan intent — never in ordinary chat."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Plain-text recap for the parent review card.",
+                },
+                "tasks": {
+                    "type": "array",
+                    "description": "Personal tasks to create.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "assigned_to": {"type": "string"},
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "priority": {"type": "string"},
+                            "due_at": {"type": "string"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+                "events": {
+                    "type": "array",
+                    "description": "Calendar events to create.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "location": {"type": "string"},
+                            "starts_at": {"type": "string"},
+                            "ends_at": {"type": "string"},
+                            "all_day": {"type": "boolean"},
+                        },
+                        "required": ["title", "starts_at", "ends_at"],
+                    },
+                },
+                "grocery_items": {
+                    "type": "array",
+                    "description": "Grocery items to add.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "quantity": {"type": "number"},
+                            "unit": {"type": "string"},
+                            "category": {"type": "string"},
+                            "preferred_store": {"type": "string"},
+                        },
+                        "required": ["title"],
+                    },
+                },
+                "meal_plan_reference": {
+                    "type": "string",
+                    "description": (
+                        "Optional. ID of an already-drafted weekly meal plan "
+                        "so the approve step can link to it."
+                    ),
+                },
+            },
+            "required": ["summary"],
         },
     ),
 }

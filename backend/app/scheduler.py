@@ -47,6 +47,9 @@ from app.models.scheduled import ScheduledRun
 logger = logging.getLogger("scout.scheduler")
 
 MORNING_BRIEF_HOUR = int(os.environ.get("SCOUT_MORNING_BRIEF_HOUR", "6"))
+# Tier 4 anomaly scan — local-time hour (late evening, after the
+# digest hour, so the day's activity is fully ingested).
+ANOMALY_SCAN_HOUR = int(os.environ.get("SCOUT_ANOMALY_SCAN_HOUR", "21"))
 # Friday evening retro — Python weekday() is 0=Mon..6=Sun, so 4=Fri.
 WEEKLY_RETRO_WEEKDAY = int(os.environ.get("SCOUT_WEEKLY_RETRO_WEEKDAY", "4"))
 WEEKLY_RETRO_HOUR = int(os.environ.get("SCOUT_WEEKLY_RETRO_HOUR", "18"))
@@ -133,6 +136,16 @@ def _tick(db_factory: Callable[[], Session]) -> None:
     except Exception as e:
         db.rollback()
         logger.exception("moderation_digest_tick_failed: %s", e)
+    finally:
+        db.close()
+
+    db = db_factory()
+    try:
+        run_anomaly_scan_tick(db, now_utc=now_utc)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("anomaly_scan_tick_failed: %s", e)
     finally:
         db.close()
 
@@ -660,6 +673,129 @@ def _format_12h(dt: datetime) -> str:
     if s.startswith("0"):
         s = s[1:]
     return s
+
+
+# ---------------------------------------------------------------------------
+# Daily anomaly scan (Tier 4 Feature 13)
+# ---------------------------------------------------------------------------
+
+
+def run_anomaly_scan_tick(db: Session, *, now_utc: datetime) -> list[dict]:
+    """For each family, if local time is inside the ANOMALY_SCAN_HOUR
+    window, run the deterministic detectors + AI narration and emit
+    parent_action_items of action_type='anomaly_alert'. Dedupe via
+    scout_scheduled_runs (job_name='anomaly_scan', run_date=local_date)."""
+    results: list[dict] = []
+    families = list(db.scalars(select(Family)).all())
+    for fam in families:
+        try:
+            tz = pytz.timezone(fam.timezone or "UTC")
+        except Exception:
+            tz = pytz.UTC
+        local = now_utc.astimezone(tz)
+        if local.hour != ANOMALY_SCAN_HOUR:
+            continue
+        if local.minute >= TICK_INTERVAL_MINUTES:
+            continue
+        run_date = local.date()
+        out = run_anomaly_scan_for_family(
+            db, family_id=fam.id, run_date=run_date
+        )
+        results.append(out)
+    return results
+
+
+def run_anomaly_scan_for_family(
+    db: Session, *, family_id, run_date: date
+) -> dict:
+    """Generate anomaly candidates for one family, narrate the top N,
+    and write them as parent_action_items. Dedupe-safe; transaction
+    neutral — caller owns commit."""
+    start_ts = datetime.now(pytz.UTC)
+    try:
+        with db.begin_nested():
+            mutex = ScheduledRun(
+                job_name="anomaly_scan",
+                family_id=family_id,
+                member_id=None,
+                run_date=run_date,
+                status="success",
+            )
+            db.add(mutex)
+            db.flush()
+    except IntegrityError:
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "skipped",
+            "reason": "already_ran_today",
+        }
+
+    try:
+        from app.ai.anomalies import (
+            generate_anomaly_candidates,
+            narrate_candidate,
+        )
+
+        candidates = generate_anomaly_candidates(
+            db, family_id=family_id, as_of=run_date
+        )
+        created_count = 0
+        for cand in candidates:
+            narrative, model_used = narrate_candidate(cand)
+            title = f"Scout noticed: {cand.anomaly_type.replace('_', ' ')}"
+            item = ParentActionItem(
+                family_id=family_id,
+                created_by_member_id=_first_adult_id(db, family_id),
+                action_type="anomaly_alert",
+                title=title,
+                detail=narrative,
+                entity_type="anomaly",
+                entity_id=None,
+            )
+            db.add(item)
+            db.flush()
+            created_count += 1
+
+        mutex.duration_ms = int(
+            (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+        )
+        mutex.result = {
+            "candidates": len(candidates),
+            "created": created_count,
+        }
+        db.flush()
+        logger.info(
+            "anomaly_scan_ok family=%s date=%s candidates=%s created=%s",
+            family_id, run_date, len(candidates), created_count,
+        )
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "success",
+            "candidates": len(candidates),
+            "created": created_count,
+        }
+    except Exception as e:
+        try:
+            mutex.status = "error"
+            mutex.error = str(e)[:500]
+            mutex.duration_ms = int(
+                (datetime.now(pytz.UTC) - start_ts).total_seconds() * 1000
+            )
+            db.flush()
+        except Exception:
+            pass
+        logger.error(
+            "anomaly_scan_fail family=%s date=%s: %s",
+            family_id, run_date, str(e)[:200],
+        )
+        return {
+            "family_id": str(family_id),
+            "run_date": run_date.isoformat(),
+            "status": "error",
+            "error": str(e)[:200],
+        }
 
 
 def _extract_category(title: str) -> str:

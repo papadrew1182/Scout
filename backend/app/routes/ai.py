@@ -64,6 +64,7 @@ def ai_chat(
             user_message=body.message,
             conversation_id=body.conversation_id,
             confirm_tool=body.confirm_tool.model_dump() if body.confirm_tool else None,
+            intent=body.intent,
         )
         logger.info(
             "ai_chat_success trace=%s conversation=%s handoff=%s pending=%s",
@@ -115,6 +116,7 @@ def ai_chat_stream(
                 surface=body.surface,
                 user_message=body.message,
                 conversation_id=body.conversation_id,
+                intent=body.intent,
             ):
                 # One SSE frame per orchestrator event. Both lines are
                 # required by the SSE spec — "data: <json>\n\n".

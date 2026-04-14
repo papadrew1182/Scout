@@ -24,6 +24,14 @@ class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=4000)
     conversation_id: uuid.UUID | None = None
     confirm_tool: ConfirmToolPayload | None = None
+    # Tier 4 F15: distinct planner mode. Defaults to ordinary 'chat'
+    # so the long tool loop and extra planner prompt block only apply
+    # when the client explicitly opts in (parent dashboard button,
+    # planner deep-link, etc).
+    intent: str = Field(
+        default="chat",
+        pattern="^(chat|weekly_plan)$",
+    )
 
     @model_validator(mode="after")
     def _require_message_or_confirm(self) -> "ChatRequest":

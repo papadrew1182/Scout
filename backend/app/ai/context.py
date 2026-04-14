@@ -350,6 +350,11 @@ def get_allowed_tools_for_surface(role: str, surface: str) -> list[str]:
         "add_grocery_item",
         "create_purchase_request",
         "add_meal_review",
+        # Tier 4 F15 — only reachable when the chat prompt tells the
+        # model to use it (planner intent injects the suffix). Guarded
+        # additionally by CONFIRMATION_REQUIRED so even a stray call
+        # cannot write without explicit parent approval.
+        "apply_weekly_plan_bundle",
     ]
 
     parent_tools = [
