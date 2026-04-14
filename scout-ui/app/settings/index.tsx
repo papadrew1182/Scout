@@ -22,6 +22,7 @@ import {
   updateAISettings,
   updateMemberLearning,
 } from "../../lib/api";
+import { FamilyMembersSection } from "../../components/FamilyMembersSection";
 import { FamilyMemorySection } from "../../components/FamilyMemorySection";
 import type { FamilyAISettings, FamilyMember } from "../../lib/types";
 import { shared, colors } from "../../lib/styles";
@@ -393,6 +394,7 @@ export default function SettingsPage() {
         <Text style={shared.buttonText}>Sign Out</Text>
       </Pressable>
 
+      {isAdult && <FamilyMembersSection />}
       {isAdult && <AIChatSection />}
       {isAdult && <FamilyMemorySection />}
       {isAdult && <AccountsSection />}

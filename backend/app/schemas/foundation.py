@@ -73,3 +73,45 @@ class FamilyMemberLearningUpdate(BaseModel):
     learning_notes: str | None = Field(default=None, max_length=2000)
     personality_notes: str | None = Field(default=None, max_length=1000)
     read_aloud_enabled: bool | None = None
+
+
+class FamilyMemberCoreUpdate(BaseModel):
+    """Parent-facing edit for the core identity fields on a family
+    member: name, birthdate, role, active state. Kept separate from
+    FamilyMemberLearningUpdate so the learning/personality UX and the
+    member-maintenance UX can evolve independently."""
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=80)
+    last_name: str | None = Field(default=None, max_length=80)
+    birthdate: date | None = None
+    role: str | None = Field(default=None, pattern="^(adult|child)$")
+    is_active: bool | None = None
+
+
+# --- UserAccount (login credentials attached to a family member) ---
+
+
+class UserAccountCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    is_primary: bool = True
+
+
+class UserAccountUpdate(BaseModel):
+    email: str | None = Field(default=None, min_length=3, max_length=200)
+    is_active: bool | None = None
+    is_primary: bool | None = None
+    new_password: str | None = Field(default=None, min_length=8, max_length=200)
+
+
+class UserAccountRead(BaseModel):
+    id: uuid.UUID
+    family_member_id: uuid.UUID
+    email: str | None
+    auth_provider: str
+    is_primary: bool
+    is_active: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
