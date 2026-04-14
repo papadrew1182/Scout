@@ -11,6 +11,7 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const API_URL = process.env.SCOUT_API_URL || "http://localhost:8000";
 
 async function login(page: Page, email: string, password: string) {
   await page.goto("/");
@@ -21,13 +22,31 @@ async function login(page: Page, email: string, password: string) {
   await page.waitForSelector("text=Personal", { timeout: 15000 });
 }
 
+// Pull the authenticated member's own id out of localStorage so tests can
+// navigate directly to routes like /child/[memberId] without relying on a
+// particular default-landing behavior.
+async function currentMemberId(page: Page): Promise<string> {
+  const headers = await page.evaluate(() => {
+    const token = localStorage.getItem("scout_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  });
+  const res = await page.request.get(`${API_URL}/api/auth/me`, { headers });
+  if (!res.ok()) throw new Error(`/api/auth/me returned ${res.status()}`);
+  const body = await res.json();
+  const memberId = body?.member?.member_id ?? body?.member_id;
+  if (!memberId) throw new Error("/api/auth/me did not return a member id");
+  return memberId;
+}
+
 test.describe("Write paths — parent", () => {
   test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
   test("parent approves a pending grocery item", async ({ page }) => {
-    await page.click("text=Grocery");
+    // Navigate directly instead of clicking the NavBar link to avoid the
+    // same race the /parent test hit under CI's React Native Web build.
+    await page.goto("/grocery");
     await expect(page.locator("text=Needs Review")).toBeVisible({ timeout: 10000 });
 
     const reviewSection = page.locator("text=Needs Review").locator("..").locator("..");
@@ -63,7 +82,7 @@ test.describe("Write paths — parent", () => {
     // always surfaces a draft with an "Approve Plan" button for the
     // adult. The test approves, asserts the success toast, and asserts
     // the button disappears (status → 'approved').
-    await page.click("text=Meals");
+    await page.goto("/meals/this-week");
     await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
 
     const approveBtn = page.getByRole("button", { name: "Approve Plan" }).first();
@@ -83,7 +102,11 @@ test.describe("Write paths — parent", () => {
   });
 
   test("parent runs weekly payout", async ({ page }) => {
-    await page.click("text=Parent");
+    // Navigate directly to /parent instead of clicking the NavBar link. The
+    // NavBar renders "Parent" as a Pressable that router.push()es to /parent,
+    // but under CI's React Native Web build the text-based click is racy
+    // with navigation; page.goto is unambiguous.
+    await page.goto("/parent");
     await page.waitForSelector("text=Run Weekly Payout", { timeout: 15000 });
 
     const payoutBtn = page.getByRole("button", { name: "Run Weekly Payout" });
@@ -112,7 +135,7 @@ test.describe("Write paths — parent", () => {
   });
 
   test("parent converts a pending purchase request to a grocery item", async ({ page }) => {
-    await page.click("text=Grocery");
+    await page.goto("/grocery");
     await expect(page.locator("text=Purchase Requests")).toBeVisible({ timeout: 10000 });
 
     const card = page
@@ -157,8 +180,13 @@ test.describe("Write paths — child", () => {
   });
 
   test("child marks seeded chore task instance complete", async ({ page }) => {
-    // The child view is the default after child login. The seeded chore
-    // "Feed the dog" becomes today's task instance for Sadie.
+    // Chore task instances render inside the per-child detail screen
+    // (scout-ui/app/child/[memberId].tsx), not on the default post-login
+    // landing page. Resolve this child's own member id and navigate there
+    // explicitly so the test isn't coupled to default-landing behavior.
+    const memberId = await currentMemberId(page);
+    await page.goto(`/child/${memberId}`);
+
     await expect(
       page.locator("text=Feed the dog").first(),
     ).toBeVisible({ timeout: 10000 });
@@ -176,15 +204,9 @@ test.describe("Write paths — child", () => {
   });
 
   test("child submits a meal review", async ({ page }) => {
-    await page.click("text=Meals");
-    // Navigate to Reviews tab within meals.
-    // The meals layout has sub-tabs; "Reviews" is one of them.
-    const reviewsTab = page.getByText("Reviews", { exact: true }).first();
-    if (await reviewsTab.isVisible().catch(() => false)) {
-      await reviewsTab.click();
-    } else {
-      await page.goto("/meals/reviews");
-    }
+    // Go straight to the Reviews subpage — the meals layout's sub-tab click
+    // was inconsistent under CI's React Native Web build.
+    await page.goto("/meals/reviews");
 
     await page.waitForSelector('input[placeholder="Meal title"]', { timeout: 10000 });
     await page.fill('input[placeholder="Meal title"]', "Smoke Test Lasagna");

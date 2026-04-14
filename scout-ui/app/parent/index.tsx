@@ -626,6 +626,8 @@ export default function ParentDashboard() {
         style={[styles.button, payoutRan && styles.buttonDisabled]}
         onPress={payoutRan ? undefined : handleRunPayouts}
         disabled={payoutRan}
+        accessibilityLabel="Run Weekly Payout"
+        accessibilityRole="button"
       >
         <Text style={[styles.buttonText, payoutRan && styles.buttonTextDisabled]}>
           {payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}

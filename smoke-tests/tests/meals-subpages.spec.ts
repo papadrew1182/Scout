@@ -25,7 +25,7 @@ test.describe("Meals subpages", () => {
   });
 
   test("/meals/this-week renders seeded draft plan", async ({ page }) => {
-    await page.click("text=Meals");
+    await page.goto("/meals/this-week");
     await expect(page.locator("text=This Week").first()).toBeVisible({ timeout: 10000 });
     // Seeded plan is "Smoke Test Week" in draft status; empty state
     // should NOT be shown. Adults see drafts.
