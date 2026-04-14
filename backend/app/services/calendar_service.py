@@ -54,7 +54,10 @@ def get_event(db: Session, family_id: uuid.UUID, event_id: uuid.UUID) -> Event:
     return event
 
 
-def create_event(db: Session, family_id: uuid.UUID, payload: EventCreate) -> Event:
+def create_event_nocommit(db: Session, family_id: uuid.UUID, payload: EventCreate) -> Event:
+    """Validate + insert an event WITHOUT committing. See
+    ``personal_tasks_service.create_personal_task_nocommit`` for
+    context — used by the planner bundle apply path."""
     require_family(db, family_id)
     if payload.created_by:
         require_member_in_family(db, family_id, payload.created_by)
@@ -79,6 +82,12 @@ def create_event(db: Session, family_id: uuid.UUID, payload: EventCreate) -> Eve
         task_instance_id=payload.task_instance_id,
     )
     db.add(event)
+    db.flush()
+    return event
+
+
+def create_event(db: Session, family_id: uuid.UUID, payload: EventCreate) -> Event:
+    event = create_event_nocommit(db, family_id, payload)
     db.commit()
     db.refresh(event)
     return event

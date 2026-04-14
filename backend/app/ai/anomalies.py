@@ -257,7 +257,9 @@ def detect_homework_dropoff(
         out.append(
             AnomalyCandidate(
                 anomaly_type="homework_dropoff",
-                signature=f"child:{kid.id}:homework:{recent_start.date().isoformat()}",
+                # Stable per-child signature so the suppression
+                # ledger can silence repeat day-to-day alerts.
+                signature=f"child:{kid.id}:homework",
                 significance=0.55,
                 summary=(
                     f"{kid.first_name} had {len(older)} homework sessions with "
@@ -302,7 +304,11 @@ def detect_meal_monotony(
         out.append(
             AnomalyCandidate(
                 anomaly_type="meal_monotony",
-                signature=f"meal:{title}:{start.isoformat()}",
+                # Signature stays stable across days so the Tier 5
+                # suppression ledger can silence repeat alerts for
+                # the same meal. The previous shape embedded the
+                # window start date and broke day-to-day dedupe.
+                signature=f"meal:{title}",
                 significance=min(0.4 + 0.1 * (cnt - MEAL_REPEAT_THRESHOLD), 0.8),
                 summary=(
                     f"'{title}' has appeared on the menu {cnt} times in the "
@@ -366,7 +372,9 @@ def detect_inbox_buildup(
     return [
         AnomalyCandidate(
             anomaly_type="inbox_buildup",
-            signature=f"inbox:{as_of.isoformat()}",
+            # Stable per-family so subsequent scans are silenced
+            # by the suppression ledger.
+            signature="inbox",
             significance=min(0.4 + 0.05 * len(pending), 0.85),
             summary=(
                 f"{len(pending)} parent action items are pending, with "
@@ -403,10 +411,22 @@ def rank_candidates(
     candidates: list[AnomalyCandidate],
 ) -> list[AnomalyCandidate]:
     """Sort by significance desc, then cap at MAX_ANOMALIES_PER_TICK.
-    Below MIN_SIGNIFICANCE is dropped entirely."""
-    above = [c for c in candidates if c.significance >= MIN_SIGNIFICANCE]
+    Below MIN_SIGNIFICANCE is dropped entirely.
+
+    Tier 5 F18: the module-level defaults are overridable via config
+    (``anomaly_min_significance``, ``anomaly_max_per_tick``) so
+    operators can tune noise without a code deploy. Falls back to
+    the module constants if settings aren't available."""
+    try:
+        from app.config import settings
+        min_sig = float(settings.anomaly_min_significance)
+        max_n = int(settings.anomaly_max_per_tick)
+    except Exception:
+        min_sig = MIN_SIGNIFICANCE
+        max_n = MAX_ANOMALIES_PER_TICK
+    above = [c for c in candidates if c.significance >= min_sig]
     above.sort(key=lambda c: c.significance, reverse=True)
-    return above[:MAX_ANOMALIES_PER_TICK]
+    return above[:max_n]
 
 
 def narrate_candidate(candidate: AnomalyCandidate) -> tuple[str, str | None]:

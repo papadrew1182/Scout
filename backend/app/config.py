@@ -31,6 +31,30 @@ class Settings(BaseSettings):
     # still renders the numbers). Operators override via env.
     ai_weekly_soft_cap_usd: float = 5.0
 
+    # Tier 5 F18 — anomaly scan tuning. Suppression window is the
+    # number of days to silence a repeat of the same (anomaly_type,
+    # signature) for a family. Threshold overrides let operators
+    # tune noise levels without a code deploy.
+    anomaly_suppression_days: int = 5
+    anomaly_min_significance: float = 0.4
+    anomaly_max_per_tick: int = 5
+
+    # Tier 5 F18 — scheduler advisory-lock key. Any int fits in a
+    # bigint. Picked out of the Scout product namespace so we don't
+    # collide with application-level advisory locks.
+    scheduler_advisory_lock_key: int = 0x5C0A7_11CC  # "Scout tick"
+
+    # Tier 5 F19 — remote MCP toggle. When false, only the stdio
+    # server is available and the /mcp HTTP endpoints 404.
+    mcp_remote_enabled: bool = False
+
+    # Tier 5 F20 — memory injection budget. At most N active
+    # memories are included in any single prompt build, and each is
+    # truncated to this many characters. Keeps the prompt budget
+    # bounded no matter how many memories a family accumulates.
+    memory_inject_max_items: int = 12
+    memory_inject_max_chars_per_item: int = 240
+
     # Audio transcription (voice input). When unset, the transcribe
     # endpoint returns 501 and the frontend hides the mic button.
     # Provider options: "groq" (default, cheap Whisper) or "openai".

@@ -19,6 +19,12 @@ from app.models.health_fitness import ActivityRecord, HealthSummary
 from app.models.meals import DietaryPreference, Meal, MealPlan, MealReview, WeeklyMealPlan
 from app.models.notes import Note
 from app.models.personal_tasks import PersonalTask
+from app.models.tier5 import (
+    AnomalySuppression,
+    FamilyMemory,
+    PlannerBundleApply,
+    ScoutMCPToken,
+)
 
 __all__ = [
     "Family",
@@ -54,4 +60,8 @@ __all__ = [
     "AIConversation",
     "AIMessage",
     "AIToolAudit",
+    "AnomalySuppression",
+    "FamilyMemory",
+    "PlannerBundleApply",
+    "ScoutMCPToken",
 ]

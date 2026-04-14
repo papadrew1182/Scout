@@ -842,3 +842,66 @@ export interface AIUsageReport {
 export function fetchAIUsage(days: number = 7): Promise<AIUsageReport> {
   return get(`${API_BASE_URL}/api/ai/usage?days=${days}`);
 }
+
+// ---------------------------------------------------------------------------
+// Family memory (Tier 5 Feature 20)
+// ---------------------------------------------------------------------------
+
+export interface FamilyMemoryRecord {
+  id: string;
+  family_id: string;
+  member_id: string | null;
+  memory_type: string;
+  scope: "parent" | "family" | "child";
+  content: string;
+  tags: string[];
+  source_kind: "parent_edit" | "ai_proposed" | "auto_structured";
+  status: "proposed" | "active" | "archived";
+  confidence: number;
+}
+
+export function fetchFamilyMemories(
+  status?: "proposed" | "active" | "archived",
+  memoryType?: string,
+): Promise<FamilyMemoryRecord[]> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (memoryType) params.set("memory_type", memoryType);
+  const qs = params.toString();
+  return get(`${API_BASE_URL}/api/memory${qs ? `?${qs}` : ""}`);
+}
+
+export function createFamilyMemory(payload: {
+  memory_type: string;
+  scope: "parent" | "family" | "child";
+  content: string;
+  member_id?: string | null;
+  tags?: string[];
+}): Promise<FamilyMemoryRecord> {
+  return post(`${API_BASE_URL}/api/memory`, payload);
+}
+
+export function updateFamilyMemory(
+  memoryId: string,
+  payload: {
+    memory_type?: string;
+    scope?: "parent" | "family" | "child";
+    content?: string;
+    status?: "proposed" | "active" | "archived";
+    tags?: string[];
+  },
+): Promise<FamilyMemoryRecord> {
+  return patch(`${API_BASE_URL}/api/memory/${memoryId}`, payload);
+}
+
+export async function deleteFamilyMemory(memoryId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/memory/${memoryId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+}

@@ -101,12 +101,15 @@ def get_grocery_item(db: Session, family_id: uuid.UUID, item_id: uuid.UUID) -> G
     return item
 
 
-def create_grocery_item(
+def create_grocery_item_nocommit(
     db: Session,
     family_id: uuid.UUID,
     member_id: uuid.UUID,
     payload: GroceryItemCreate,
 ) -> GroceryItem:
+    """Validate + insert a grocery item WITHOUT committing. See
+    ``personal_tasks_service.create_personal_task_nocommit`` for
+    context — used by the planner bundle apply path."""
     member = require_member_in_family(db, family_id, member_id)
 
     approval = "active"
@@ -136,7 +139,16 @@ def create_grocery_item(
             entity_type="grocery_item",
             entity_id=item.id,
         )
+    return item
 
+
+def create_grocery_item(
+    db: Session,
+    family_id: uuid.UUID,
+    member_id: uuid.UUID,
+    payload: GroceryItemCreate,
+) -> GroceryItem:
+    item = create_grocery_item_nocommit(db, family_id, member_id, payload)
     db.commit()
     db.refresh(item)
     return item

@@ -36,13 +36,14 @@ from typing import Callable
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.action_items import ParentActionItem
 from app.models.foundation import Family, FamilyMember
 from app.models.scheduled import ScheduledRun
+from app.models.tier5 import AnomalySuppression
 
 logger = logging.getLogger("scout.scheduler")
 
@@ -103,51 +104,89 @@ def stop_scheduler() -> None:
 def _tick(db_factory: Callable[[], Session]) -> None:
     """Scheduler tick: one pass over all families + jobs.
 
+    Tier 5 F18 — multi-instance HA: wraps the whole tick in a
+    Postgres advisory lock. If two app instances tick at the same
+    time, only one acquires the lock and runs the jobs; the other
+    returns immediately. ``pg_try_advisory_lock`` is session-scoped,
+    so we acquire it on a dedicated connection, hold it for the
+    length of the tick, and release on exit. This relies purely on
+    Postgres — no new infrastructure.
+
     The production path wraps each job in its own commit/rollback
     boundary so one family's failure doesn't poison the next.
     Failures are logged; the scheduler thread stays alive.
     """
     now_utc = datetime.now(pytz.UTC)
 
-    db = db_factory()
-    try:
-        run_morning_brief_tick(db, now_utc=now_utc)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.exception("morning_brief_tick_failed: %s", e)
-    finally:
-        db.close()
+    # Advisory lock acquired on its own short-lived connection.
+    # Released no matter what via the finally block. Non-blocking
+    # try — losing the lock race is not an error, just a no-op.
+    from app.config import settings
+    from app.database import engine
 
-    db = db_factory()
+    lock_conn = engine.connect()
     try:
-        run_weekly_retro_tick(db, now_utc=now_utc)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.exception("weekly_retro_tick_failed: %s", e)
-    finally:
-        db.close()
+        lock_key = int(settings.scheduler_advisory_lock_key)
+        got = lock_conn.execute(
+            text("SELECT pg_try_advisory_lock(:k)"),
+            {"k": lock_key},
+        ).scalar()
+        if not got:
+            logger.info("scheduler_tick_lock_contended key=%s", lock_key)
+            return
 
-    db = db_factory()
-    try:
-        run_moderation_digest_tick(db, now_utc=now_utc)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.exception("moderation_digest_tick_failed: %s", e)
-    finally:
-        db.close()
+        try:
+            db = db_factory()
+            try:
+                run_morning_brief_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("morning_brief_tick_failed: %s", e)
+            finally:
+                db.close()
 
-    db = db_factory()
-    try:
-        run_anomaly_scan_tick(db, now_utc=now_utc)
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.exception("anomaly_scan_tick_failed: %s", e)
+            db = db_factory()
+            try:
+                run_weekly_retro_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("weekly_retro_tick_failed: %s", e)
+            finally:
+                db.close()
+
+            db = db_factory()
+            try:
+                run_moderation_digest_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("moderation_digest_tick_failed: %s", e)
+            finally:
+                db.close()
+
+            db = db_factory()
+            try:
+                run_anomaly_scan_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("anomaly_scan_tick_failed: %s", e)
+            finally:
+                db.close()
+        finally:
+            # Release the advisory lock on the SAME connection we
+            # acquired it on — advisory locks are session-scoped.
+            try:
+                lock_conn.execute(
+                    text("SELECT pg_advisory_unlock(:k)"),
+                    {"k": int(settings.scheduler_advisory_lock_key)},
+                )
+            except Exception:
+                pass
     finally:
-        db.close()
+        lock_conn.close()
 
 
 def run_morning_brief_tick(
@@ -740,8 +779,59 @@ def run_anomaly_scan_for_family(
         candidates = generate_anomaly_candidates(
             db, family_id=family_id, as_of=run_date
         )
-        created_count = 0
+        # Tier 5 F18 — suppression: filter candidates that are still
+        # inside their configured quiet window, and refresh suppression
+        # rows for anything we do emit so repeats stay quiet.
+        from app.config import settings as _settings
+
+        suppress_days = int(_settings.anomaly_suppression_days)
+        # suppress_until lives in a timestamptz column, so both sides
+        # of the comparison must be tz-aware. Keep UTC tzinfo
+        # attached throughout.
+        now_ts = datetime.now(pytz.UTC)
+        suppress_until = now_ts + timedelta(days=suppress_days)
+
+        allowed: list = []
+        suppressed_count = 0
         for cand in candidates:
+            existing = db.scalars(
+                select(AnomalySuppression)
+                .where(AnomalySuppression.family_id == family_id)
+                .where(AnomalySuppression.anomaly_type == cand.anomaly_type)
+                .where(AnomalySuppression.signature == cand.signature)
+            ).first()
+
+            if existing is not None and existing.suppress_until > now_ts:
+                # Still in the quiet window — bump last_seen_at so
+                # we can reason about repeat activity later, but
+                # don't create an action_item.
+                existing.last_seen_at = now_ts
+                db.flush()
+                suppressed_count += 1
+                continue
+
+            # Either never seen before or the quiet window elapsed.
+            # Refresh or insert the suppression row with a new
+            # suppress_until and let the candidate through.
+            if existing is None:
+                db.add(
+                    AnomalySuppression(
+                        family_id=family_id,
+                        anomaly_type=cand.anomaly_type,
+                        signature=cand.signature,
+                        first_seen_at=now_ts,
+                        last_seen_at=now_ts,
+                        suppress_until=suppress_until,
+                    )
+                )
+            else:
+                existing.last_seen_at = now_ts
+                existing.suppress_until = suppress_until
+            db.flush()
+            allowed.append(cand)
+
+        created_count = 0
+        for cand in allowed:
             narrative, model_used = narrate_candidate(cand)
             title = f"Scout noticed: {cand.anomaly_type.replace('_', ' ')}"
             item = ParentActionItem(
@@ -762,18 +852,20 @@ def run_anomaly_scan_for_family(
         )
         mutex.result = {
             "candidates": len(candidates),
+            "suppressed": suppressed_count,
             "created": created_count,
         }
         db.flush()
         logger.info(
-            "anomaly_scan_ok family=%s date=%s candidates=%s created=%s",
-            family_id, run_date, len(candidates), created_count,
+            "anomaly_scan_ok family=%s date=%s candidates=%s suppressed=%s created=%s",
+            family_id, run_date, len(candidates), suppressed_count, created_count,
         )
         return {
             "family_id": str(family_id),
             "run_date": run_date.isoformat(),
             "status": "success",
             "candidates": len(candidates),
+            "suppressed": suppressed_count,
             "created": created_count,
         }
     except Exception as e:

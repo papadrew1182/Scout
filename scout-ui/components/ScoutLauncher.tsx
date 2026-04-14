@@ -29,6 +29,7 @@ import {
   type StreamEvent,
 } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { PlannerReviewCard } from "./PlannerReviewCard";
 import { VoiceInputButton } from "./VoiceInputButton";
 import { colors } from "../lib/styles";
 
@@ -352,14 +353,20 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId, i
   );
 
   const confirmPendingTool = useCallback(
-    async (pending: AIPendingConfirmation) => {
+    async (
+      pending: AIPendingConfirmation,
+      overrideArgs?: Record<string, unknown>,
+    ) => {
       if (loading) return;
       setLoading(true);
       try {
         const result = await sendChatMessage("", {
           surface,
           conversationId,
-          confirmTool: { tool_name: pending.tool_name, arguments: pending.arguments },
+          confirmTool: {
+            tool_name: pending.tool_name,
+            arguments: overrideArgs ?? pending.arguments,
+          },
         });
         applyResult(result);
       } catch (e) {
@@ -493,31 +500,14 @@ export function ScoutPanel({ visible, onClose, surface = "personal", memberId, i
                   )}
 
                   {msg.pendingConfirmation && (
-                    <View style={styles.confirmCard}>
-                      <Text style={styles.confirmTitle}>Confirm this action</Text>
-                      <Text style={styles.confirmTool}>
-                        Tool: {msg.pendingConfirmation.tool_name}
-                      </Text>
-                      <Text style={styles.confirmBody}>
-                        {msg.pendingConfirmation.message}
-                      </Text>
-                      <View style={styles.confirmRow}>
-                        <Pressable
-                          style={styles.confirmYes}
-                          onPress={() => confirmPendingTool(msg.pendingConfirmation!)}
-                          disabled={loading}
-                        >
-                          <Text style={styles.confirmYesText}>Confirm</Text>
-                        </Pressable>
-                        <Pressable
-                          style={styles.confirmNo}
-                          onPress={cancelPendingTool}
-                          disabled={loading}
-                        >
-                          <Text style={styles.confirmNoText}>Cancel</Text>
-                        </Pressable>
-                      </View>
-                    </View>
+                    <PlannerReviewCard
+                      pending={msg.pendingConfirmation}
+                      loading={loading}
+                      onApprove={(overrideArgs) =>
+                        confirmPendingTool(msg.pendingConfirmation!, overrideArgs)
+                      }
+                      onCancel={cancelPendingTool}
+                    />
                   )}
                 </View>
               ))}

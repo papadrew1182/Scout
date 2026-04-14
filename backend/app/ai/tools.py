@@ -735,23 +735,31 @@ def _get_weather(executor: ToolExecutor, args: dict) -> dict:
 
 
 def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
-    """Apply a bulk weekly plan: tasks, events, grocery adds, and an
-    optional meal-plan summary reference. Gated via CONFIRMATION_REQUIRED,
-    so the first call returns ``confirmation_required=True`` and the
-    ScoutPanel renders a single review card. The second call (with
-    ``confirmed=True``, typically via the confirm_tool direct path)
-    writes the bundle.
+    """Atomically apply a bulk weekly plan (Tier 5 F16).
 
-    Atomicity note: the existing Scout service layer commits inside
-    each create_* call, so strict all-or-nothing semantics would
-    require bypassing validation. Instead, this tool applies entries
-    best-effort: each well-formed entry either writes or reports a
-    per-item error. The final result always includes ``applied``
-    counts and any ``errors`` so the parent sees exactly what landed.
+    Writes tasks, events, and grocery adds in a single transaction
+    via the ``*_nocommit`` service helpers. If any individual write
+    raises, the *entire* bundle rolls back — no partial state ever
+    lands. This replaces the earlier best-effort implementation,
+    which was constrained by the per-entity commits inside the
+    service layer.
 
-    Expected args shape:
+    Idempotency: callers pass ``bundle_apply_id`` (any stable string;
+    the planner UX generates one when drafting the bundle). A repeat
+    call with the same id returns the previously-stored result
+    instead of re-writing. Double-taps on the confirm button are
+    therefore no-ops.
+
+    Still CONFIRMATION_REQUIRED-gated. The first call returns
+    ``confirmation_required=True``; the second call (via the
+    ``confirm_tool`` direct path with ``confirmed=True``) runs the
+    atomic apply below.
+
+    Expected args shape::
+
         {
           "summary": "plain text recap for the parent",
+          "bundle_apply_id": "bundle-xyz",   # required for idempotency
           "tasks": [{"assigned_to": "<uuid>", "title": "...", "priority": "medium"}],
           "events": [{"title": "...", "starts_at": "...", "ends_at": "..."}],
           "grocery_items": [{"title": "..."}],
@@ -759,10 +767,13 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
           "confirmed": true  # set by confirm_tool path
         }
     """
-    # Extract and validate the bundle shape defensively. Anything
-    # missing or wrong-typed becomes an empty list so we never blow up
-    # on partial inputs from Claude.
+    from app.models.tier5 import PlannerBundleApply
+    from app.schemas.grocery import GroceryItemCreate
+    from app.services import grocery_service
+    from sqlalchemy import select
+
     summary = args.get("summary") or ""
+    bundle_apply_id = args.get("bundle_apply_id") or ""
     tasks = args.get("tasks") or []
     events = args.get("events") or []
     grocery_items = args.get("grocery_items") or []
@@ -774,74 +785,184 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
         g for g in grocery_items if isinstance(g, dict) and g.get("title")
     ]
 
+    # Idempotency: if a prior row exists for this bundle_apply_id +
+    # family, return the stored result. Double-taps become no-ops.
+    if bundle_apply_id:
+        existing = executor.db.scalars(
+            select(PlannerBundleApply)
+            .where(PlannerBundleApply.family_id == executor.family_id)
+            .where(PlannerBundleApply.bundle_apply_id == bundle_apply_id)
+        ).first()
+        if existing is not None:
+            return {
+                "status": existing.status,
+                "idempotent_replay": True,
+                "summary": existing.summary or summary,
+                "applied": {
+                    "tasks_created": existing.tasks_created,
+                    "events_created": existing.events_created,
+                    "grocery_items_created": existing.grocery_items_created,
+                    "meal_plan_reference": meal_plan_reference,
+                },
+                "errors": existing.errors or [],
+                "handoff": _handoff(
+                    "weekly_plan_bundle",
+                    "bundle",
+                    "/parent",
+                    (
+                        f"Weekly plan already applied: "
+                        f"{existing.tasks_created} tasks, "
+                        f"{existing.events_created} events, "
+                        f"{existing.grocery_items_created} grocery items."
+                    ),
+                ),
+            }
+
     applied = {
         "tasks_created": 0,
         "events_created": 0,
         "grocery_items_created": 0,
         "meal_plan_reference": meal_plan_reference,
     }
-    errors: list[str] = []
 
-    from app.schemas.grocery import GroceryItemCreate
-    from app.services import grocery_service
+    # Single savepoint around every write. Any exception raised
+    # inside the block triggers rollback of the WHOLE bundle — no
+    # partial state can land. The per-service *_nocommit helpers
+    # flush but never commit, so they play nicely with the savepoint.
+    try:
+        with executor.db.begin_nested():
+            for t in tasks:
+                payload = PersonalTaskCreate(
+                    assigned_to=(
+                        uuid.UUID(t["assigned_to"])
+                        if t.get("assigned_to")
+                        else executor.actor_member_id
+                    ),
+                    created_by=executor.actor_member_id,
+                    title=t["title"],
+                    description=t.get("description"),
+                    priority=t.get("priority", "medium"),
+                    due_at=t.get("due_at"),
+                )
+                personal_tasks_service.create_personal_task_nocommit(
+                    executor.db, executor.family_id, payload
+                )
+                applied["tasks_created"] += 1
 
-    for t in tasks:
-        try:
-            payload = PersonalTaskCreate(
-                assigned_to=uuid.UUID(t["assigned_to"]) if t.get("assigned_to") else executor.actor_member_id,
-                created_by=executor.actor_member_id,
-                title=t["title"],
-                description=t.get("description"),
-                priority=t.get("priority", "medium"),
-                due_at=t.get("due_at"),
-            )
-            personal_tasks_service.create_personal_task(
-                executor.db, executor.family_id, payload
-            )
-            applied["tasks_created"] += 1
-        except Exception as exc:
-            errors.append(f"task '{t.get('title')}': {exc}")
+            for e in events:
+                epayload = EventCreate(
+                    created_by=executor.actor_member_id,
+                    title=e["title"],
+                    description=e.get("description"),
+                    location=e.get("location"),
+                    starts_at=datetime.fromisoformat(e["starts_at"]),
+                    ends_at=datetime.fromisoformat(e["ends_at"]),
+                    all_day=e.get("all_day", False),
+                )
+                calendar_service.create_event_nocommit(
+                    executor.db, executor.family_id, epayload
+                )
+                applied["events_created"] += 1
 
-    for e in events:
-        try:
-            epayload = EventCreate(
-                created_by=executor.actor_member_id,
-                title=e["title"],
-                description=e.get("description"),
-                location=e.get("location"),
-                starts_at=datetime.fromisoformat(e["starts_at"]),
-                ends_at=datetime.fromisoformat(e["ends_at"]),
-                all_day=e.get("all_day", False),
-            )
-            calendar_service.create_event(
-                executor.db, executor.family_id, epayload
-            )
-            applied["events_created"] += 1
-        except Exception as exc:
-            errors.append(f"event '{e.get('title')}': {exc}")
+            for g in grocery_items:
+                gpayload = GroceryItemCreate(
+                    title=g["title"],
+                    quantity=g.get("quantity"),
+                    unit=g.get("unit"),
+                    category=g.get("category"),
+                    preferred_store=g.get("preferred_store"),
+                    notes=g.get("notes"),
+                )
+                grocery_service.create_grocery_item_nocommit(
+                    executor.db,
+                    executor.family_id,
+                    executor.actor_member_id,
+                    gpayload,
+                )
+                applied["grocery_items_created"] += 1
 
-    for g in grocery_items:
-        try:
-            gpayload = GroceryItemCreate(
-                title=g["title"],
-                quantity=g.get("quantity"),
-                unit=g.get("unit"),
-                category=g.get("category"),
-                preferred_store=g.get("preferred_store"),
-                notes=g.get("notes"),
+            # Ledger row inside the same savepoint so a later failure
+            # still rolls it back — idempotency only applies to
+            # successful bundles.
+            if bundle_apply_id:
+                ledger = PlannerBundleApply(
+                    bundle_apply_id=bundle_apply_id,
+                    family_id=executor.family_id,
+                    actor_member_id=executor.actor_member_id,
+                    conversation_id=executor.conversation_id,
+                    status="applied",
+                    tasks_created=applied["tasks_created"],
+                    events_created=applied["events_created"],
+                    grocery_items_created=applied["grocery_items_created"],
+                    errors=[],
+                    summary=summary,
+                )
+                executor.db.add(ledger)
+                executor.db.flush()
+    except Exception as exc:
+        # Savepoint has rolled back. Nothing landed. Record a
+        # failure ledger row in its own savepoint (so a second
+        # apply with the same id gets the failure back) and return
+        # a clean error to the UI.
+        err_msg = str(exc)[:500]
+        if bundle_apply_id:
+            try:
+                with executor.db.begin_nested():
+                    fail = PlannerBundleApply(
+                        bundle_apply_id=bundle_apply_id,
+                        family_id=executor.family_id,
+                        actor_member_id=executor.actor_member_id,
+                        conversation_id=executor.conversation_id,
+                        status="failed",
+                        tasks_created=0,
+                        events_created=0,
+                        grocery_items_created=0,
+                        errors=[err_msg],
+                        summary=summary,
+                    )
+                    executor.db.add(fail)
+                    executor.db.flush()
+            except Exception:
+                pass
+        return {
+            "status": "failed",
+            "summary": summary,
+            "applied": {
+                "tasks_created": 0,
+                "events_created": 0,
+                "grocery_items_created": 0,
+                "meal_plan_reference": meal_plan_reference,
+            },
+            "errors": [err_msg],
+        }
+
+    # Optional: auto-memory write for the approved meal plan reference
+    # (Tier 5 F20 integration). Pure best-effort — memory failures
+    # must not poison a successful bundle.
+    try:
+        if meal_plan_reference:
+            from app.ai.memory import record_auto_structured_memory
+
+            record_auto_structured_memory(
+                executor.db,
+                family_id=executor.family_id,
+                memory_type="planning_default",
+                scope="family",
+                content=(
+                    f"Weekly planner last approved a plan linked to "
+                    f"meal_plan_reference={meal_plan_reference}."
+                ),
+                source_conversation_id=executor.conversation_id,
             )
-            grocery_service.create_grocery_item(
-                executor.db, executor.family_id, executor.actor_member_id, gpayload
-            )
-            applied["grocery_items_created"] += 1
-        except Exception as exc:
-            errors.append(f"grocery '{g.get('title')}': {exc}")
+    except Exception:
+        pass
 
     return {
         "status": "applied",
         "summary": summary,
         "applied": applied,
-        "errors": errors,
+        "errors": [],
+        "bundle_apply_id": bundle_apply_id or None,
         "handoff": _handoff(
             "weekly_plan_bundle",
             "bundle",
@@ -1293,6 +1414,16 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 "summary": {
                     "type": "string",
                     "description": "Plain-text recap for the parent review card.",
+                },
+                "bundle_apply_id": {
+                    "type": "string",
+                    "description": (
+                        "Stable idempotency key for this bundle. Generate "
+                        "ONCE per distinct plan draft (e.g. 'bundle-' + "
+                        "short uuid). A repeat apply with the same id "
+                        "returns the original result and does not "
+                        "re-write."
+                    ),
                 },
                 "tasks": {
                     "type": "array",

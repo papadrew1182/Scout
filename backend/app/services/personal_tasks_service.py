@@ -134,9 +134,15 @@ def get_personal_task(
     return task
 
 
-def create_personal_task(
+def create_personal_task_nocommit(
     db: Session, family_id: uuid.UUID, payload: PersonalTaskCreate
 ) -> PersonalTask:
+    """Validate + insert a personal task WITHOUT committing.
+
+    Used by the planner bundle apply path (Tier 5 F16) where multiple
+    writes must share a single transaction so the bundle can roll
+    back atomically if any entry fails. Normal callers should use
+    ``create_personal_task`` which commits on success."""
     require_family(db, family_id)
     require_member_in_family(db, family_id, payload.assigned_to)
     if payload.created_by:
@@ -170,6 +176,14 @@ def create_personal_task(
         event_id=payload.event_id,
     )
     db.add(task)
+    db.flush()
+    return task
+
+
+def create_personal_task(
+    db: Session, family_id: uuid.UUID, payload: PersonalTaskCreate
+) -> PersonalTask:
+    task = create_personal_task_nocommit(db, family_id, payload)
     db.commit()
     db.refresh(task)
     return task

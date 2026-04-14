@@ -298,18 +298,31 @@ def _get_ai_usage(family_id: uuid.UUID, days: int = 7) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def build_server(family_id: uuid.UUID):
-    """Construct the MCP server with every tool curried to the
-    configured family. Returned as the mcp.Server instance so the
-    caller can also run it under different transports in tests."""
-    from mcp.server import Server
-    from mcp.types import TextContent, Tool
+# Tier 5 F19 — extracted so both stdio and HTTP transports can share
+# the same dispatch table. ``scope`` is one of 'parent' or 'child'.
+# Parent scope gets the full tool set; child scope is restricted to
+# a privacy-safe subset that never includes inbox, briefs, cost, or
+# homework rollup.
+_CHILD_ALLOWED_TOOLS = frozenset(
+    {
+        "get_family_schedule",
+        "get_tasks_summary",
+        "get_current_meal_plan",
+        "get_grocery_list",
+    }
+)
 
-    server = Server("scout-readonly")
 
-    # Register tools declaratively so the handler can dispatch by name
-    # instead of duplicating @server.call_tool() decorators.
-    _TOOL_SPECS: list[tuple[str, str, dict, Any]] = [
+def build_tool_registry(
+    family_id: uuid.UUID, scope: str = "parent"
+) -> tuple[list[tuple[str, str, dict, Any]], dict]:
+    """Return (tool_specs, handlers_by_name) filtered by scope.
+
+    Each tool_spec is (name, description, input_schema, handler).
+    Handlers are closures over family_id — no tool takes a
+    family-scoping argument, so cross-family access is structurally
+    impossible at the dispatch layer."""
+    specs: list[tuple[str, str, dict, Any]] = [
         (
             "get_family_schedule",
             "Return upcoming family events in a date window (default 7 days).",
@@ -389,10 +402,47 @@ def build_server(family_id: uuid.UUID):
         ),
     ]
 
-    handlers_by_name = {name: fn for name, _, _, fn in _TOOL_SPECS}
+    if scope == "child":
+        specs = [s for s in specs if s[0] in _CHILD_ALLOWED_TOOLS]
+
+    handlers_by_name = {name: fn for name, _, _, fn in specs}
+    return specs, handlers_by_name
+
+
+def dispatch_tool(
+    family_id: uuid.UUID, scope: str, name: str, arguments: dict
+) -> dict:
+    """Run a tool by name for the given family+scope. Returns the raw
+    result dict (or {"error": ...} on failure). Used by both the
+    stdio transport's call_tool handler and the HTTP/SSE
+    companion transport in app/routes/mcp_http.py."""
+    _, handlers = build_tool_registry(family_id, scope=scope)
+    handler = handlers.get(name)
+    if handler is None:
+        return {
+            "error": f"Unknown tool '{name}'",
+            "known": sorted(handlers.keys()),
+        }
+    try:
+        return handler(arguments or {})
+    except Exception as e:
+        logger.exception("scout_mcp_tool_failed name=%s", name)
+        return {"error": f"{name}: {e}"}
+
+
+def build_server(family_id: uuid.UUID, scope: str = "parent"):
+    """Construct the MCP stdio server with every tool curried to the
+    configured family. Returned as the mcp.Server instance so the
+    caller can also run it under different transports in tests."""
+    from mcp.server import Server
+    from mcp.types import TextContent, Tool
+
+    server = Server("scout-readonly")
+
+    specs, handlers_by_name = build_tool_registry(family_id, scope=scope)
     tool_list = [
         Tool(name=name, description=desc, inputSchema=schema)
-        for name, desc, schema, _ in _TOOL_SPECS
+        for name, desc, schema, _ in specs
     ]
 
     @server.list_tools()

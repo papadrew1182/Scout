@@ -20,7 +20,9 @@ from app.routes import (
     grocery,
     health_fitness,
     integrations,
+    mcp_http,
     meals,
+    memory as memory_routes,
     notes,
     personal_tasks,
     routines,
@@ -92,6 +94,8 @@ app.include_router(integrations.router)
 app.include_router(grocery.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
+app.include_router(memory_routes.router)
+app.include_router(mcp_http.router)
 
 
 @app.get("/health")

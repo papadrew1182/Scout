@@ -356,7 +356,7 @@ def chat(
     planner prompt suffix. Default 'chat' preserves existing behavior.
     """
     context = load_member_context(db, family_id, member_id)
-    system_prompt = build_system_prompt(context, surface)
+    system_prompt = build_system_prompt(context, surface, db=db)
     if intent == "weekly_plan":
         system_prompt = _append_planner_suffix(system_prompt)
     role = context["member"]["role"]
@@ -635,7 +635,7 @@ def chat_stream(
     those don't need streaming and are one atomic tool call.
     """
     context = load_member_context(db, family_id, member_id)
-    system_prompt = build_system_prompt(context, surface)
+    system_prompt = build_system_prompt(context, surface, db=db)
     if intent == "weekly_plan":
         system_prompt = _append_planner_suffix(system_prompt)
     role = context["member"]["role"]
