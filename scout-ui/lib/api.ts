@@ -764,6 +764,67 @@ export function updateMemberLearning(
 }
 
 // ---------------------------------------------------------------------------
+// Family member + account maintenance (adult-only)
+// ---------------------------------------------------------------------------
+
+export interface UserAccountRecord {
+  id: string;
+  family_member_id: string;
+  email: string | null;
+  auth_provider: string;
+  is_primary: boolean;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export function updateMemberCore(
+  memberId: string,
+  payload: {
+    first_name?: string;
+    last_name?: string | null;
+    birthdate?: string | null;
+    role?: "adult" | "child";
+    is_active?: boolean;
+  },
+): Promise<FamilyMember> {
+  return patch(`${familyUrl()}/members/${memberId}`, payload);
+}
+
+export function createMember(payload: {
+  first_name: string;
+  last_name?: string | null;
+  role: "adult" | "child";
+  birthdate?: string | null;
+}): Promise<FamilyMember> {
+  return post(`${familyUrl()}/members`, payload);
+}
+
+export function fetchMemberAccounts(memberId: string): Promise<UserAccountRecord[]> {
+  return get(`${familyUrl()}/members/${memberId}/accounts`);
+}
+
+export function createMemberAccount(
+  memberId: string,
+  payload: { email: string; password: string; is_primary?: boolean },
+): Promise<UserAccountRecord> {
+  return post(`${familyUrl()}/members/${memberId}/accounts`, payload);
+}
+
+export function updateMemberAccount(
+  memberId: string,
+  accountId: string,
+  payload: {
+    email?: string;
+    is_active?: boolean;
+    is_primary?: boolean;
+    new_password?: string;
+  },
+): Promise<UserAccountRecord> {
+  return patch(`${familyUrl()}/members/${memberId}/accounts/${accountId}`, payload);
+}
+
+// ---------------------------------------------------------------------------
 // Conversation resume + end (Tier 3 Feature 12)
 // ---------------------------------------------------------------------------
 
