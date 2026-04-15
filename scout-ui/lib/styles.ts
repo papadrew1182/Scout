@@ -49,6 +49,16 @@ export const colors = {
   // These point to the closest new-system equivalent so pages that
   // haven't been rewritten yet still compile. Remove once every
   // page is on the new design system.
+  //
+  // NOTE: Most shim values duplicate a new-system token, but these
+  // five hex values are LEGACY-ONLY (no new-system equivalent):
+  //   #5C5478  textSecondary, buttonMutedText
+  //   #F0EBF5  surfaceMuted, buttonMuted
+  //   #B0A8C0  textPlaceholder, buttonDisabledText
+  //   #0984E3  info
+  //   #E8F4FD  infoBg
+  // Later page rewrites should decide replacements consciously, not
+  // pick one of these by default.
   accent: "#6C63FF",
   accentBg: "#EEEDFE",
   accentLight: "#AFA9EC",
@@ -186,6 +196,6 @@ export const shared = StyleSheet.create({
   buttonRow: { flexDirection: "row", gap: 8, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.border },
   buttonSmall: { flex: 1, backgroundColor: colors.purpleLight, borderRadius: 8, paddingVertical: 9, alignItems: "center" },
   buttonSmallText: { color: colors.purpleDeep, fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
-  statBig: { color: colors.text, fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] as any },
+  statBig: { color: colors.text, fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] as const },
   statBigMuted: { color: colors.muted, fontSize: 18, fontWeight: "500" },
 });
