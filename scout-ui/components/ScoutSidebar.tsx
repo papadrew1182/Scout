@@ -60,7 +60,7 @@ export function ScoutSidebar({ surface }: Props) {
 
       {readyState === "disabled" ? (
         <View style={styles.disabledWrap}>
-          <Text style={styles.disabledTitle}>Scout AI is unavailable right now</Text>
+          <Text style={styles.disabledTitle}>Scout AI unavailable</Text>
           <Text style={styles.disabledSub}>Try again later.</Text>
         </View>
       ) : readyState === "checking" ? (
