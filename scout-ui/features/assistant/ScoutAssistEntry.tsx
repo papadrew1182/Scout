@@ -165,13 +165,49 @@ function computeAnswer(chipId: ChipId, ctx: AnswerContext): AnswerResult {
   }
 }
 
+interface ItemView {
+  label: string;
+  owner_name: string | null;
+  due_at: string | null;
+  status: string;
+}
+
+function blockItemViews(today: NonNullable<AnswerContext["today"]["data"]>): ItemView[] {
+  // Each routine block contributes one view per assignment. The label
+  // names the kid + block; the due_at is the block's due_at since the
+  // canonical contract puts it at the block level. Steps[] aren't
+  // surfaced here — the assistant operates at routine granularity.
+  return today.blocks.flatMap((b) =>
+    b.assignments.map((a) => ({
+      label: `${b.label}`,
+      owner_name: a.member_name,
+      due_at: b.due_at,
+      status: a.status,
+    })),
+  );
+}
+
+function flatItemView(o: {
+  label: string;
+  owner_name: string | null;
+  due_at: string | null;
+  status: string;
+}): ItemView {
+  return {
+    label: o.label,
+    owner_name: o.owner_name,
+    due_at: o.due_at,
+    status: o.status,
+  };
+}
+
 function computeDueNext(ctx: AnswerContext): AnswerResult {
   const today = ctx.today.data;
   if (!today) return { lines: ["Today's snapshot hasn't loaded yet."] };
-  const all = [
-    ...today.blocks.flatMap((b) => b.occurrences),
-    ...today.standalone_chores,
-    ...today.weekly_items,
+  const all: ItemView[] = [
+    ...blockItemViews(today),
+    ...today.standalone_chores.map(flatItemView),
+    ...today.weekly_items.map(flatItemView),
   ].filter((o) => o.status !== "complete" && o.due_at);
   const now = Date.now();
   const upcoming = all
@@ -194,10 +230,10 @@ function computeWhoLate(ctx: AnswerContext): AnswerResult {
   const today = ctx.today.data;
   if (!today) return { lines: ["Today's snapshot hasn't loaded yet."] };
   const lateByMember = new Map<string, string[]>();
-  const all = [
-    ...today.blocks.flatMap((b) => b.occurrences),
-    ...today.standalone_chores,
-    ...today.weekly_items,
+  const all: ItemView[] = [
+    ...blockItemViews(today),
+    ...today.standalone_chores.map(flatItemView),
+    ...today.weekly_items.map(flatItemView),
   ];
   for (const o of all) {
     if (o.status === "late") {
@@ -229,24 +265,29 @@ function computeDailyWinTrack(ctx: AnswerContext): AnswerResult {
   const actorIsKid = family.kids.some((k) => k.family_member_id === actorMemberId);
 
   const summarize = (memberId: string, displayName: string): string => {
-    const all = [
-      ...today.blocks.flatMap((b) => b.occurrences),
-      ...today.standalone_chores,
+    const myAssignments = today.blocks.flatMap((b) =>
+      b.assignments.filter((a) => a.family_member_id === memberId),
+    );
+    const myStandalone = today.standalone_chores.filter(
+      (o) => o.owner_family_member_id === memberId,
+    );
+    const items: { status: string }[] = [
+      ...myAssignments.map((a) => ({ status: a.status as string })),
+      ...myStandalone.map((o) => ({ status: o.status as string })),
     ];
-    const mine = all.filter((o) => o.owner_family_member_id === memberId);
-    const completed = mine.filter((o) => o.status === "complete").length;
-    const late = mine.filter((o) => o.status === "late").length;
-    const remaining = mine.length - completed;
-    if (mine.length === 0) {
+    const completed = items.filter((o) => o.status === "complete").length;
+    const late = items.filter((o) => o.status === "late").length;
+    const remaining = items.length - completed;
+    if (items.length === 0) {
       return `${displayName}: no required items`;
     }
     if (remaining === 0) {
-      return `${displayName}: all clear (${completed}/${mine.length}) — Daily Win locked`;
+      return `${displayName}: all clear (${completed}/${items.length}) — Daily Win locked`;
     }
     if (late > 0) {
-      return `${displayName}: ${late} late · ${completed}/${mine.length} done · OFF TRACK`;
+      return `${displayName}: ${late} late · ${completed}/${items.length} done · OFF TRACK`;
     }
-    return `${displayName}: ${completed}/${mine.length} done · ${remaining} to go · on track`;
+    return `${displayName}: ${completed}/${items.length} done · ${remaining} to go · on track`;
   };
 
   if (actorIsKid) {

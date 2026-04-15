@@ -1,7 +1,7 @@
 /**
  * Session 3 published contracts — aligned to backend/app/routes/canonical.py
- * (Session 2 commit ad912e7) and the Session 3 charter rules pinned in the
- * Block 2 prompt:
+ * (Session 2 commit 3a3bf31, block 3) and the Session 3 charter pinned in
+ * docs/sessions/scout_session_3_operating_surface_and_control_plane.md.
  *
  *   GET  /api/me                        → {user, family}
  *   GET  /api/family/context/current    → {family, date, active_time_block, kids[], household_rules}
@@ -10,8 +10,10 @@
  *   GET  /api/rewards/week/current      → {period|null, members[], approval}
  *   GET  /api/connectors                → {items[]}
  *   GET  /api/connectors/health         → {items[]}
- *   GET  /api/calendar/exports/upcoming → (not yet shipped — mock-only)
- *   GET  /api/control-plane/summary     → (not yet shipped — mock-only)
+ *   GET  /api/calendar/exports/upcoming → {items[]}
+ *   GET  /api/control-plane/summary     → {connectors, sync_jobs, calendar_exports, rewards}
+ *
+ * Every endpoint above is real and DB-backed as of Session 2 block 3.
  *
  * The completion response is intentionally bare. There is no `updated_block`
  * and no `daily_win_preview` echo. The frontend must invalidate / refetch
@@ -136,20 +138,46 @@ export interface TaskOccurrence {
 }
 
 /**
- * Block-level group (routine block, weekly item). Shape kept thin to match
- * canonical.py — `blocks[]` is empty until the legacy → scout backfill runs,
- * but the contract keeps the key so Session 3 can render against it.
+ * One step inside a routine-block assignment. Shape pinned by the
+ * Session 3 charter (`GET /api/household/today` JSON example) and the
+ * backend `scout.v_household_today` projection: a step carries only the
+ * three fields below — owner, due, and template_key live on the parent
+ * assignment / block, not the step.
+ */
+export interface BlockStep {
+  task_occurrence_id: UUID;
+  label: string;
+  status: OccurrenceStatus;
+}
+
+/**
+ * A single per-member assignment inside a routine block. The backend's
+ * current projection emits one assignment per `scout.task_occurrences`
+ * row that carries a `routine_key`, with `routine_instance_id` ==
+ * `task_occurrence_id` and an empty `steps[]`. Future backend work can
+ * populate `steps[]` without contract churn — the frontend already
+ * walks both ids when looking up a completable target.
+ */
+export interface BlockAssignment {
+  routine_instance_id: UUID;
+  family_member_id: UUID | null;
+  member_name: string | null;
+  status: OccurrenceStatus;
+  steps: BlockStep[];
+}
+
+/**
+ * Routine block as it ships from `GET /api/household/today` →
+ * `blocks[]`. Charter-pinned shape; no per-block `status` enum (callers
+ * derive presentation tone from the assignments) and no `starts_at` /
+ * `ends_at` (only `due_at` is canonical).
  */
 export interface HouseholdBlock {
   block_key: string;
   label: string;
-  starts_at: ISODateTime | null;
-  ends_at: ISODateTime | null;
   due_at: ISODateTime | null;
-  status: "upcoming" | "active" | "due_soon" | "late" | "done" | "blocked";
-  member_family_member_ids: UUID[];
-  occurrences: TaskOccurrence[];
-  note?: string | null;
+  exported_to_calendar: boolean;
+  assignments: BlockAssignment[];
 }
 
 export interface HouseholdTodaySummary {
@@ -228,17 +256,25 @@ export interface RewardsCurrentWeekResponse {
 // GET /api/connectors
 // ---------------------------------------------------------------------------
 
+/**
+ * Locked Session 2 connector account status vocabulary
+ * (backend/services/connectors/sync_persistence.py). Closed union — the
+ * backend never emits anything outside this set.
+ */
 export type ConnectorStatus =
-  | "connected"
   | "disconnected"
+  | "configured"
+  | "connected"
+  | "syncing"
+  | "stale"
   | "error"
-  | "decision_gated"
-  | "pending";
+  | "disabled"
+  | "decision_gated";
 
 export interface ConnectorListItem {
   connector_key: string;
   label: string;
-  status: ConnectorStatus | string;
+  status: ConnectorStatus;
   last_sync_at: ISODateTime | null;
 }
 
@@ -250,17 +286,18 @@ export interface ConnectorsResponse {
 // GET /api/connectors/health
 // ---------------------------------------------------------------------------
 
-export type ConnectorFreshness =
-  | "fresh"
-  | "stale"
-  | "very_stale"
-  | "never_synced"
-  | "unknown";
+/**
+ * Locked Session 2 freshness vocabulary
+ * (backend/services/connectors/sync_persistence.py docstring). Closed
+ * union — the backend's `derive_freshness_for_account` only ever emits
+ * one of these four values.
+ */
+export type ConnectorFreshness = "live" | "lagging" | "stale" | "unknown";
 
 export interface ConnectorHealthItem {
   connector_key: string;
   healthy: boolean;
-  freshness_state: ConnectorFreshness | string;
+  freshness_state: ConnectorFreshness;
   last_success_at: ISODateTime | null;
   last_error_at: ISODateTime | null;
   last_error_message: string | null;

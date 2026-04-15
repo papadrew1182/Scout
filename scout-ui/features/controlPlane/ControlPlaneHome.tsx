@@ -1,5 +1,5 @@
 /**
- * ControlPlaneHome — Session 3 Block 3 control-plane starter.
+ * ControlPlaneHome — control-plane starter surface.
  *
  * Composes three sub-panels:
  *   - SyncStatusPanel       (counts from /api/control-plane/summary)
@@ -7,13 +7,11 @@
  *   - ConnectorHealthPanel  (per-connector rows from /api/connectors
  *                            + /api/connectors/health)
  *
- * Real vs mock:
- *   - In mock mode the mock client serves all three endpoints.
- *   - In real mode, /api/control-plane/summary is not yet shipped.
- *     ControlPlaneHome detects the slice's error, marks the
- *     summary-driven panels as `unavailable`, and STILL renders the
- *     ConnectorHealthPanel from /api/connectors + /api/connectors/health
- *     because those have been live since Session 2 commit ad912e7.
+ * Every endpoint is real and DB-backed since Session 2 block 3 (commit
+ * 3a3bf31). If /api/control-plane/summary errors at runtime,
+ * ControlPlaneHome still renders the ConnectorHealthPanel from
+ * /api/connectors + /api/connectors/health because those are
+ * independent slices.
  *
  * No mutations. The charter explicitly forbids inventing reconnect /
  * approval / retry endpoints in this block.
@@ -32,14 +30,14 @@ import { PublicationStatusPanel } from "./PublicationStatusPanel";
 export function ControlPlaneHome() {
   const summary = useControlPlaneSummary();
 
-  // The summary slice may error in real mode (endpoint not yet
-  // shipped). We DO NOT block the rest of the page on it — the
-  // connector panel reads independent endpoints.
+  // The summary slice can still error at runtime (network, auth, etc.).
+  // We DO NOT block the rest of the page on it — the connector panel
+  // reads independent endpoints.
   const view = classifySlice(
     { status: summary.status, error: summary.error, data: summary.data },
     "control_plane_summary",
   );
-  const summaryUnavailable = view.kind === "unavailable" || view.kind === "error";
+  const summaryUnavailable = view.kind === "error";
 
   return (
     <View>
@@ -51,28 +49,23 @@ export function ControlPlaneHome() {
         this is a read-only operating surface.
       </Text>
 
-      {(view.kind === "unavailable" || view.kind === "error") && (
+      {view.kind === "error" && (
         <View
-          style={[
-            styles.banner,
-            view.kind === "unavailable" ? styles.bannerWarn : styles.bannerErr,
-          ]}
+          style={[styles.banner, styles.bannerErr]}
           accessible
           accessibilityLiveRegion="polite"
         >
           <Text style={styles.bannerTitle}>{view.title}</Text>
           <Text style={styles.bannerBody}>{view.body}</Text>
-          {view.retryable && (
-            <Pressable
-              style={styles.retry}
-              onPress={summary.refresh}
-              accessibilityRole="button"
-              accessibilityLabel="Retry loading control plane summary"
-              hitSlop={10}
-            >
-              <Text style={styles.retryText}>Try again</Text>
-            </Pressable>
-          )}
+          <Pressable
+            style={styles.retry}
+            onPress={summary.refresh}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading control plane summary"
+            hitSlop={10}
+          >
+            <Text style={styles.retryText}>Try again</Text>
+          </Pressable>
         </View>
       )}
 

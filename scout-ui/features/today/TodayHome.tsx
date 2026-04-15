@@ -1,5 +1,5 @@
 /**
- * TodayHome — Session 3 default landing surface (Block 2 contract-aligned).
+ * TodayHome — Session 3 default landing surface.
  *
  * Answers the questions the operating surface MUST answer:
  *   - what is active now
@@ -17,15 +17,22 @@
  * Daily-win derivation: the canonical /api/household/today response
  * does NOT include a daily_win_preview field. To honor the
  * "on track for a Daily Win" requirement we count, per kid, the number
- * of open + completed routine + ownership occurrences and infer remaining
- * work. This is intentionally derived, not authoritative — once the
- * backend ships a real daily-win read model we replace this block with
- * the API value with no other UI changes.
+ * of routine assignments + ownership chores they own today. Each
+ * routine block contributes ONE assignment per kid (matching the family
+ * file's "morning + after-school + evening" daily-win semantic), and
+ * each standalone chore contributes one occurrence. Once the backend
+ * ships a real daily-win read model we replace this block with the API
+ * value with no other UI changes.
  */
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { FamilyKid, HouseholdTodayResponse, TaskOccurrence } from "../lib/contracts";
+import {
+  BlockAssignment,
+  FamilyKid,
+  HouseholdTodayResponse,
+  OccurrenceStatus,
+} from "../lib/contracts";
 import {
   useFamilyContext,
   useHouseholdToday,
@@ -72,11 +79,11 @@ export function TodayHome() {
         blocks: data.blocks
           .map((b) => ({
             ...b,
-            occurrences: b.occurrences.filter(
-              (o) => o.owner_family_member_id === focused_member_id,
+            assignments: b.assignments.filter(
+              (a) => a.family_member_id === focused_member_id,
             ),
           }))
-          .filter((b) => b.occurrences.length > 0),
+          .filter((b) => b.assignments.length > 0),
         standalone_chores: data.standalone_chores.filter(
           (o) => o.owner_family_member_id === focused_member_id,
         ),
@@ -88,7 +95,7 @@ export function TodayHome() {
 
   const winSummaries = kids.map((k) => summarizeForKid(k, data));
   const empty =
-    filtered.blocks.length === 0 &&
+    filtered.blocks.every((b) => b.assignments.length === 0) &&
     filtered.standalone_chores.length === 0 &&
     filtered.weekly_items.length === 0;
 
@@ -206,25 +213,31 @@ function summarizeForKid(
 ): KidWinSummary {
   // Per family_chore_system.md a Daily Win = morning + after-school +
   // evening + ownership chore + (rotating common-area chore if assigned).
-  // We take "required occurrences for this kid today" from the canonical
-  // snapshot: every block + standalone chore that names them as the
-  // owner. weekly_items are excluded — Power 60 is not a daily win.
-  const all: TaskOccurrence[] = [
-    ...data.blocks.flatMap((b) => b.occurrences),
-    ...data.standalone_chores,
+  // Each routine block contributes ONE assignment per kid (the
+  // assignment's status reflects the whole routine), and each standalone
+  // chore is one occurrence. weekly_items are excluded — Power 60 is
+  // not a daily win.
+  const myAssignments: BlockAssignment[] = data.blocks.flatMap((b) =>
+    b.assignments.filter((a) => a.family_member_id === kid.family_member_id),
+  );
+  const myStandalone = data.standalone_chores.filter(
+    (o) => o.owner_family_member_id === kid.family_member_id,
+  );
+  const items: { status: OccurrenceStatus }[] = [
+    ...myAssignments.map((a) => ({ status: a.status })),
+    ...myStandalone.map((o) => ({ status: o.status })),
   ];
-  const mine = all.filter((o) => o.owner_family_member_id === kid.family_member_id);
-  const completed = mine.filter((o) => o.status === "complete").length;
-  const late = mine.filter((o) => o.status === "late").length;
-  const remaining = mine.length - completed;
+  const completed = items.filter((o) => o.status === "complete").length;
+  const late = items.filter((o) => o.status === "late").length;
+  const remaining = items.length - completed;
   return {
     kid,
-    required: mine.length,
+    required: items.length,
     completed,
     remaining,
     late,
     on_track: late === 0,
-    all_done: mine.length > 0 && remaining === 0,
+    all_done: items.length > 0 && remaining === 0,
   };
 }
 

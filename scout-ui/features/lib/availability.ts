@@ -1,39 +1,26 @@
 /**
- * Centralized "why is this slice not showing real data" helper.
+ * Centralized "what state is this slice in, and what banner copy goes
+ * with it" helper.
  *
- * The Session 3 realClient throws a clearly-named "not yet implemented"
- * error for endpoints the backend hasn't shipped. Several surfaces need
- * to distinguish that case from a genuine fetch failure so we can show
- * an honest "not yet shipped" notice instead of a scary red error.
+ * Every endpoint Session 3 consumes is real and DB-backed since Session
+ * 2 block 3 (commit 3a3bf31), so the previous "endpoint not yet shipped"
+ * narrative — and the regex sniff that distinguished it from a real
+ * fetch failure — is gone. Surfaces now classify into four states:
  *
- * Block 3 inlined this classification in two files with a hand-rolled
- * regex. Block 4 lifts it here so every surface uses the same rules.
+ *   "loading" → slice is idle or loading (render skeleton)
+ *   "ok"      → slice is ready and has data
+ *   "empty"   → slice is ready but data is null/empty-ish
+ *   "error"   → slice errored; banner offers retry
  *
- * Inputs:
- *   - a slice's `{status, data, error}` triple (the shape `hooks` returns)
- *
- * Outputs:
- *   - `kind` — which narrative to render:
- *       "loading"     → slice is idle or loading (render skeleton)
- *       "ok"          → slice is ready and has data
- *       "empty"       → slice is ready but data is null/empty-ish
- *       "unavailable" → slice errored because the endpoint is not yet
- *                       implemented by the backend (expected in real mode)
- *       "error"       → slice errored for any other reason
- *   - `title`  / `body` — short, human-readable strings suitable for banners
- *   - `retryable` — whether a retry button makes sense (false for
- *                   "unavailable", true for "error")
+ * Surface keys still carry per-feed empty-state copy so the operating
+ * surface speaks in its own vocabulary instead of generic "nothing to
+ * show" text.
  */
 
 import { LoadStatus } from "../app/AppContext";
 import { SCOUT_CLIENT_MODE } from "./client";
 
-export type AvailabilityKind =
-  | "loading"
-  | "ok"
-  | "empty"
-  | "unavailable"
-  | "error";
+export type AvailabilityKind = "loading" | "ok" | "empty" | "error";
 
 export interface SliceShape {
   status: LoadStatus;
@@ -49,46 +36,16 @@ export interface AvailabilityView {
 }
 
 /**
- * Known regex for the realClient's "not yet implemented" signal. The
- * realClient deliberately throws a stable string so classifiers can
- * detect it; see features/lib/realClient.ts.
+ * Friendly per-surface labels for the empty state. Callers pass the
+ * surface key so the banner speaks the surface's vocabulary
+ * (calendar exports vs control-plane summary vs generic).
  */
-const NOT_IMPLEMENTED_RE = /not\s*(yet\s*)?implemented/i;
-
-export function isUnavailableMessage(message: string | null | undefined): boolean {
-  if (!message) return false;
-  return NOT_IMPLEMENTED_RE.test(message);
-}
-
-/**
- * Friendly per-surface labels for the "endpoint not yet shipped" story.
- * Callers pass the surface key so the banner speaks the surface's
- * vocabulary (calendar exports vs control-plane summary vs generic).
- */
-export type UnavailableSurfaceKey =
+export type SliceSurfaceKey =
   | "calendar_exports"
   | "control_plane_summary"
   | "generic";
 
-const UNAVAILABLE_COPY: Record<
-  UnavailableSurfaceKey,
-  { title: string; body: string }
-> = {
-  calendar_exports: {
-    title: "Calendar export feed not yet shipped",
-    body: "The /api/calendar/exports/upcoming endpoint hasn't shipped from Session 2 yet. Once it does, this surface lights up automatically.",
-  },
-  control_plane_summary: {
-    title: "Summary feed not yet shipped",
-    body: "/api/control-plane/summary is not yet implemented by the backend. Connector health below is still live.",
-  },
-  generic: {
-    title: "Feed not yet shipped",
-    body: "This endpoint hasn't shipped from Session 2 yet. The rest of the page stays live.",
-  },
-};
-
-const EMPTY_COPY: Record<UnavailableSurfaceKey, { title: string; body: string }> = {
+const EMPTY_COPY: Record<SliceSurfaceKey, { title: string; body: string }> = {
   calendar_exports: {
     title: "No exports scheduled",
     body: "When Scout has anchor blocks ready to publish, they'll appear here.",
@@ -104,17 +61,12 @@ const EMPTY_COPY: Record<UnavailableSurfaceKey, { title: string; body: string }>
 };
 
 /**
- * Classify a slice into one of the five states and return banner copy
+ * Classify a slice into one of the four states and return banner copy
  * suitable for the given surface.
- *
- * In mock mode the realClient is never invoked, so the "unavailable"
- * narrative shouldn't appear unless the mock client itself throws — in
- * that case we still defer to the shared copy to avoid surprising the
- * caller.
  */
 export function classifySlice(
   slice: SliceShape,
-  surface: UnavailableSurfaceKey = "generic",
+  surface: SliceSurfaceKey = "generic",
   options: { isEmpty?: (data: unknown) => boolean } = {},
 ): AvailabilityView {
   if (slice.status === "idle" || slice.status === "loading") {
@@ -126,10 +78,6 @@ export function classifySlice(
     };
   }
   if (slice.status === "error") {
-    if (isUnavailableMessage(slice.error)) {
-      const copy = UNAVAILABLE_COPY[surface];
-      return { kind: "unavailable", ...copy, retryable: false };
-    }
     return {
       kind: "error",
       title: "Couldn't load this feed",

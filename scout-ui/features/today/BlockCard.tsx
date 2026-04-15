@@ -1,92 +1,164 @@
 /**
  * BlockCard — one routine block (Morning / After School / Evening / etc.)
  *
- * Aligned to the canonical HouseholdBlock shape from canonical.py. The
- * block carries `label`, `due_at`, `status`, `member_family_member_ids`,
- * and `occurrences[]`. Owner avatars are stubbed from the member id
- * list since the canonical contract does not echo back full names per
- * member at the block level — full names are available on the
- * occurrence rows themselves.
+ * Aligned to the canonical HouseholdBlock shape from canonical.py:
+ *   { block_key, label, due_at, exported_to_calendar, assignments[] }
+ *
+ * Each assignment is one kid's slice of the block (member_name + status
+ * + steps). Steps are completable; if a backend response ships an
+ * assignment with empty steps[] (the current canonical projection), the
+ * assignment itself is the completable target via its routine_instance_id.
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { HouseholdBlock, TaskOccurrence } from "../lib/contracts";
-import { useFamilyContext } from "../hooks";
+import {
+  BlockAssignment,
+  BlockStep,
+  HouseholdBlock,
+  OccurrenceStatus,
+} from "../lib/contracts";
+import {
+  useCompletionMutation,
+  useUiCompletionSheet,
+} from "../hooks";
 import { formatRelativeDue, formatTime } from "../lib/formatters";
 import { colors } from "../../lib/styles";
-import { ChoreList } from "./ChoreList";
 
 interface Props {
   block: HouseholdBlock;
 }
 
 export function BlockCard({ block }: Props) {
-  const family = useFamilyContext();
-  // Resolve the kid names referenced by the block. Adults and kids are
-  // both modeled, but block.member_family_member_ids in practice holds
-  // child IDs. We look them up against family_context.kids and fall
-  // back to whatever owner_name is on the first occurrence.
-  const memberNames = resolveMemberNames(block, family.data?.kids);
+  const dueLabel = block.due_at ? `Due ${formatTime(block.due_at)}` : "No deadline";
+  const dueRelative =
+    block.due_at && !allComplete(block.assignments)
+      ? ` · ${formatRelativeDue(block.due_at)}`
+      : "";
 
   return (
-    <View style={[styles.card, statusCardStyle(block.status)]}>
+    <View style={[styles.card, cardAccent(block)]}>
       <View style={styles.headerRow}>
         <View style={styles.titleCol}>
           <Text style={styles.title}>{block.label}</Text>
           <Text style={styles.due}>
-            {block.due_at ? `Due ${formatTime(block.due_at)}` : "No deadline"}
-            {block.due_at && block.status !== "done"
-              ? ` · ${formatRelativeDue(block.due_at)}`
-              : ""}
+            {dueLabel}
+            {dueRelative}
           </Text>
         </View>
-        <StatusPill status={block.status} />
+        {block.exported_to_calendar && (
+          <View style={styles.publishChip}>
+            <Text style={styles.publishChipText}>On calendar</Text>
+          </View>
+        )}
       </View>
 
-      {memberNames.length > 0 && (
-        <View style={styles.peopleRow}>
-          {memberNames.map((m) => (
-            <View key={m} style={styles.avatar}>
-              <Text style={styles.avatarText}>{m[0]}</Text>
-            </View>
-          ))}
-          <Text style={styles.peopleLabel}>{memberNames.join(" · ")}</Text>
-        </View>
-      )}
-
-      {block.note && <Text style={styles.note}>{block.note}</Text>}
-
-      <ChoreList occurrences={block.occurrences} />
+      {block.assignments.map((a) => (
+        <AssignmentRow key={a.routine_instance_id} assignment={a} />
+      ))}
     </View>
   );
 }
 
-function resolveMemberNames(
-  block: HouseholdBlock,
-  kids: { family_member_id: string; name: string }[] | undefined,
-): string[] {
-  if (kids && kids.length) {
-    const map = new Map(kids.map((k) => [k.family_member_id, k.name]));
-    const mapped = block.member_family_member_ids
-      .map((id) => map.get(id))
-      .filter((n): n is string => !!n);
-    if (mapped.length) return mapped;
-  }
-  // Fallback: pull unique owner names off the occurrences themselves.
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const o of block.occurrences) {
-    const n = o.owner_name;
-    if (n && !seen.has(n)) {
-      seen.add(n);
-      out.push(n);
-    }
-  }
-  return out;
+function AssignmentRow({ assignment }: { assignment: BlockAssignment }) {
+  return (
+    <View style={styles.assignment}>
+      <View style={styles.assignmentHeader}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {(assignment.member_name ?? "?")[0]}
+          </Text>
+        </View>
+        <Text style={styles.assignmentName} numberOfLines={1}>
+          {assignment.member_name ?? "Unassigned"}
+        </Text>
+        <StatusPill status={assignment.status} />
+      </View>
+
+      {assignment.steps.length === 0 ? (
+        <CompletableRow
+          targetId={assignment.routine_instance_id}
+          label={assignment.member_name ?? "This block"}
+          status={assignment.status}
+          summary
+        />
+      ) : (
+        assignment.steps.map((step) => (
+          <CompletableRow
+            key={step.task_occurrence_id}
+            targetId={step.task_occurrence_id}
+            label={step.label}
+            status={step.status}
+          />
+        ))
+      )}
+    </View>
+  );
 }
 
-function StatusPill({ status }: { status: HouseholdBlock["status"] }) {
+function CompletableRow({
+  targetId,
+  label,
+  status,
+  summary,
+}: {
+  targetId: string;
+  label: string;
+  status: OccurrenceStatus;
+  summary?: boolean;
+}) {
+  const completion = useCompletionMutation();
+  const sheet = useUiCompletionSheet();
+  const inflight = completion.statusOf(targetId);
+  const optimisticDone = status === "complete" || inflight === "success";
+  const optimisticPending = inflight === "pending";
+  const isLate = status === "late";
+
+  return (
+    <View style={styles.stepRow}>
+      <Pressable
+        onPress={() => completion.run(targetId)}
+        style={[
+          styles.checkbox,
+          optimisticDone && styles.checkboxDone,
+          optimisticPending && styles.checkboxPending,
+          isLate && !optimisticDone && styles.checkboxLate,
+        ]}
+        accessibilityRole="checkbox"
+        accessibilityLabel={`Mark ${label} complete`}
+        accessibilityState={{ checked: optimisticDone }}
+        disabled={optimisticDone}
+      >
+        {optimisticDone && <Text style={styles.checkmark}>✓</Text>}
+      </Pressable>
+      <Pressable
+        style={styles.stepBody}
+        onPress={() => sheet.open(targetId)}
+        accessibilityRole="button"
+        accessibilityLabel={`Open details for ${label}`}
+      >
+        <Text
+          style={[
+            styles.stepText,
+            summary && styles.stepTextSummary,
+            optimisticDone && styles.stepTextDone,
+          ]}
+          numberOfLines={2}
+        >
+          {label}
+          {isLate && !optimisticDone ? " · LATE" : ""}
+        </Text>
+        {inflight === "error" && (
+          <Text style={styles.stepError} numberOfLines={1}>
+            {completion.errorOf(targetId) ?? "Couldn't save."}
+          </Text>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
+function StatusPill({ status }: { status: OccurrenceStatus }) {
   return (
     <View style={[styles.pill, pillStyle(status)]}>
       <Text style={[styles.pillText, pillTextStyle(status)]}>
@@ -96,70 +168,57 @@ function StatusPill({ status }: { status: HouseholdBlock["status"] }) {
   );
 }
 
-function labelForStatus(s: HouseholdBlock["status"]): string {
+function labelForStatus(s: OccurrenceStatus): string {
   switch (s) {
-    case "active":
-      return "Active now";
-    case "due_soon":
-      return "Due soon";
+    case "complete":
+      return "Done";
     case "late":
       return "Late";
-    case "done":
-      return "Done";
-    case "blocked":
-      return "Blocked";
-    case "upcoming":
+    case "excused":
+      return "Excused";
+    case "open":
     default:
-      return "Upcoming";
+      return "Open";
   }
 }
 
-function statusCardStyle(s: HouseholdBlock["status"]) {
+function pillStyle(s: OccurrenceStatus) {
   switch (s) {
     case "late":
-    case "blocked":
-      return { borderLeftColor: colors.negative };
-    case "due_soon":
-      return { borderLeftColor: colors.warning };
-    case "active":
-      return { borderLeftColor: colors.accent };
-    case "done":
-      return { borderLeftColor: colors.positive, opacity: 0.85 };
-    default:
-      return { borderLeftColor: colors.cardBorder };
-  }
-}
-
-function pillStyle(s: HouseholdBlock["status"]) {
-  switch (s) {
-    case "late":
-    case "blocked":
       return { backgroundColor: colors.negativeBg };
-    case "due_soon":
-      return { backgroundColor: colors.warningBg };
-    case "active":
-      return { backgroundColor: colors.accentBg };
-    case "done":
+    case "complete":
       return { backgroundColor: colors.positiveBg };
+    case "excused":
+      return { backgroundColor: colors.surfaceMuted };
     default:
       return { backgroundColor: colors.surfaceMuted };
   }
 }
 
-function pillTextStyle(s: HouseholdBlock["status"]) {
+function pillTextStyle(s: OccurrenceStatus) {
   switch (s) {
     case "late":
-    case "blocked":
       return { color: "#C0392B" };
-    case "due_soon":
-      return { color: "#A2660C" };
-    case "active":
-      return { color: colors.accent };
-    case "done":
+    case "complete":
       return { color: "#00866B" };
     default:
       return { color: colors.textSecondary };
   }
+}
+
+function allComplete(assignments: BlockAssignment[]): boolean {
+  if (assignments.length === 0) return false;
+  return assignments.every((a) => a.status === "complete");
+}
+
+function cardAccent(block: HouseholdBlock) {
+  if (allComplete(block.assignments)) {
+    return { borderLeftColor: colors.positive, opacity: 0.85 };
+  }
+  if (block.assignments.some((a) => a.status === "late")) {
+    return { borderLeftColor: colors.negative };
+  }
+  return { borderLeftColor: colors.cardBorder };
 }
 
 const styles = StyleSheet.create({
@@ -177,6 +236,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 6,
   },
   titleCol: { flexShrink: 1, paddingRight: 10 },
   title: {
@@ -191,6 +251,50 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontWeight: "600",
   },
+  publishChip: {
+    backgroundColor: colors.accentBg,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  publishChipText: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+
+  assignment: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  assignmentHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  avatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.accentBg,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+    borderWidth: 1.5,
+    borderColor: colors.card,
+  },
+  avatarText: { color: colors.accent, fontSize: 10, fontWeight: "800" },
+  assignmentName: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
   pill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -202,35 +306,45 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     textTransform: "uppercase",
   },
-  peopleRow: {
+
+  stepRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 12,
-    marginBottom: 4,
-    flexWrap: "wrap",
+    paddingVertical: 6,
+    paddingLeft: 30,
   },
-  avatar: {
+  checkbox: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: colors.accentBg,
+    borderWidth: 2,
+    borderColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: -4,
-    borderWidth: 1.5,
-    borderColor: colors.card,
+    marginRight: 10,
   },
-  avatarText: { color: colors.accent, fontSize: 10, fontWeight: "800" },
-  peopleLabel: {
-    color: colors.textMuted,
+  checkboxDone: { backgroundColor: colors.positive, borderColor: colors.positive },
+  checkboxPending: {
+    backgroundColor: colors.accentBg,
+    borderColor: colors.accentLight,
+  },
+  checkboxLate: { borderColor: colors.negative },
+  checkmark: {
+    color: colors.buttonPrimaryText,
+    fontWeight: "800",
     fontSize: 11,
-    fontWeight: "600",
-    marginLeft: 8,
   },
-  note: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontStyle: "italic",
-    marginTop: 8,
+  stepBody: { flex: 1 },
+  stepText: { color: colors.textPrimary, fontSize: 13, fontWeight: "600" },
+  stepTextSummary: { fontStyle: "italic", color: colors.textSecondary },
+  stepTextDone: {
+    color: colors.textMuted,
+    textDecorationLine: "line-through",
+  },
+  stepError: {
+    color: colors.negative,
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: "600",
   },
 });

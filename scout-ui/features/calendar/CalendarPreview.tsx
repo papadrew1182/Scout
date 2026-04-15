@@ -1,5 +1,5 @@
 /**
- * CalendarPreview — Session 3 Block 3 calendar publication preview.
+ * CalendarPreview — calendar publication preview.
  *
  * Reads /api/calendar/exports/upcoming and renders a day-grouped list
  * of household anchor blocks that will (or have) published to Google
@@ -9,19 +9,14 @@
  *
  * Cross-references:
  *   - useConnectorsHealth() for the google_calendar connector. If the
- *     Google Calendar connector is stale, error, or never_synced, we
+ *     Google Calendar connector is stale, lagging, or unhealthy, we
  *     surface a top banner explaining the publication state — exports
  *     listed below remain visible so the user can still see what
  *     SHOULD publish.
  *
- * Real vs mock:
- *   - In mock mode the mock client returns plausible exports.
- *   - In real mode, /api/calendar/exports/upcoming is not yet shipped
- *     by the backend (Session 2 has not implemented it). The realClient
- *     throws a clearly named "not implemented" error, which lands here
- *     as the slice's `error`. We render an explicit "not yet shipped"
- *     banner instead of silently rendering mock data as if it were
- *     live.
+ * Both /api/calendar/exports/upcoming and the connector health feed are
+ * real and DB-backed (Session 2 block 3, commit 3a3bf31). In mock mode
+ * the mock client serves the same shapes from seeded Roberts data.
  */
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -46,12 +41,11 @@ export function CalendarPreview() {
     return <SkeletonState />;
   }
 
-  if (view.kind === "unavailable" || view.kind === "error") {
+  if (view.kind === "error") {
     return (
-      <UnavailableOrErrorState
+      <ErrorState
         title={view.title}
         body={view.body}
-        retryable={view.retryable}
         onRetry={exports.refresh}
       />
     );
@@ -192,7 +186,7 @@ function bannerForHealth(h: ConnectorHealthItem | null): Banner | null {
         "Anchor blocks below are queued in Scout but won't reach the family calendar (or Hearth) until the connector is reconnected from Control Plane.",
     };
   }
-  if (h.freshness_state === "stale" || h.freshness_state === "very_stale") {
+  if (h.freshness_state === "stale" || h.freshness_state === "lagging") {
     return {
       tone: "warn",
       title: "Google Calendar sync is stale",
@@ -228,15 +222,13 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-function UnavailableOrErrorState({
+function ErrorState({
   title,
   body,
-  retryable,
   onRetry,
 }: {
   title: string;
   body: string;
-  retryable: boolean;
   onRetry: () => void;
 }) {
   return (
@@ -244,23 +236,21 @@ function UnavailableOrErrorState({
       <Text style={styles.eyebrow}>Calendar publication</Text>
       <Text style={styles.title}>Household anchor blocks</Text>
       <View
-        style={[styles.banner, retryable ? styles.bannerErr : styles.bannerWarn]}
+        style={[styles.banner, styles.bannerErr]}
         accessible
         accessibilityLiveRegion="polite"
       >
         <Text style={styles.bannerTitle}>{title}</Text>
         <Text style={styles.bannerBody}>{body}</Text>
-        {retryable && (
-          <Pressable
-            style={styles.retry}
-            onPress={onRetry}
-            accessibilityRole="button"
-            accessibilityLabel="Retry loading calendar exports"
-            hitSlop={10}
-          >
-            <Text style={styles.retryText}>Try again</Text>
-          </Pressable>
-        )}
+        <Pressable
+          style={styles.retry}
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading calendar exports"
+          hitSlop={10}
+        >
+          <Text style={styles.retryText}>Try again</Text>
+        </Pressable>
       </View>
     </View>
   );

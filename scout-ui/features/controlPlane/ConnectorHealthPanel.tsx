@@ -145,13 +145,20 @@ function ConnectorRow({ row }: { row: JoinedRow }) {
 type Tone = "ok" | "warn" | "err";
 
 function toneForRow(r: JoinedRow): Tone {
+  // Status-driven tone takes precedence — "error" and "disabled" are
+  // negative regardless of freshness, "syncing" is in-flight, etc.
+  if (r.status === "error") return "err";
+  if (r.status === "disabled" || r.status === "disconnected") return "err";
+  if (r.status === "decision_gated") return "warn";
+  if (r.status === "syncing" || r.status === "configured") return "warn";
+
   if (!r.health) {
-    return r.status === "connected" ? "ok" : "err";
+    return r.status === "connected" ? "ok" : "warn";
   }
   if (r.health.healthy) {
     if (
       r.health.freshness_state === "stale" ||
-      r.health.freshness_state === "very_stale"
+      r.health.freshness_state === "lagging"
     ) {
       return "warn";
     }
@@ -169,6 +176,12 @@ function describeRow(r: JoinedRow): string {
     if (r.status === "disconnected") {
       return "Not linked";
     }
+    if (r.status === "configured") {
+      return "Configured · awaiting first sync";
+    }
+    if (r.status === "disabled") {
+      return "Disabled";
+    }
     return "Health unknown";
   }
   if (h.last_error_message && !h.healthy) {
@@ -177,17 +190,21 @@ function describeRow(r: JoinedRow): string {
   if (h.last_success_at) {
     return `Last sync ${formatTime(h.last_success_at)} · ${h.freshness_state}`;
   }
-  return h.freshness_state ?? "never synced";
+  return h.freshness_state;
 }
 
 function statusPillStyle(s: string) {
   switch (s) {
     case "connected":
       return styles.statusPillOk;
-    case "pending":
+    case "syncing":
+    case "configured":
       return styles.statusPillPending;
+    case "stale":
+      return styles.statusPillWarn;
     case "disconnected":
     case "error":
+    case "disabled":
       return styles.statusPillErr;
     case "decision_gated":
       return styles.statusPillGated;
@@ -263,6 +280,7 @@ const styles = StyleSheet.create({
   statusPillOk: { backgroundColor: colors.positiveBg, color: "#00866B" },
   statusPillErr: { backgroundColor: colors.negativeBg, color: "#C0392B" },
   statusPillPending: { backgroundColor: colors.warningBg, color: "#A2660C" },
+  statusPillWarn: { backgroundColor: colors.warningBg, color: "#A2660C" },
   statusPillGated: { backgroundColor: colors.surfaceMuted, color: colors.textMuted },
   statusPillNeutral: { backgroundColor: colors.surfaceMuted, color: colors.textSecondary },
 
