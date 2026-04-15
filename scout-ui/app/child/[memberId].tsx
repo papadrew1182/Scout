@@ -1,8 +1,13 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
 import { colors, fonts, shared } from "../../lib/styles";
-import { TOWNES_CHORES, getMember, LEADERBOARD, ALLOWANCE } from "../../lib/seedData";
+import { getMember, LEADERBOARD, ALLOWANCE } from "../../lib/seedData";
+import { fetchTaskInstances, markTaskComplete, fetchChoreTemplates, fetchRoutines } from "../../lib/api";
+import { todayStr } from "../../lib/format";
+import { TaskCard } from "../../components/TaskCard";
+import type { TaskInstance, ChoreTemplate, Routine } from "../../lib/types";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -19,6 +24,73 @@ export default function Child() {
   const leader = LEADERBOARD.find((l) => l.memberId === member.id) ?? LEADERBOARD[0];
   const pct = leader.points >= 1000 ? 100 : Math.round((leader.points / 1000) * 100);
   const remaining = Math.max(0, 1000 - leader.points);
+
+  // Task loading state
+  const [tasks, setTasks] = useState<TaskInstance[]>([]);
+  const [choreMap, setChoreMap] = useState<Record<string, ChoreTemplate>>({});
+  const [routineMap, setRoutineMap] = useState<Record<string, Routine>>({});
+  const [tasksLoading, setTasksLoading] = useState(true);
+
+  const loadTasks = useCallback(async () => {
+    if (!params.memberId) return;
+    setTasksLoading(true);
+    try {
+      const [ti, tmpls, routines] = await Promise.all([
+        fetchTaskInstances(todayStr(), params.memberId),
+        fetchChoreTemplates().catch(() => [] as ChoreTemplate[]),
+        fetchRoutines(params.memberId).catch(() => [] as Routine[]),
+      ]);
+      setTasks(ti);
+      const cMap: Record<string, ChoreTemplate> = {};
+      tmpls.forEach((t) => {
+        cMap[t.id] = t;
+      });
+      setChoreMap(cMap);
+      const rMap: Record<string, Routine> = {};
+      routines.forEach((r) => {
+        rMap[r.id] = r;
+      });
+      setRoutineMap(rMap);
+    } catch {
+      setTasks([]);
+    } finally {
+      setTasksLoading(false);
+    }
+  }, [params.memberId]);
+
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+
+  const handleToggleTask = useCallback(
+    async (task: TaskInstance) => {
+      if (task.is_completed) return;
+      try {
+        await markTaskComplete(task.id);
+        await loadTasks();
+      } catch {
+        // swallow — UI can show stale state for one tick
+      }
+    },
+    [loadTasks],
+  );
+
+  const getTaskName = (task: TaskInstance): string => {
+    if (task.routine_id && routineMap[task.routine_id]) {
+      return routineMap[task.routine_id].name;
+    }
+    if (task.chore_template_id && choreMap[task.chore_template_id]) {
+      return choreMap[task.chore_template_id].name;
+    }
+    return "Task";
+  };
+
+  const getTaskDescription = (task: TaskInstance): string | null => {
+    if (task.chore_template_id && choreMap[task.chore_template_id]) {
+      return choreMap[task.chore_template_id].description ?? null;
+    }
+    return null;
+  };
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
@@ -37,20 +109,27 @@ export default function Child() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>My chores today</Text>
-            <View style={styles.tagGreen}><Text style={styles.tagGreenText}>All done!</Text></View>
+            <Text style={shared.cardAction}> </Text>
           </View>
-          {TOWNES_CHORES.map((c) => (
-            <View key={c.name} style={styles.choreRow}>
-              <View style={[styles.check, c.done && styles.checkDone]}>
-                {c.done && <Text style={styles.checkMark}>✓</Text>}
-              </View>
-              <Text style={styles.choreName}>{c.name}</Text>
-              <View style={styles.tagGreen}><Text style={styles.tagGreenText}>+{c.pts} pts</Text></View>
+          {tasksLoading ? (
+            <ActivityIndicator size="small" color={colors.purple} style={{ marginVertical: 10 }} />
+          ) : tasks.length === 0 ? (
+            <Text style={styles.emptyChores}>No chores today. Enjoy the day!</Text>
+          ) : (
+            <View style={{ gap: 6 }}>
+              {tasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  name={getTaskName(task)}
+                  isRoutine={!!task.routine_id}
+                  routineId={task.routine_id ?? null}
+                  description={getTaskDescription(task)}
+                  onToggle={() => handleToggleTask(task)}
+                />
+              ))}
             </View>
-          ))}
-          <View style={styles.streakBox}>
-            <Text style={styles.streakText}>7-day streak bonus unlocked! +20 extra pts</Text>
-          </View>
+          )}
         </View>
 
         <View style={shared.card}>
@@ -114,26 +193,12 @@ const styles = StyleSheet.create({
 
   grid2: { flexDirection: "row", gap: 12 },
 
-  choreRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 7,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  check: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
-  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
-  checkMark: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
-  choreName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
+  emptyChores: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, textAlign: "center", paddingVertical: 12 },
 
   tagGreen: { backgroundColor: colors.greenBg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
   tagGreenText: { fontSize: 10, fontWeight: "700", color: colors.greenText, fontFamily: fonts.body },
   tagPurple: { backgroundColor: colors.purpleLight, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
   tagPurpleText: { fontSize: 10, fontWeight: "700", color: colors.purpleDeep, fontFamily: fonts.body },
-
-  streakBox: { marginTop: 10, backgroundColor: colors.greenBg, borderRadius: 8, padding: 10, alignItems: "center" },
-  streakText: { fontSize: 12, color: colors.greenText, fontWeight: "600", fontFamily: fonts.body },
 
   pointsHero: { alignItems: "center", paddingVertical: 8 },
   pointsBig: { fontSize: 40, fontWeight: "600", color: colors.purple, fontFamily: fonts.mono },
