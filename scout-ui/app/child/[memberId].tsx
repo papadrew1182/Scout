@@ -1,385 +1,160 @@
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
 
-import { NeedSomething as NeedSomethingWidget } from "../../components/NeedSomething";
-import { TaskCard } from "../../components/TaskCard";
-import { shared, colors } from "../../lib/styles";
-import {
-  fetchChoreTemplates,
-  fetchDailyWins,
-  fetchEvents,
-  fetchMeals,
-  fetchMembers,
-  fetchRoutines,
-  fetchTaskInstances,
-  markTaskComplete,
-} from "../../lib/api";
-import { calculatePayout, sortMealsByType } from "../../lib/constants";
-import { todayStr, weekStartStr, weekEndStr, formatTimeOnly, sourceLabel } from "../../lib/format";
-import type {
-  ChoreTemplate,
-  DailyWin,
-  Event,
-  Meal,
-  Routine,
-  TaskInstance,
-} from "../../lib/types";
+import { colors, fonts, shared } from "../../lib/styles";
+import { TOWNES_CHORES, getMember, LEADERBOARD, ALLOWANCE } from "../../lib/seedData";
 
-function isDone(t: TaskInstance): boolean {
-  return !!(t.override_completed ?? t.is_completed);
-}
+const TINT_BG: Record<string, string> = {
+  purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
+};
+const TINT_TEXT: Record<string, string> = {
+  purple: colors.avPurpleText, teal: colors.avTealText, amber: colors.avAmberText, coral: colors.avCoralText,
+};
 
-export default function ChildDashboard() {
-  const { memberId } = useLocalSearchParams<{ memberId: string }>();
-  const [childName, setChildName] = useState("");
-  const [routineTasks, setRoutineTasks] = useState<TaskInstance[]>([]);
-  const [choreTasks, setChoreTasks] = useState<TaskInstance[]>([]);
-  const [routineMap, setRoutineMap] = useState<Record<string, Routine>>({});
-  const [choreMap, setChoreMap] = useState<Record<string, ChoreTemplate>>({});
-  const [dailyWins, setDailyWins] = useState<DailyWin[]>([]);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [meals, setMeals] = useState<Meal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!memberId) return;
-    try {
-      setLoading(true);
-      setError(null);
-      const today = todayStr();
-      const now = new Date();
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-
-      const [tasks, routines, chores, members, wins, evts, mls] = await Promise.all([
-        fetchTaskInstances(today, memberId),
-        fetchRoutines(memberId),
-        fetchChoreTemplates(),
-        fetchMembers(),
-        fetchDailyWins(memberId, weekStartStr(), weekEndStr()),
-        fetchEvents(now.toISOString(), endOfDay.toISOString()),
-        fetchMeals(today),
-      ]);
-
-      const member = members.find((m) => m.id === memberId);
-      if (member) setChildName(member.first_name);
-
-      const rMap: Record<string, Routine> = {};
-      for (const r of routines) rMap[r.id] = r;
-      setRoutineMap(rMap);
-
-      const cMap: Record<string, ChoreTemplate> = {};
-      for (const c of chores) cMap[c.id] = c;
-      setChoreMap(cMap);
-
-      const byDue = (a: TaskInstance, b: TaskInstance) =>
-        new Date(a.due_at).getTime() - new Date(b.due_at).getTime();
-
-      setRoutineTasks(tasks.filter((t) => t.routine_id !== null).sort(byDue));
-      setChoreTasks(tasks.filter((t) => t.chore_template_id !== null).sort(byDue));
-      setDailyWins(wins);
-      setEvents(
-        evts
-          .filter((e) => !e.is_cancelled && e.is_hearth_visible)
-          .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-      );
-      setMeals(sortMealsByType(mls));
-    } catch (e: any) {
-      setError(e.message ?? "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, [memberId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const handleToggle = useCallback(
-    async (task: TaskInstance) => {
-      if (task.is_completed) return;
-      try {
-        await markTaskComplete(task.id);
-        await load();
-      } catch (e: any) {
-        setError(e.message ?? "Failed to update");
-      }
-    },
-    [load]
-  );
-
-  const getTaskMeta = (task: TaskInstance) => {
-    if (task.routine_id && routineMap[task.routine_id]) {
-      const r = routineMap[task.routine_id];
-      return { name: r.name, description: null };
-    }
-    if (task.chore_template_id && choreMap[task.chore_template_id]) {
-      const c = choreMap[task.chore_template_id];
-      return { name: c.name, description: c.description };
-    }
-    return { name: "Task", description: null };
-  };
-
-  // Progress calculations
-  const allTasks = [...routineTasks, ...choreTasks];
-  const totalCount = allTasks.length;
-  const doneCount = allTasks.filter(isDone).length;
-  const allDone = totalCount > 0 && doneCount === totalCount;
-  const winCount = dailyWins.filter((w) => w.is_win).length;
-  const { baseline, amountCents: earnedCents } = calculatePayout(childName, winCount);
-
-  if (loading) {
-    return (
-      <View style={styles.pageCenter}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.pageCenter}>
-        <Text style={styles.errorLarge}>{error}</Text>
-      </View>
-    );
-  }
+export default function Child() {
+  const params = useLocalSearchParams<{ memberId: string }>();
+  // Always show Townes for the demo regardless of route param.
+  const member = getMember(params.memberId ?? "townes") ?? getMember("townes")!;
+  const allowance = ALLOWANCE.find((a) => a.memberId === member.id) ?? ALLOWANCE[1];
+  const leader = LEADERBOARD.find((l) => l.memberId === member.id) ?? LEADERBOARD[0];
+  const pct = leader.points >= 1000 ? 100 : Math.round((leader.points / 1000) * 100);
+  const remaining = Math.max(0, 1000 - leader.points);
 
   return (
-    <ScrollView style={styles.pageContainer} contentContainerStyle={styles.pageContent}>
-      {/* ---- Header + Progress Summary ---- */}
-      <Text style={styles.headerName}>{childName}'s Day</Text>
-      <Text style={styles.headerDate}>{todayStr()}</Text>
-
-      <View style={styles.summaryCard}>
-        {allDone ? (
-          <Text style={styles.summaryDone}>All done for today!</Text>
-        ) : (
-          <>
-            <Text style={styles.summaryText}>
-              {doneCount} of {totalCount} done
-            </Text>
-            <Text style={styles.encourageLine}>
-              {totalCount - doneCount === 1
-                ? "1 left — finish it"
-                : `${totalCount - doneCount} left — you've got this`}
-            </Text>
-          </>
-        )}
-        <View style={styles.summaryBar}>
-          <View
-            style={[
-              styles.summaryBarFill,
-              { width: totalCount > 0 ? `${(doneCount / totalCount) * 100}%` : "0%" },
-              allDone && styles.summaryBarDone,
-            ]}
-          />
+    <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
+      <View style={styles.hero}>
+        <View style={[styles.bigAv, { backgroundColor: TINT_BG[member.tint] }]}>
+          <Text style={[styles.bigAvText, { color: TINT_TEXT[member.tint] }]}>{member.initials}</Text>
+        </View>
+        <Text style={styles.heroTitle}>Hey {member.firstName}!</Text>
+        <Text style={styles.heroSub}>Wednesday · You finished all your chores today!</Text>
+        <View style={styles.heroPill}>
+          <Text style={styles.heroPillText}>{leader.points} pts total · Rank #{leader.rank} this week 🏆</Text>
         </View>
       </View>
 
-      {/* ---- 1. Schedule (real) ---- */}
-      <Text style={styles.sectionTitle}>Schedule</Text>
-      <View style={styles.card}>
-        {events.length === 0 ? (
-          <Text style={styles.emptyText}>No events today</Text>
-        ) : (
-          <View style={styles.itemList}>
-            {events.map((e) => (
-              <View key={e.id} style={styles.itemRow}>
-                <Text style={styles.itemTitle}>{e.title}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  {sourceLabel(e.source) && (
-                    <Text style={styles.itemBadge}>{sourceLabel(e.source)}</Text>
-                  )}
-                  <Text style={styles.itemMeta}>
-                    {formatTimeOnly(e.starts_at, e.all_day)}
-                  </Text>
-                </View>
-              </View>
-            ))}
+      <View style={styles.grid2}>
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>My chores today</Text>
+            <View style={styles.tagGreen}><Text style={styles.tagGreenText}>All done!</Text></View>
           </View>
-        )}
-      </View>
-
-      {/* ---- 2. Responsibilities ---- */}
-      <Text style={styles.sectionTitle}>Responsibilities</Text>
-
-      {routineTasks.length > 0 && (
-        <Text style={styles.groupLabel}>Routines</Text>
-      )}
-      {routineTasks.map((task) => {
-        const meta = getTaskMeta(task);
-        return (
-          <TaskCard
-            key={task.id}
-            task={task}
-            name={meta.name}
-            isRoutine={true}
-            routineId={task.routine_id}
-            description={meta.description}
-            onToggle={() => handleToggle(task)}
-            onStepChange={load}
-          />
-        );
-      })}
-
-      {choreTasks.length > 0 && (
-        <Text style={styles.groupLabel}>Chores</Text>
-      )}
-      {choreTasks.map((task) => {
-        const meta = getTaskMeta(task);
-        return (
-          <TaskCard
-            key={task.id}
-            task={task}
-            name={meta.name}
-            isRoutine={false}
-            routineId={null}
-            description={meta.description}
-            onToggle={() => handleToggle(task)}
-          />
-        );
-      })}
-
-      {totalCount === 0 && (
-        <View style={styles.card}>
-          <Text style={styles.emptyText}>No responsibilities today</Text>
-        </View>
-      )}
-
-      {/* ---- 3. Meals (real) ---- */}
-      <Text style={styles.sectionTitle}>Meals</Text>
-      <View style={styles.card}>
-        {meals.length === 0 ? (
-          <Text style={styles.emptyText}>No meals planned today</Text>
-        ) : (
-          <View style={styles.itemList}>
-            {meals.map((m) => (
-              <View key={m.id} style={styles.itemRow}>
-                <Text style={styles.mealType}>{m.meal_type}</Text>
-                <Text style={styles.itemTitle} numberOfLines={1}>{m.title}</Text>
+          {TOWNES_CHORES.map((c) => (
+            <View key={c.name} style={styles.choreRow}>
+              <View style={[styles.check, c.done && styles.checkDone]}>
+                {c.done && <Text style={styles.checkMark}>✓</Text>}
               </View>
-            ))}
+              <Text style={styles.choreName}>{c.name}</Text>
+              <View style={styles.tagGreen}><Text style={styles.tagGreenText}>+{c.pts} pts</Text></View>
+            </View>
+          ))}
+          <View style={styles.streakBox}>
+            <Text style={styles.streakText}>7-day streak bonus unlocked! +20 extra pts</Text>
           </View>
-        )}
+        </View>
+
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>My points</Text>
+            <Text style={shared.cardAction}>Rewards store</Text>
+          </View>
+          <View style={styles.pointsHero}>
+            <Text style={styles.pointsBig}>{leader.points}</Text>
+            <Text style={styles.pointsLabel}>Total points</Text>
+          </View>
+          <View style={styles.ptsBar}><View style={[styles.ptsFill, { width: `${pct}%` }]} /></View>
+          <View style={styles.ptsRange}>
+            <Text style={styles.ptsRangeText}>0</Text>
+            <Text style={styles.ptsRangeText}>{remaining} more to unlock next reward</Text>
+            <Text style={styles.ptsRangeText}>1000</Text>
+          </View>
+          <Text style={shared.sectionHead}>Recent earnings</Text>
+          <View style={styles.earnRow}>
+            <Text style={styles.earnLabel}>7-day streak bonus</Text>
+            <View style={styles.tagGreen}><Text style={styles.tagGreenText}>+20</Text></View>
+          </View>
+          <View style={styles.earnRow}>
+            <Text style={styles.earnLabel}>All chores today</Text>
+            <View style={styles.tagGreen}><Text style={styles.tagGreenText}>+40</Text></View>
+          </View>
+          <View style={styles.earnRow}>
+            <Text style={styles.earnLabel}>Reading — 30 min</Text>
+            <View style={styles.tagPurple}><Text style={styles.tagPurpleText}>+15</Text></View>
+          </View>
+        </View>
       </View>
 
-      {/* ---- 4. Progress ---- */}
-      <Text style={styles.sectionTitle}>Progress</Text>
-      <View style={styles.card}>
-        <View style={styles.progressRow}>
-          <Text style={styles.progressLabel}>This week</Text>
-          <Text style={styles.progressValue}>
-            {winCount}
-            <Text style={styles.progressMuted}>/5 days</Text>
-          </Text>
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Allowance this week</Text>
+          <Text style={shared.cardAction}> </Text>
         </View>
-        {baseline > 0 && (
-          <View style={styles.progressRow}>
-            <Text style={styles.progressLabel}>Earned so far</Text>
-            <Text style={[styles.progressValue, earnedCents > 0 && styles.progressEarned]}>
-              ${(earnedCents / 100).toFixed(2)}
-              {earnedCents > 0 && (
-                <Text style={styles.progressMuted}> of ${(baseline / 100).toFixed(2)}</Text>
-              )}
-            </Text>
+        <View style={styles.allowanceRow}>
+          <View style={styles.fullBar}>
+            <View style={[styles.fullBarFill, { width: `${(allowance.earned / allowance.max) * 100}%` }]} />
           </View>
-        )}
-        <View style={styles.winDots}>
-          {["M", "T", "W", "T", "F"].map((label, i) => {
-            const hasWin = i < winCount;
-            return (
-              <View key={i} style={styles.winDotCol}>
-                <View style={[styles.winDot, hasWin && styles.winDotFilled]} />
-                <Text style={[styles.winDotLabel, hasWin && styles.winDotLabelFilled]}>
-                  {label}
-                </Text>
-              </View>
-            );
-          })}
+          <Text style={styles.allowanceAmount}>${allowance.earned.toFixed(2)} / ${allowance.max.toFixed(2)}</Text>
+          <View style={styles.tagGreen}><Text style={styles.tagGreenText}>Full payout!</Text></View>
         </View>
+        <Text style={styles.allowanceSub}>Paid to your Greenlight card on Sunday. Keep it up!</Text>
       </View>
-
-      {/* ---- Need Something? ---- */}
-      <NeedSomethingWidget memberId={memberId} isChild={true} />
     </ScrollView>
   );
 }
 
-const local = StyleSheet.create({
-  headerName: { color: colors.textPrimary, fontSize: 24, fontWeight: "700" },
-  headerDate: { color: colors.textMuted, fontSize: 14, marginTop: 2, marginBottom: 16 },
+const styles = StyleSheet.create({
+  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  hero: { alignItems: "center", paddingVertical: 16, gap: 8 },
+  bigAv: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" },
+  bigAvText: { fontSize: 28, fontWeight: "600", fontFamily: fonts.body },
+  heroTitle: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
+  heroSub: { fontSize: 13, color: colors.muted, fontFamily: fonts.body },
+  heroPill: { backgroundColor: colors.greenBg, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 6, marginTop: 4 },
+  heroPillText: { fontSize: 12, fontWeight: "600", color: colors.greenText, fontFamily: fonts.body },
 
-  summaryCard: {
-    backgroundColor: colors.card,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 8,
-  },
-  summaryText: { color: colors.textPrimary, fontSize: 16, fontWeight: "600" },
-  summaryDone: { color: colors.positive, fontSize: 16, fontWeight: "700" },
-  encourageLine: { color: colors.textMuted, fontSize: 13, marginTop: 4 },
-  summaryBar: {
-    height: 6,
-    backgroundColor: colors.cardBorder,
-    borderRadius: 3,
-    marginTop: 10,
-    overflow: "hidden",
-  },
-  summaryBarFill: { height: 6, backgroundColor: colors.accent, borderRadius: 3 },
-  summaryBarDone: { backgroundColor: colors.positive },
+  grid2: { flexDirection: "row", gap: 12 },
 
-  groupLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 8,
-    marginTop: 4,
-  },
-
-  progressRow: {
+  choreRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 6,
+    gap: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  progressLabel: { color: colors.textSecondary, fontSize: 14 },
-  progressValue: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: "600",
-    fontVariant: ["tabular-nums"] as any,
-  },
-  progressMuted: { color: colors.textMuted, fontSize: 14, fontWeight: "500" },
-  progressEarned: { color: colors.positive },
+  check: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
+  checkMark: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
+  choreName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
 
-  winDots: {
+  tagGreen: { backgroundColor: colors.greenBg, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  tagGreenText: { fontSize: 10, fontWeight: "700", color: colors.greenText, fontFamily: fonts.body },
+  tagPurple: { backgroundColor: colors.purpleLight, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  tagPurpleText: { fontSize: 10, fontWeight: "700", color: colors.purpleDeep, fontFamily: fonts.body },
+
+  streakBox: { marginTop: 10, backgroundColor: colors.greenBg, borderRadius: 8, padding: 10, alignItems: "center" },
+  streakText: { fontSize: 12, color: colors.greenText, fontWeight: "600", fontFamily: fonts.body },
+
+  pointsHero: { alignItems: "center", paddingVertical: 8 },
+  pointsBig: { fontSize: 40, fontWeight: "600", color: colors.purple, fontFamily: fonts.mono },
+  pointsLabel: { fontSize: 12, color: colors.muted, fontFamily: fonts.body },
+  ptsBar: { height: 8, backgroundColor: colors.border, borderRadius: 4, overflow: "hidden", marginVertical: 8 },
+  ptsFill: { height: "100%", backgroundColor: colors.purple, borderRadius: 4 },
+  ptsRange: { flexDirection: "row", justifyContent: "space-between", marginBottom: 10 },
+  ptsRangeText: { fontSize: 10, color: colors.muted, fontFamily: fonts.body },
+
+  earnRow: {
     flexDirection: "row",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
+    alignItems: "center",
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  winDotCol: { alignItems: "center", gap: 4 },
-  winDot: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.cardBorder },
-  winDotFilled: { backgroundColor: colors.positive },
-  winDotLabel: {
-    color: colors.textPlaceholder,
-    fontSize: 9,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-  },
-  winDotLabelFilled: { color: colors.textMuted },
-});
+  earnLabel: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
 
-const styles = { ...shared, ...local } as typeof shared & typeof local;
+  allowanceRow: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 4 },
+  fullBar: { flex: 1, height: 12, backgroundColor: colors.border, borderRadius: 6, overflow: "hidden" },
+  fullBarFill: { height: "100%", backgroundColor: colors.green, borderRadius: 6 },
+  allowanceAmount: { fontSize: 16, fontWeight: "600", color: colors.green, fontFamily: fonts.mono },
+  allowanceSub: { fontSize: 11, color: colors.muted, marginTop: 6, fontFamily: fonts.body },
+});
