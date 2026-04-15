@@ -2,6 +2,15 @@
  * Hardcoded seed data for the redesigned UI. Single source of truth
  * for every page in the new design system. Replace with real data
  * when/if the redesign goes past mockup demo stage.
+ *
+ * KNOWN CONCERN (mockup-stage tradeoff): several fields couple view
+ * concerns into what would normally be domain data — ActivityRow.tint,
+ * PersonalTask.tagTone, CalendarEvent.dot, and the paired tag/tagTone
+ * fields in PersonalTask. When the backing data becomes real, these
+ * should be replaced with semantic kinds (e.g. "chore_complete",
+ * "meal_updated") and the UI should derive color/tone from the kind.
+ * Not fixing now because every page consuming this file is also
+ * mockup-only and gets rewritten in the same pass.
  */
 
 export type MemberRole = "admin" | "full" | "child";
@@ -212,6 +221,9 @@ export const SCOUT_AI_TOGGLES: ScoutAIToggle[] = [
 
 export interface ChildChore { name: string; done: boolean; pts: number; }
 
+// Chore list specifically for the Townes demo screenshot in the child
+// view. Not a general child-chores source — when the kid view supports
+// other children, this should become a lookup keyed by memberId.
 export const TOWNES_CHORES: ChildChore[] = [
   { name: "Make bed",          done: true, pts: 10 },
   { name: "Unload dishwasher", done: true, pts: 10 },
@@ -223,4 +235,7 @@ export const TOWNES_CHORES: ChildChore[] = [
 export const getMember = (id: string): Member | undefined =>
   FAMILY.find((m) => m.id === id);
 
-export const KIDS = FAMILY.filter((m) => m.age !== undefined && m.role !== "admin");
+// Children only (role === "child"). Does NOT include Tyler (age 18,
+// role "full"), who is a dependent but not a child for UI purposes.
+// If you want "everyone except admins," define a separate DEPENDENTS.
+export const KIDS = FAMILY.filter((m) => m.role === "child");
