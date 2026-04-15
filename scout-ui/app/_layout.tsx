@@ -9,7 +9,6 @@ import { setApiToken, setApiFamilyId } from "../lib/api";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { LoginScreen } from "../components/LoginScreen";
 import { NavBar } from "../components/NavBar";
-import { ScoutPanel } from "../components/ScoutLauncher";
 import { ScoutBar } from "../components/ScoutBar";
 import { ScoutSidebar } from "../components/ScoutSidebar";
 import { ScoutSheet } from "../components/ScoutSheet";
