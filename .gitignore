@@ -47,3 +47,7 @@ scout_mockups.html
 
 # Git worktrees for isolated feature work.
 .worktrees/
+
+# Claude Code per-developer settings (permissions, etc.).
+# Shared settings belong in .claude/settings.json instead.
+.claude/settings.local.json

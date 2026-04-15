@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(echo 'disabled')",
-      "Read(//c/Users/rober/.claude/**)"
-    ]
-  }
-}
