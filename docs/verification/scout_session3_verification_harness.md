@@ -31,8 +31,13 @@ The frontend picks its data source from `EXPO_PUBLIC_SCOUT_API_MODE`:
 - `real` → `realClient` against `API_BASE_URL`
 
 The verification pass exercises both modes. Mock mode verifies the
-happy paths; real mode verifies real-vs-mock honesty (truthful
-"unavailable" banners when endpoints aren't shipped yet).
+happy paths against seeded Roberts data. Real mode verifies that every
+canonical endpoint Session 3 consumes — including
+`/api/calendar/exports/upcoming` and `/api/control-plane/summary`,
+which became real and DB-backed in Session 2 block 3 (commit
+`3a3bf31`) and were activated on the frontend in Session 3 block 5
+(commit `6e6facf`) — actually round-trips against a running Session 2
+backend.
 
 ---
 
@@ -113,43 +118,56 @@ Run with `EXPO_PUBLIC_SCOUT_API_MODE=mock` (the default).
 
 ---
 
-## Route-level smoke — REAL MODE (real-vs-mock honesty)
+## Route-level smoke — REAL MODE
 
-Run with `EXPO_PUBLIC_SCOUT_API_MODE=real` against a Session 2 backend
-that has shipped canonical endpoints but NOT yet shipped
-`/api/calendar/exports/upcoming` or `/api/control-plane/summary`.
+Run with `EXPO_PUBLIC_SCOUT_API_MODE=real` against a running Session 2
+backend at `feat/scout-canonical-household-connectors@3a3bf31` (or any
+descendant). Every endpoint Session 3 consumes is real and DB-backed;
+there are no shipped-stubs left to verify.
 
 ### `/today`, `/rewards` — must render live
 - [ ] Both routes load real data from the canonical endpoints
 - [ ] Completion POST still updates local state + refetches rewards
-- [ ] No "unavailable" banner appears — these endpoints are live
+      when the server signals `daily_win_recomputed` or
+      `reward_preview_changed`
+- [ ] No error banner appears under normal operation
 
-### `/calendar` — must show truthful unavailable banner
+### `/calendar` — must render live exports
 - [ ] No mock rows render — the page does NOT silently fall back to
       mock data
-- [ ] An explicit `Calendar export feed not yet shipped` warn banner
-      explains the missing endpoint
-- [ ] No retry button appears (retry is not applicable for an
-      unimplemented endpoint)
-- [ ] When the backend eventually ships the endpoint, the page
-      transitions to the real list on the next refresh with no code
-      changes
+- [ ] Day-grouped list of real `scout.v_calendar_publication` rows
+      renders (or the empty state if the seeded family has no
+      upcoming exports yet)
+- [ ] If `/api/calendar/exports/upcoming` returns a non-2xx, an error
+      banner with a `Try again` button appears (no more "not yet
+      shipped" wording — the endpoint is live as of Session 2 block 3)
+- [ ] If the backing Google Calendar connector reports `stale` /
+      `lagging`, the secondary warn banner above the list explains
+      the publication state
 
-### `/control-plane` — must show honest partial state
+### `/control-plane` — must render live summary + connector health
 - [ ] `MOCK DATA` pill is NOT shown; `LIVE DATA` pill is shown instead
-- [ ] The `Summary feed not yet shipped` warn banner is visible
-- [ ] `SyncStatusPanel` and `PublicationStatusPanel` render as
-      unavailable (dimmed values / "—")
-- [ ] `ConnectorHealthPanel` STILL renders real connector rows —
-      `/api/connectors` + `/api/connectors/health` are independent of
-      the summary and live since Session 2 commit ad912e7
+- [ ] `SyncStatusPanel` shows real healthy / stale / error counters
+      from `/api/control-plane/summary`
+- [ ] `PublicationStatusPanel` shows real calendar export +
+      reward-approval counters from the same summary
+- [ ] `ConnectorHealthPanel` renders real connector rows from
+      `/api/connectors` + `/api/connectors/health` (DB-backed since
+      Session 2 block 3, commit `3a3bf31`)
+- [ ] If `/api/control-plane/summary` returns a non-2xx, an error
+      banner with a `Try again` button appears at the top, but
+      `ConnectorHealthPanel` still renders because the connector
+      endpoints are independent of the summary slice
 - [ ] If both connector endpoints error simultaneously, an error panel
       with a retry button appears under `Connector health`
 
 ### `/assist` — parent attention chip in real mode
-- [ ] Without `/api/control-plane/summary`, the `parent_attention`
-      answer skips summary-derived lines and only surfaces `Today`
-      lateness — never a regex error string
+- [ ] When `/api/control-plane/summary` is healthy, the
+      `parent_attention` answer aggregates pending approvals + sync
+      failures + connector errors + failed exports + late tasks
+- [ ] When the summary slice errors, the answer gracefully skips the
+      summary-derived lines and only surfaces `Today` lateness — never
+      a raw error string
 
 ---
 
@@ -166,10 +184,18 @@ Run once per branch. These verify no frontend-only contract drift:
 - [ ] `RoleTierKey` union matches canonical role tiers (PRIMARY_PARENT
       | PARENT | TEEN | CHILD | YOUNG_CHILD | DISPLAY_ONLY)
 - [ ] No new endpoints have been invented in `realClient.ts`
-- [ ] `realClient.getCalendarExports` still throws the "not yet
-      implemented" string (the availability helper depends on it)
-- [ ] `realClient.getControlPlaneSummary` still throws the "not yet
-      implemented" string
+- [ ] `realClient.getCalendarExports` calls
+      `GET /api/calendar/exports/upcoming` (live since Session 2
+      block 3 — see `backend/app/routes/canonical.py:626`)
+- [ ] `realClient.getControlPlaneSummary` calls
+      `GET /api/control-plane/summary` (live since Session 2 block 3
+      — see `backend/app/routes/canonical.py:687`)
+- [ ] `ConnectorFreshness` is the closed union
+      `live | lagging | stale | unknown` (matches
+      `backend/services/connectors/sync_persistence.py:23`)
+- [ ] `ConnectorStatus` is the closed union `disconnected | configured
+      | connected | syncing | stale | error | disabled | decision_gated`
+      (matches `backend/services/connectors/sync_persistence.py:14-19`)
 - [ ] No `fetch` call bypasses `realClient` or `mockClient`
 
 ## Role / view-mode consistency
