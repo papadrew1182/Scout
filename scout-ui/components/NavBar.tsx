@@ -3,9 +3,10 @@ import { usePathname, useRouter } from "expo-router";
 
 import { colors, fonts } from "../lib/styles";
 import { useIsDesktop } from "../lib/breakpoint";
+import { useAuth } from "../lib/auth";
 
 const LINKS = [
-  { href: "/",         label: "Dashboard" },
+  { href: "/",         label: "Home" },
   { href: "/personal", label: "Personal" },
   { href: "/parent",   label: "Parent" },
   { href: "/meals",    label: "Meals" },
@@ -25,6 +26,7 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
   const router = useRouter();
   const pathname = usePathname();
   const isDesktop = useIsDesktop();
+  const { logout } = useAuth();
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -54,6 +56,17 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
       ) : (
         <Pressable style={styles.menuBtn} onPress={onMenuPress} accessibilityRole="button" accessibilityLabel="Open menu">
           <Text style={styles.menuIcon}>☰</Text>
+        </Pressable>
+      )}
+
+      {isDesktop && (
+        <Pressable
+          style={styles.signOut}
+          onPress={logout}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
+        >
+          <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       )}
 
@@ -110,4 +123,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.green,
   },
   pillText: { fontSize: 11, color: "rgba(255,255,255,0.75)", fontFamily: fonts.body },
+
+  signOut: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginRight: 8,
+  },
+  signOutText: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.55)",
+    fontFamily: fonts.body,
+  },
 });
