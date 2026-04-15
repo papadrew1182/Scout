@@ -22,6 +22,9 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from services.connectors.base import (
     BaseConnectorAdapter,
     ConnectorHealth,
@@ -29,6 +32,13 @@ from services.connectors.base import (
     SyncResult,
 )
 from services.connectors.registry import get_adapter
+from services.connectors.sync_persistence import (
+    DbConnectorHealthRow,
+    db_health_for_family,
+    finish_sync_run,
+    record_event,
+    start_sync_run,
+)
 
 logger = logging.getLogger("scout.connectors.sync")
 
@@ -99,3 +109,78 @@ class SyncService:
         except Exception as e:  # pragma: no cover — defensive
             logger.exception("run_sync_failed connector=%s", request.connector_key)
             return SyncResult(status="error", error_message=str(e)[:500])
+
+    # ---- Block 3: DB-backed orchestration ----------------------------
+
+    def health_check_db(
+        self,
+        db: Session,
+        *,
+        family_id: uuid.UUID,
+    ) -> list[DbConnectorHealthRow]:
+        """DB-backed health snapshot for one family. Reads from
+        scout.connectors + scout.connector_accounts and reports
+        the locked-vocabulary status + derived freshness for every
+        registered connector. Connectors with no account row for
+        the family fall back to 'disconnected' (or 'decision_gated'
+        when the registry marks them as such).
+
+        Routes use this instead of iterating CONNECTOR_REGISTRY +
+        calling adapter.health_check(): the route should reflect
+        what's actually persisted, not what an in-memory adapter
+        stub claims.
+        """
+        return db_health_for_family(db, family_id=family_id)
+
+    def run_and_persist(
+        self,
+        db: Session,
+        *,
+        sync_job_id: uuid.UUID,
+        request: SyncRequest,
+    ) -> SyncResult:
+        """Execute one sync request end to end with persistence.
+
+        Pipeline:
+            1. start_sync_run -> writes sync_runs row, flips
+               connector_account.status to 'syncing'.
+            2. run_sync -> dispatches to adapter (handles
+               NotImplementedError gracefully).
+            3. finish_sync_run -> writes the result, updates
+               connector_account.last_success_at /
+               last_error_at / status / last_error_message.
+            4. On error, also writes a connector_event_log row
+               with severity='error' so the operator surface can
+               surface a human-readable timeline.
+
+        Returns the SyncResult so callers can act on it. Callers
+        are responsible for committing the transaction; this
+        method only flushes.
+        """
+        run_id = start_sync_run(db, sync_job_id=sync_job_id)
+        result = self.run_sync(request)
+        finish_sync_run(db, run_id=run_id, result=result)
+
+        if result.status == "error":
+            account_row = db.execute(
+                text(
+                    """
+                    SELECT connector_account_id
+                    FROM scout.sync_jobs WHERE id = :job
+                    """
+                ),
+                {"job": sync_job_id},
+            ).first()
+            if account_row:
+                record_event(
+                    db,
+                    connector_account_id=account_row.connector_account_id,
+                    event_type="sync.error",
+                    severity="error",
+                    payload={
+                        "connector_key": request.connector_key,
+                        "entity_key": request.entity_key,
+                        "error_message": result.error_message,
+                    },
+                )
+        return result

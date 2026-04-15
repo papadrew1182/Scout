@@ -585,14 +585,19 @@ class TestConnectorPlatformBasics:
         assert set(CONNECTOR_REGISTRY.keys()) == expected
 
     def test_sync_service_wraps_notimplemented_as_error_result(self):
+        # Block 3 upgraded google_calendar to a quiet operational
+        # baseline, so it no longer raises NotImplementedError.
+        # We assert the wrapping behavior against an adapter that
+        # is still a registry stub (rex is inbound-only and its
+        # client wiring is deferred).
         from services.connectors.sync_service import SyncRequest
 
         svc = SyncService()
         result = svc.run_sync(
             SyncRequest(
                 connector_account_id=uuid.uuid4(),
-                connector_key="google_calendar",
-                entity_key="calendar_event",
+                connector_key="rex",
+                entity_key="rex_inbound",
                 cursor=None,
                 force_backfill=False,
             )

@@ -44,6 +44,10 @@ from services.connectors.sync_service import SyncService
 
 router = APIRouter(prefix="/api", tags=["session2-canonical"])
 
+# Block 3 — single shared instance. Routes call into it to read
+# DB-backed connector health and to drive sync runs through the
+# persistence DAL. Stateless across requests; the per-request DB
+# session is passed in.
 _sync_service = SyncService()
 
 
@@ -688,18 +692,28 @@ def get_control_plane_summary(
     """Charter §GET /api/control-plane/summary. Aggregates the
     control-plane health across all of this family's connector
     accounts plus pending sync/export/approval counts."""
+    # Block 3 — counters now reflect real persisted state. An
+    # account in 'error' status is counted as error regardless of
+    # whether last_success_at has ever been set; an account that
+    # last succeeded inside the LIVE window counts as healthy;
+    # everything else (lagging/stale/unknown without an explicit
+    # error) is grouped into stale_count so the operator surface
+    # always renders three buckets that sum to the total number of
+    # connector accounts.
     connector_summary = db.execute(
         text(
             """
             SELECT
                 COUNT(*) FILTER (
-                    WHERE freshness_state = 'live'
+                    WHERE status = 'connected'
+                      AND freshness_state = 'live'
                 ) AS healthy_count,
                 COUNT(*) FILTER (
-                    WHERE freshness_state IN ('lagging', 'stale')
+                    WHERE status NOT IN ('error', 'disabled')
+                      AND freshness_state IN ('lagging', 'stale', 'unknown')
                 ) AS stale_count,
                 COUNT(*) FILTER (
-                    WHERE last_error_at IS NOT NULL AND last_success_at IS NULL
+                    WHERE status = 'error'
                 ) AS error_count
             FROM scout.v_control_plane
             WHERE family_id = :fid
@@ -820,21 +834,35 @@ def get_connectors_health(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    """Block 3: DB-backed health snapshot.
+
+    Reads scout.connectors LEFT JOIN scout.connector_accounts for
+    the actor's family. Connectors without an account row fall
+    back to status='disconnected' (or 'decision_gated' when the
+    registry marks them so) and freshness_state='unknown'. Status
+    + freshness vocabulary are charter-locked.
+
+    Block 2 returned synthetic data from in-memory adapter stubs;
+    Block 3 reflects what's actually persisted.
+    """
+    rows = _sync_service.health_check_db(db, family_id=actor.family_id)
     items = []
-    for connector_key in sorted(CONNECTOR_REGISTRY.keys()):
-        health = _sync_service.health_check(connector_key)
+    for r in rows:
         items.append(
             {
-                "connector_key": health.connector_key,
-                "healthy": health.healthy,
-                "freshness_state": health.freshness_state.value,
+                "connector_key": r.connector_key,
+                "label": r.label,
+                "healthy": r.healthy,
+                "status": r.status,
+                "freshness_state": r.freshness_state.value,
                 "last_success_at": (
-                    health.last_success_at.isoformat() if health.last_success_at else None
+                    r.last_success_at.isoformat() if r.last_success_at else None
                 ),
                 "last_error_at": (
-                    health.last_error_at.isoformat() if health.last_error_at else None
+                    r.last_error_at.isoformat() if r.last_error_at else None
                 ),
-                "last_error_message": health.last_error_message,
+                "last_error_message": r.last_error_message,
+                "open_alert_count": r.open_alert_count,
             }
         )
     return {"items": items}
