@@ -34,12 +34,18 @@ export function ActionCenter() {
   const today = useHouseholdToday();
   const router = useRouter();
 
+  // Parent-only surface — kid-tier viewers see nothing, per the charter's
+  // capability-driven (not age-driven) gating rule.
   if (!isParent) return null;
 
   const items = collectItems(summary.data, today.data?.summary);
 
   return (
-    <View style={styles.card}>
+    <View
+      style={styles.card}
+      accessible
+      accessibilityLabel="Parent action center"
+    >
       <Text style={styles.label}>Action center</Text>
       <Text style={styles.helper}>
         Things waiting on a parent. Read-only — no actions land here yet.
@@ -53,7 +59,8 @@ export function ActionCenter() {
             style={styles.item}
             onPress={() => router.push(it.href as any)}
             accessibilityRole="button"
-            accessibilityLabel={`${it.title} — open`}
+            accessibilityLabel={`${it.title}. ${it.detail}. Tap to open.`}
+            hitSlop={8}
           >
             <View
               style={[
@@ -64,8 +71,12 @@ export function ActionCenter() {
               ]}
             />
             <View style={styles.itemBody}>
-              <Text style={styles.itemTitle}>{it.title}</Text>
-              <Text style={styles.itemDetail}>{it.detail}</Text>
+              <Text style={styles.itemTitle} numberOfLines={2}>
+                {it.title}
+              </Text>
+              <Text style={styles.itemDetail} numberOfLines={2}>
+                {it.detail}
+              </Text>
             </View>
             <Text style={styles.itemArrow}>›</Text>
           </Pressable>

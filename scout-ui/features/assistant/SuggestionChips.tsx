@@ -35,12 +35,17 @@ export const CHIPS: ChipDef[] = [
 interface Props {
   selected: ChipId | null;
   onSelect: (id: ChipId | null) => void;
+  /** Kid-tier viewers don't see parent-gated chips. Default: show all. */
+  isParent?: boolean;
 }
 
-export function SuggestionChips({ selected, onSelect }: Props) {
+export function SuggestionChips({ selected, onSelect, isParent = true }: Props) {
+  const visible = CHIPS.filter(
+    (c) => isParent || c.id !== "parent_attention",
+  );
   return (
     <View style={styles.row}>
-      {CHIPS.map((c) => {
+      {visible.map((c) => {
         const active = selected === c.id;
         return (
           <Pressable

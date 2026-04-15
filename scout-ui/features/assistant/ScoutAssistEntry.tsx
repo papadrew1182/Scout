@@ -38,6 +38,7 @@ import {
 import { useRouter } from "expo-router";
 import { colors } from "../../lib/styles";
 import { formatTime } from "../lib/formatters";
+import { ModeTag } from "../app/ModeTag";
 import {
   ChipId,
   CHIPS,
@@ -63,12 +64,13 @@ export function ScoutAssistEntry() {
     <View>
       <Text style={styles.eyebrow}>Scout assist</Text>
       <Text style={styles.title}>Ask, suggest, intervene</Text>
+      <ModeTag />
       <Text style={styles.subtle}>
         Tap a question. Scout answers from what it can already see — no
         AI roundtrip yet.
       </Text>
 
-      <SuggestionChips selected={selected} onSelect={setSelected} />
+      <SuggestionChips selected={selected} onSelect={setSelected} isParent={isParent} />
 
       {selected && <AnswerCard chipId={selected} ctx={{ me, family, today, rewards, calendar, health, summary, isParent }} />}
 
@@ -107,7 +109,12 @@ function AnswerCard({ chipId, ctx }: { chipId: ChipId; ctx: AnswerContext }) {
   const { lines, deepLink } = computeAnswer(chipId, ctx);
 
   return (
-    <View style={styles.answer}>
+    <View
+      style={styles.answer}
+      accessible
+      accessibilityLiveRegion="polite"
+      accessibilityLabel={`${chip.label}. ${lines.join(". ") || "Nothing to surface yet."}`}
+    >
       <Text style={styles.answerLabel}>{chip.label}</Text>
       {lines.length === 0 ? (
         <Text style={styles.answerEmpty}>
@@ -117,7 +124,9 @@ function AnswerCard({ chipId, ctx }: { chipId: ChipId; ctx: AnswerContext }) {
         lines.map((l, i) => (
           <View key={i} style={styles.answerRow}>
             <Text style={styles.answerBullet}>·</Text>
-            <Text style={styles.answerLine}>{l}</Text>
+            <Text style={styles.answerLine} numberOfLines={3}>
+              {l}
+            </Text>
           </View>
         ))
       )}
@@ -127,6 +136,7 @@ function AnswerCard({ chipId, ctx }: { chipId: ChipId; ctx: AnswerContext }) {
           onPress={() => router.push(deepLink as any)}
           accessibilityRole="link"
           accessibilityLabel={`Open ${deepLink}`}
+          hitSlop={10}
         >
           <Text style={styles.deepLinkText}>Open ↗</Text>
         </Pressable>

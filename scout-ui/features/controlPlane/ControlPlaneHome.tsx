@@ -22,6 +22,8 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useControlPlaneSummary } from "../hooks";
+import { classifySlice } from "../lib/availability";
+import { ModeTag } from "../app/ModeTag";
 import { colors } from "../../lib/styles";
 import { ConnectorHealthPanel } from "./ConnectorHealthPanel";
 import { SyncStatusPanel } from "./SyncStatusPanel";
@@ -33,46 +35,40 @@ export function ControlPlaneHome() {
   // The summary slice may error in real mode (endpoint not yet
   // shipped). We DO NOT block the rest of the page on it — the
   // connector panel reads independent endpoints.
-  const summaryUnavailable =
-    summary.status === "error" ||
-    (summary.status === "ready" && summary.data === null);
-
-  const isUnavailableMessage = summary.error
-    ? /not\s*(yet\s*)?implemented/i.test(summary.error)
-    : false;
+  const view = classifySlice(
+    { status: summary.status, error: summary.error, data: summary.data },
+    "control_plane_summary",
+  );
+  const summaryUnavailable = view.kind === "unavailable" || view.kind === "error";
 
   return (
     <View>
       <Text style={styles.eyebrow}>Control plane</Text>
       <Text style={styles.title}>Connectors, sync, publication</Text>
+      <ModeTag />
       <Text style={styles.subtle}>
         How Scout is talking to the outside world. No actions here yet —
         this is a read-only operating surface.
       </Text>
 
-      {summary.status === "error" && (
+      {(view.kind === "unavailable" || view.kind === "error") && (
         <View
           style={[
             styles.banner,
-            isUnavailableMessage ? styles.bannerWarn : styles.bannerErr,
+            view.kind === "unavailable" ? styles.bannerWarn : styles.bannerErr,
           ]}
+          accessible
+          accessibilityLiveRegion="polite"
         >
-          <Text style={styles.bannerTitle}>
-            {isUnavailableMessage
-              ? "Summary feed not yet shipped"
-              : "Couldn't load control-plane summary"}
-          </Text>
-          <Text style={styles.bannerBody}>
-            {isUnavailableMessage
-              ? "/api/control-plane/summary is not yet implemented by the backend. Connector health below is still live."
-              : (summary.error ?? "Unknown error")}
-          </Text>
-          {!isUnavailableMessage && (
+          <Text style={styles.bannerTitle}>{view.title}</Text>
+          <Text style={styles.bannerBody}>{view.body}</Text>
+          {view.retryable && (
             <Pressable
               style={styles.retry}
               onPress={summary.refresh}
               accessibilityRole="button"
               accessibilityLabel="Retry loading control plane summary"
+              hitSlop={10}
             >
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>

@@ -180,6 +180,10 @@ export function TodayHome() {
       {toast && (
         <Pressable
           onPress={dismiss}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`${toast.kind === "error" ? "Error" : "Success"}: ${toast.message}. Tap to dismiss.`}
+          accessibilityLiveRegion="polite"
           style={[
             styles.toast,
             toast.kind === "error" ? styles.toastErr : styles.toastOk,
@@ -304,9 +308,15 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <View style={styles.center}>
+    <View style={styles.center} accessible accessibilityLiveRegion="polite">
       <Text style={styles.error}>{message}</Text>
-      <Pressable style={styles.retry} onPress={onRetry} accessibilityRole="button">
+      <Pressable
+        style={styles.retry}
+        onPress={onRetry}
+        accessibilityRole="button"
+        accessibilityLabel="Retry loading Today"
+        hitSlop={10}
+      >
         <Text style={styles.retryText}>Try again</Text>
       </Pressable>
     </View>

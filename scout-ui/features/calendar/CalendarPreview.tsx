@@ -28,6 +28,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { CalendarExport, ConnectorHealthItem } from "../lib/contracts";
 import { useCalendarExports, useConnectorsHealth } from "../hooks";
+import { classifySlice } from "../lib/availability";
 import { colors } from "../../lib/styles";
 import { HouseholdBlocksPreview } from "./HouseholdBlocksPreview";
 
@@ -35,14 +36,22 @@ export function CalendarPreview() {
   const exports = useCalendarExports();
   const health = useConnectorsHealth();
 
-  if (exports.status === "idle" || exports.status === "loading") {
+  const view = classifySlice(
+    { status: exports.status, error: exports.error, data: exports.data },
+    "calendar_exports",
+    { isEmpty: (d: any) => !d || (d.items ?? []).length === 0 },
+  );
+
+  if (view.kind === "loading") {
     return <SkeletonState />;
   }
 
-  if (exports.status === "error") {
+  if (view.kind === "unavailable" || view.kind === "error") {
     return (
       <UnavailableOrErrorState
-        message={exports.error ?? "Couldn't load calendar exports"}
+        title={view.title}
+        body={view.body}
+        retryable={view.retryable}
         onRetry={exports.refresh}
       />
     );
@@ -220,37 +229,34 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 }
 
 function UnavailableOrErrorState({
-  message,
+  title,
+  body,
+  retryable,
   onRetry,
 }: {
-  message: string;
+  title: string;
+  body: string;
+  retryable: boolean;
   onRetry: () => void;
 }) {
-  // Detect the realClient's "not implemented" hint and re-frame as a
-  // first-party "not yet shipped" notice instead of a scary error.
-  const isUnavailable = /not\s*(yet\s*)?implemented/i.test(message);
-
   return (
     <View>
       <Text style={styles.eyebrow}>Calendar publication</Text>
       <Text style={styles.title}>Household anchor blocks</Text>
-      <View style={[styles.banner, isUnavailable ? styles.bannerWarn : styles.bannerErr]}>
-        <Text style={styles.bannerTitle}>
-          {isUnavailable
-            ? "Calendar export feed not yet shipped"
-            : "Couldn't load calendar exports"}
-        </Text>
-        <Text style={styles.bannerBody}>
-          {isUnavailable
-            ? "The /api/calendar/exports/upcoming endpoint hasn't shipped from Session 2 yet. Once it does, this surface lights up automatically."
-            : message}
-        </Text>
-        {!isUnavailable && (
+      <View
+        style={[styles.banner, retryable ? styles.bannerErr : styles.bannerWarn]}
+        accessible
+        accessibilityLiveRegion="polite"
+      >
+        <Text style={styles.bannerTitle}>{title}</Text>
+        <Text style={styles.bannerBody}>{body}</Text>
+        {retryable && (
           <Pressable
             style={styles.retry}
             onPress={onRetry}
             accessibilityRole="button"
             accessibilityLabel="Retry loading calendar exports"
+            hitSlop={10}
           >
             <Text style={styles.retryText}>Try again</Text>
           </Pressable>

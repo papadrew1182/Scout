@@ -109,10 +109,19 @@ function PrefRow({
   return (
     <View style={styles.row}>
       <View style={styles.rowText}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        <Text style={styles.rowHelper}>{helper}</Text>
+        <Text style={styles.rowLabel} numberOfLines={2}>
+          {label}
+        </Text>
+        <Text style={styles.rowHelper} numberOfLines={3}>
+          {helper}
+        </Text>
       </View>
-      <Switch value={value} onValueChange={onChange} accessibilityLabel={label} />
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        accessibilityLabel={label}
+        accessibilityHint={helper}
+      />
     </View>
   );
 }

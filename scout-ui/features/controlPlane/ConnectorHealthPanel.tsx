@@ -13,7 +13,7 @@
  * invent backend mutations for retries / approvals / reconnects.
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import {
   ConnectorHealthItem,
@@ -34,11 +34,40 @@ export function ConnectorHealthPanel() {
   const connectors = useConnectors();
   const health = useConnectorsHealth();
 
-  if (
-    (connectors.status === "idle" || connectors.status === "loading") &&
-    (health.status === "idle" || health.status === "loading")
-  ) {
-    return <PanelSkeleton />;
+  const loading =
+    connectors.status === "idle" ||
+    connectors.status === "loading" ||
+    health.status === "idle" ||
+    health.status === "loading";
+  if (loading) return <PanelSkeleton />;
+
+  // Both slices errored: there is nothing to show. Surface an explicit
+  // error with a retry that refreshes both endpoints.
+  if (connectors.status === "error" && health.status === "error") {
+    return (
+      <View
+        style={styles.errorPanel}
+        accessible
+        accessibilityLiveRegion="polite"
+      >
+        <Text style={styles.errorTitle}>Couldn't load connectors</Text>
+        <Text style={styles.errorBody}>
+          {connectors.error ?? "Unknown error"}
+        </Text>
+        <Pressable
+          style={styles.retry}
+          onPress={() => {
+            connectors.refresh();
+            health.refresh();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Retry loading connectors"
+          hitSlop={10}
+        >
+          <Text style={styles.retryText}>Try again</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   // We render even when one of the two slices errors — the joined view
@@ -78,19 +107,34 @@ function joinRows(
 }
 
 function ConnectorRow({ row }: { row: JoinedRow }) {
-  const { health } = row;
   const tone = toneForRow(row);
   return (
-    <View style={styles.row}>
-      <View style={[styles.dot, tone === "ok" && styles.dotOk, tone === "warn" && styles.dotWarn, tone === "err" && styles.dotErr]} />
+    <View
+      style={styles.row}
+      accessible
+      accessibilityLabel={`${row.label} ${row.status.replace(/_/g, " ")}: ${describeRow(row)}`}
+    >
+      <View
+        style={[
+          styles.dot,
+          tone === "ok" && styles.dotOk,
+          tone === "warn" && styles.dotWarn,
+          tone === "err" && styles.dotErr,
+        ]}
+      />
       <View style={styles.bodyCol}>
         <View style={styles.titleRow}>
-          <Text style={styles.label}>{row.label}</Text>
-          <Text style={[styles.statusPill, statusPillStyle(row.status)]}>
+          <Text style={styles.label} numberOfLines={1} ellipsizeMode="tail">
+            {row.label}
+          </Text>
+          <Text
+            style={[styles.statusPill, statusPillStyle(row.status)]}
+            numberOfLines={1}
+          >
             {row.status.toUpperCase().replace(/_/g, " ")}
           </Text>
         </View>
-        <Text style={styles.meta} numberOfLines={2}>
+        <Text style={styles.meta} numberOfLines={2} ellipsizeMode="tail">
           {describeRow(row)}
         </Text>
       </View>
@@ -224,6 +268,38 @@ const styles = StyleSheet.create({
 
   empty: { padding: 16 },
   emptyText: { color: colors.textMuted, fontSize: 12 },
+
+  errorPanel: {
+    backgroundColor: colors.negativeBg,
+    borderRadius: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.negative,
+    padding: 14,
+  },
+  errorTitle: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  errorBody: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  retry: {
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignSelf: "flex-start",
+    marginTop: 10,
+  },
+  retryText: {
+    color: colors.buttonPrimaryText,
+    fontWeight: "700",
+    fontSize: 12,
+  },
 
   skeletonRow: {
     height: 44,
