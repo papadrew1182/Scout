@@ -44,3 +44,6 @@ docs/superpowers/
 # Orphan design mockups dropped at the repo root during exploration.
 # Keep out of version control so they don't get committed by accident.
 scout_mockups.html
+
+# Git worktrees for isolated feature work.
+.worktrees/
