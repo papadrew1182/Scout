@@ -4,13 +4,27 @@ import { useControlPlaneSummary } from "../../../features/hooks";
 import { formatTime } from "../../../features/lib/formatters";
 import { colors } from "../../../lib/styles";
 
+/**
+ * Control-plane placeholder surface. The /api/control-plane/summary
+ * endpoint is not yet shipped by the backend, so this route still reads
+ * from the mock client. Field names match the canonical
+ * ConnectorHealthItem (connector_key, healthy, last_success_at, etc).
+ */
 export default function ControlPlaneRoute() {
   const { data, status, error } = useControlPlaneSummary();
   if (status === "loading" || status === "idle") {
     return <Text style={styles.muted}>Loading control plane…</Text>;
   }
   if (status === "error") {
-    return <Text style={styles.error}>{error ?? "Failed to load control plane"}</Text>;
+    return (
+      <View>
+        <Text style={styles.eyebrow}>Control plane</Text>
+        <Text style={styles.title}>Not yet shipped</Text>
+        <Text style={styles.muted}>
+          {error ?? "Endpoint not implemented by the backend yet."}
+        </Text>
+      </View>
+    );
   }
   if (!data) return null;
 
@@ -33,11 +47,12 @@ export default function ControlPlaneRoute() {
 
       <Text style={styles.section}>Connector health</Text>
       {data.connectors.map((c) => (
-        <View key={c.id} style={styles.row}>
-          <View style={[styles.rowDot, c.ok ? styles.dotOk : styles.dotErr]} />
-          <Text style={styles.rowMain}>{c.id}</Text>
+        <View key={c.connector_key} style={styles.row}>
+          <View style={[styles.rowDot, c.healthy ? styles.dotOk : styles.dotErr]} />
+          <Text style={styles.rowMain}>{c.connector_key}</Text>
           <Text style={styles.rowSub}>
-            {c.last_sync_status} · {c.last_sync_at ? formatTime(c.last_sync_at) : "never"}
+            {c.freshness_state} ·{" "}
+            {c.last_success_at ? formatTime(c.last_success_at) : "never"}
           </Text>
         </View>
       ))}
@@ -60,16 +75,13 @@ export default function ControlPlaneRoute() {
           </Text>
         </View>
       ))}
-      {data.sync_jobs.some((j) => j.error_message) && (
-        <Text style={styles.error}>
-          {data.sync_jobs.find((j) => j.error_message)?.error_message}
-        </Text>
-      )}
 
       <Text style={styles.section}>Publication</Text>
       {data.publications.map((p) => (
         <View key={p.surface} style={styles.row}>
-          <View style={[styles.rowDot, p.failed_count > 0 ? styles.dotErr : styles.dotOk]} />
+          <View
+            style={[styles.rowDot, p.failed_count > 0 ? styles.dotErr : styles.dotOk]}
+          />
           <Text style={styles.rowMain}>{p.surface.replace(/_/g, " ")}</Text>
           <Text style={styles.rowSub}>
             pending {p.pending_count} · failed {p.failed_count}
@@ -77,24 +89,16 @@ export default function ControlPlaneRoute() {
         </View>
       ))}
 
-      <Text style={styles.section}>Notifications</Text>
-      <View style={styles.row}>
-        <View style={[styles.rowDot, styles.dotInfo]} />
-        <Text style={styles.rowMain}>Rules active</Text>
-        <Text style={styles.rowSub}>{data.notifications.rules_active}</Text>
-      </View>
-      <View style={styles.row}>
-        <View style={[styles.rowDot, styles.dotOk]} />
-        <Text style={styles.rowMain}>Deliveries 24h</Text>
-        <Text style={styles.rowSub}>{data.notifications.deliveries_24h}</Text>
-      </View>
+      <Text style={styles.note}>
+        This surface still reads from the mock client. Once
+        /api/control-plane/summary ships it will switch automatically.
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   muted: { color: colors.textMuted, marginTop: 60, textAlign: "center" },
-  error: { color: colors.negative, marginTop: 8 },
   eyebrow: {
     color: colors.accent,
     fontSize: 11,
@@ -141,4 +145,10 @@ const styles = StyleSheet.create({
   dotInfo: { backgroundColor: colors.info },
   rowMain: { flex: 1, color: colors.textPrimary, fontSize: 13, fontWeight: "600" },
   rowSub: { color: colors.textMuted, fontSize: 12 },
+  note: {
+    color: colors.textPlaceholder,
+    fontSize: 11,
+    marginTop: 18,
+    textAlign: "center",
+  },
 });
