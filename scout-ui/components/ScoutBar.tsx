@@ -80,7 +80,8 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.body,
     paddingVertical: 0,
-  } as any, // suppress web outline
+    outlineWidth: 0,
+  } as any, // whole-object cast — RN types reject `outlineWidth` at excess-property check
   sendBtn: {
     width: 26,
     height: 26,
