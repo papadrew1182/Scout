@@ -1,7 +1,12 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
+import { useEffect, useState } from "react";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { ACTION_INBOX, HOMEWORK, ALLOWANCE, LEADERBOARD, getMember } from "../../lib/seedData";
+import { createWeeklyPayout, fetchMembers, PayoutError } from "../../lib/api";
+import { calculatePayout } from "../../lib/constants";
+import { weekStartStr } from "../../lib/format";
+import type { FamilyMember } from "../../lib/types";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -18,9 +23,80 @@ const INBOX_TONE: Record<string, { bg: string; fg: string; label: string }> = {
 };
 
 export default function Parent() {
+  const [children, setChildren] = useState<FamilyMember[]>([]);
+  const [payoutRan, setPayoutRan] = useState(false);
+  const [payoutMsg, setPayoutMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetchMembers()
+      .then((all) => {
+        setChildren(all.filter((m) => m.role === "child" && m.is_active));
+      })
+      .catch(() => {
+        // ignore — the card still renders with the button that will
+        // just no-op if no children are loaded
+      });
+  }, []);
+
+  const handleRunPayouts = async () => {
+    if (busy || payoutRan) return;
+    setBusy(true);
+    setPayoutMsg(null);
+    const wStart = weekStartStr();
+    const results: string[] = [];
+    let hasError = false;
+    let allDuplicate = true;
+
+    for (const child of children) {
+      const { baseline } = calculatePayout(child.first_name, 0);
+      if (baseline === 0) continue;
+      try {
+        await createWeeklyPayout(child.id, baseline, wStart);
+        results.push(`${child.first_name}: payout created`);
+        allDuplicate = false;
+      } catch (e: any) {
+        hasError = true;
+        if (e instanceof PayoutError && e.status === 409) {
+          results.push(`${child.first_name}: payout already exists for this week`);
+        } else {
+          results.push(`${child.first_name}: payout failed`);
+          allDuplicate = false;
+        }
+      }
+    }
+
+    setPayoutRan(true);
+    setBusy(false);
+    setPayoutMsg(
+      allDuplicate
+        ? "Payout already run for this week"
+        : results.join("\n") || "No eligible children"
+    );
+  };
+
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <Text style={styles.h1}>Parent Dashboard</Text>
+
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Weekly payout</Text>
+          <Text style={shared.cardAction}> </Text>
+        </View>
+        <Pressable
+          style={[styles.payoutBtn, (busy || payoutRan) && styles.payoutBtnDisabled]}
+          onPress={handleRunPayouts}
+          disabled={busy || payoutRan}
+          accessibilityRole="button"
+          accessibilityLabel="Run Weekly Payout"
+        >
+          <Text style={styles.payoutBtnText}>
+            {busy ? "Running…" : payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}
+          </Text>
+        </Pressable>
+        {payoutMsg && <Text style={styles.payoutMsg}>{payoutMsg}</Text>}
+      </View>
 
       <View style={[styles.alert, styles.alertRed]}>
         <Text style={[styles.alertText, { color: colors.redText }]}>
@@ -195,4 +271,20 @@ const styles = StyleSheet.create({
 
   tag: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
   tagText: { fontSize: 10, fontWeight: "700", fontFamily: fonts.body },
+
+  payoutBtn: {
+    backgroundColor: colors.purple,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  payoutBtnDisabled: { backgroundColor: colors.border },
+  payoutBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
+  payoutMsg: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    marginTop: 8,
+    lineHeight: 17,
+  },
 });
