@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Slot, usePathname } from "expo-router";
+import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold } from "@expo-google-fonts/dm-sans";
+import { DMMono_400Regular, DMMono_500Medium } from "@expo-google-fonts/dm-mono";
 
 import { AuthProvider, useAuth } from "../lib/auth";
 import { setApiToken, setApiFamilyId } from "../lib/api";
@@ -58,6 +60,22 @@ function AppShell() {
 }
 
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+    DMMono_400Regular,
+    DMMono_500Medium,
+  });
+
+  if (!fontsLoaded) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color={colors.purple} />
+      </View>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <AuthProvider>
