@@ -896,51 +896,91 @@ export function mockConnectorsHealth(): ConnectorsHealthResponse {
 // ---------------------------------------------------------------------------
 
 export function mockCalendarExports(): CalendarExportsResponse {
+  // Convert the seeded routine blocks into anchor-block exports that
+  // would publish to the family Google Calendar (and therefore the
+  // Hearth display lane). We export ROUTINE BLOCKS only, never the
+  // micro-tasks underneath — this is the documented strategy from the
+  // external-data roadmap (Phase 2: "do not publish every micro-task as
+  // a standalone calendar event"). Weekly items get a single export
+  // when present (Saturday Power 60).
   const state = ensureState();
-  const upcoming: CalendarExport[] = state.blocks.slice(0, 5).map((b, i) => ({
-    export_id: `cal-${b.block_key}`,
-    title: b.label,
-    starts_at: b.starts_at ?? b.due_at ?? isoLocal(new Date()),
-    ends_at: b.ends_at ?? b.due_at ?? isoLocal(new Date()),
-    google_calendar_event_id: i === 0 ? "gcal-mock-12345" : null,
-    publication_status: i === 0 ? "published" : "pending",
-  }));
-  return { generated_at: isoLocal(new Date()), upcoming };
+
+  const items: CalendarExport[] = [];
+
+  for (const b of state.blocks) {
+    items.push({
+      calendar_export_id: `cal-${b.block_key}`,
+      label: b.label,
+      starts_at: b.starts_at ?? b.due_at ?? isoLocal(new Date()),
+      ends_at: b.ends_at ?? b.due_at ?? isoLocal(new Date()),
+      source_type: "routine_block",
+      source_id: b.block_key,
+      target: "google_calendar",
+      hearth_visible: true,
+    });
+  }
+
+  // Weekly items are emitted as a single Power-60 anchor export when
+  // any are seeded for today (Saturdays only in the mock).
+  if (state.weekly.length > 0) {
+    const first = state.weekly[0];
+    items.push({
+      calendar_export_id: "cal-power-60",
+      label: "Power 60",
+      starts_at: first.due_at ?? isoLocal(new Date()),
+      ends_at: first.due_at ?? isoLocal(new Date()),
+      source_type: "weekly_event",
+      source_id: "weekly-power-60",
+      target: "google_calendar",
+      hearth_visible: true,
+    });
+  }
+
+  return { items };
 }
 
 export function mockControlPlaneSummary(): ControlPlaneSummaryResponse {
+  // Aggregate the existing mocked connector + reward state into the
+  // four buckets the charter pins. This stays consistent with what
+  // mockConnectorsHealth() and mockRewardsWeek() return.
   const health = mockConnectorsHealth();
-  const now = new Date();
+  let healthy = 0;
+  let stale = 0;
+  let error = 0;
+  for (const h of health.items) {
+    if (!h.healthy) {
+      // never_synced / decision_gated / explicit error → error bucket
+      // unless freshness flags it as merely stale.
+      if (h.freshness_state === "stale" || h.freshness_state === "very_stale") {
+        stale += 1;
+      } else {
+        error += 1;
+      }
+    } else if (h.freshness_state === "stale" || h.freshness_state === "very_stale") {
+      stale += 1;
+    } else {
+      healthy += 1;
+    }
+  }
+
+  // Calendar export pending/failed counts mirror the calendar exports
+  // mock — all routine_block exports are "published" once their
+  // connector is healthy. We expose pending + failed both as zero
+  // because the mock posts to Google Calendar successfully.
+  const calendar_exports = { pending_count: 0, failed_count: 0 };
+
+  // Sync job state: assume the calendar publisher is running once per
+  // hour and is currently idle, while greenlight is errored because
+  // the connector is not linked.
+  const sync_jobs = { running_count: 0, failed_count: 1 };
+
+  // Reward approval: one period in draft → one pending approval.
+  const rewards = { pending_approval_count: 1 };
+
   return {
-    generated_at: isoLocal(now),
-    household_status: "warning",
-    connectors: health.items,
-    sync_jobs: [
-      {
-        job_id: "job-cal-publish",
-        name: "Calendar publish",
-        status: "idle",
-        last_run_at: isoLocal(new Date(now.getTime() - 5 * 60_000)),
-        next_run_at: isoLocal(new Date(now.getTime() + 25 * 60_000)),
-        error_message: null,
-      },
-      {
-        job_id: "job-greenlight-sync",
-        name: "Greenlight sync",
-        status: "error",
-        last_run_at: null,
-        next_run_at: null,
-        error_message: "Connector not linked",
-      },
-    ],
-    publications: [
-      {
-        surface: "hearth_calendar_lane",
-        last_published_at: isoLocal(new Date(now.getTime() - 5 * 60_000)),
-        pending_count: 4,
-        failed_count: 0,
-      },
-    ],
-    notifications: { rules_active: 6, deliveries_24h: 12, failures_24h: 0 },
+    connectors: { healthy_count: healthy, stale_count: stale, error_count: error },
+    sync_jobs,
+    calendar_exports,
+    rewards,
   };
 }

@@ -271,51 +271,94 @@ export interface ConnectorsHealthResponse {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/calendar/exports/upcoming   (NOT YET SHIPPED — mock-only)
+// GET /api/calendar/exports/upcoming
+//
+// Charter shape (docs/sessions/scout_session_3_operating_surface_and_control_plane.md
+// "GET /api/calendar/exports/upcoming"):
+//   {
+//     "items": [
+//       {
+//         "calendar_export_id": "uuid",
+//         "label": "Evening Reset",
+//         "starts_at": "...",
+//         "ends_at": "...",
+//         "source_type": "routine_block",
+//         "source_id": "uuid",
+//         "target": "google_calendar",
+//         "hearth_visible": true
+//       }
+//     ]
+//   }
+//
+// `target` is open-ended (string) so the frontend doesn't pin a partial
+// enum. The known value today is "google_calendar". `source_type` covers
+// at least "routine_block"; we expect "weekly_event" / "ownership_chore"
+// / "rotating_chore" to follow once the backend ships them.
 // ---------------------------------------------------------------------------
 
+export type CalendarExportSourceType =
+  | "routine_block"
+  | "weekly_event"
+  | "ownership_chore"
+  | "rotating_chore"
+  | (string & {});
+
 export interface CalendarExport {
-  export_id: UUID;
-  title: string;
+  calendar_export_id: UUID;
+  label: string;
   starts_at: ISODateTime;
   ends_at: ISODateTime;
-  google_calendar_event_id: string | null;
-  publication_status: "pending" | "published" | "failed";
-  failure_reason?: string | null;
+  source_type: CalendarExportSourceType;
+  source_id: UUID;
+  target: string;
+  hearth_visible: boolean;
 }
 
 export interface CalendarExportsResponse {
-  generated_at: ISODateTime;
-  upcoming: CalendarExport[];
+  items: CalendarExport[];
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/control-plane/summary   (NOT YET SHIPPED — mock-only)
+// GET /api/control-plane/summary
+//
+// Charter shape (docs/sessions/scout_session_3_operating_surface_and_control_plane.md
+// "GET /api/control-plane/summary"):
+//   {
+//     "connectors": { "healthy_count", "stale_count", "error_count" },
+//     "sync_jobs":  { "running_count", "failed_count" },
+//     "calendar_exports": { "pending_count", "failed_count" },
+//     "rewards":   { "pending_approval_count" }
+//   }
+//
+// Per-connector detail rows live in /api/connectors and /api/connectors/health,
+// not here. The summary is an aggregate.
 // ---------------------------------------------------------------------------
 
+export interface ControlPlaneConnectorsBucket {
+  healthy_count: number;
+  stale_count: number;
+  error_count: number;
+}
+
+export interface ControlPlaneSyncJobsBucket {
+  running_count: number;
+  failed_count: number;
+}
+
+export interface ControlPlaneCalendarExportsBucket {
+  pending_count: number;
+  failed_count: number;
+}
+
+export interface ControlPlaneRewardsBucket {
+  pending_approval_count: number;
+}
+
 export interface ControlPlaneSummaryResponse {
-  generated_at: ISODateTime;
-  household_status: "healthy" | "warning" | "critical";
-  connectors: ConnectorHealthItem[];
-  sync_jobs: Array<{
-    job_id: UUID;
-    name: string;
-    status: "idle" | "running" | "error";
-    last_run_at: ISODateTime | null;
-    next_run_at: ISODateTime | null;
-    error_message: string | null;
-  }>;
-  publications: Array<{
-    surface: "hearth_calendar_lane";
-    last_published_at: ISODateTime | null;
-    pending_count: number;
-    failed_count: number;
-  }>;
-  notifications: {
-    rules_active: number;
-    deliveries_24h: number;
-    failures_24h: number;
-  };
+  connectors: ControlPlaneConnectorsBucket;
+  sync_jobs: ControlPlaneSyncJobsBucket;
+  calendar_exports: ControlPlaneCalendarExportsBucket;
+  rewards: ControlPlaneRewardsBucket;
 }
 
 // ---------------------------------------------------------------------------

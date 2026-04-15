@@ -1,0 +1,189 @@
+/**
+ * ControlPlaneHome — Session 3 Block 3 control-plane starter.
+ *
+ * Composes three sub-panels:
+ *   - SyncStatusPanel       (counts from /api/control-plane/summary)
+ *   - PublicationStatusPanel (calendar + reward buckets from summary)
+ *   - ConnectorHealthPanel  (per-connector rows from /api/connectors
+ *                            + /api/connectors/health)
+ *
+ * Real vs mock:
+ *   - In mock mode the mock client serves all three endpoints.
+ *   - In real mode, /api/control-plane/summary is not yet shipped.
+ *     ControlPlaneHome detects the slice's error, marks the
+ *     summary-driven panels as `unavailable`, and STILL renders the
+ *     ConnectorHealthPanel from /api/connectors + /api/connectors/health
+ *     because those have been live since Session 2 commit ad912e7.
+ *
+ * No mutations. The charter explicitly forbids inventing reconnect /
+ * approval / retry endpoints in this block.
+ */
+
+import { Pressable, StyleSheet, Text, View } from "react-native";
+
+import { useControlPlaneSummary } from "../hooks";
+import { colors } from "../../lib/styles";
+import { ConnectorHealthPanel } from "./ConnectorHealthPanel";
+import { SyncStatusPanel } from "./SyncStatusPanel";
+import { PublicationStatusPanel } from "./PublicationStatusPanel";
+
+export function ControlPlaneHome() {
+  const summary = useControlPlaneSummary();
+
+  // The summary slice may error in real mode (endpoint not yet
+  // shipped). We DO NOT block the rest of the page on it — the
+  // connector panel reads independent endpoints.
+  const summaryUnavailable =
+    summary.status === "error" ||
+    (summary.status === "ready" && summary.data === null);
+
+  const isUnavailableMessage = summary.error
+    ? /not\s*(yet\s*)?implemented/i.test(summary.error)
+    : false;
+
+  return (
+    <View>
+      <Text style={styles.eyebrow}>Control plane</Text>
+      <Text style={styles.title}>Connectors, sync, publication</Text>
+      <Text style={styles.subtle}>
+        How Scout is talking to the outside world. No actions here yet —
+        this is a read-only operating surface.
+      </Text>
+
+      {summary.status === "error" && (
+        <View
+          style={[
+            styles.banner,
+            isUnavailableMessage ? styles.bannerWarn : styles.bannerErr,
+          ]}
+        >
+          <Text style={styles.bannerTitle}>
+            {isUnavailableMessage
+              ? "Summary feed not yet shipped"
+              : "Couldn't load control-plane summary"}
+          </Text>
+          <Text style={styles.bannerBody}>
+            {isUnavailableMessage
+              ? "/api/control-plane/summary is not yet implemented by the backend. Connector health below is still live."
+              : (summary.error ?? "Unknown error")}
+          </Text>
+          {!isUnavailableMessage && (
+            <Pressable
+              style={styles.retry}
+              onPress={summary.refresh}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading control plane summary"
+            >
+              <Text style={styles.retryText}>Try again</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      <SectionLabel>Sync status</SectionLabel>
+      <SyncStatusPanel
+        connectors={summary.data?.connectors ?? null}
+        syncJobs={summary.data?.sync_jobs ?? null}
+        unavailable={summaryUnavailable}
+      />
+
+      <SectionLabel>Publication</SectionLabel>
+      <PublicationStatusPanel
+        calendarExports={summary.data?.calendar_exports ?? null}
+        rewards={summary.data?.rewards ?? null}
+        unavailable={summaryUnavailable}
+      />
+
+      <SectionLabel>Connector health</SectionLabel>
+      <ConnectorHealthPanel />
+
+      <Text style={styles.footnote}>
+        Scout owns the operating model. Greenlight is payout-facing only.
+        Hearth is display only. None of those are interactive from here.
+      </Text>
+    </View>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <Text style={styles.section}>{children}</Text>;
+}
+
+const styles = StyleSheet.create({
+  eyebrow: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.6,
+    textTransform: "uppercase",
+  },
+  title: {
+    color: colors.textPrimary,
+    fontSize: 30,
+    fontWeight: "800",
+    marginTop: 4,
+    letterSpacing: -0.6,
+  },
+  subtle: {
+    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  section: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1.4,
+    marginTop: 22,
+    marginBottom: 8,
+  },
+  banner: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.cardBorder,
+  },
+  bannerWarn: {
+    backgroundColor: colors.warningBg,
+    borderLeftColor: colors.warning,
+  },
+  bannerErr: {
+    backgroundColor: colors.negativeBg,
+    borderLeftColor: colors.negative,
+  },
+  bannerTitle: { color: colors.textPrimary, fontSize: 13, fontWeight: "800" },
+  bannerBody: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  retry: {
+    backgroundColor: colors.accent,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignSelf: "flex-start",
+    marginTop: 10,
+  },
+  retryText: {
+    color: colors.buttonPrimaryText,
+    fontWeight: "700",
+    fontSize: 12,
+  },
+  footnote: {
+    color: colors.textPlaceholder,
+    fontSize: 11,
+    marginTop: 24,
+    textAlign: "center",
+    paddingHorizontal: 16,
+    lineHeight: 16,
+    fontStyle: "italic",
+  },
+});
