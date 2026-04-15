@@ -1,733 +1,198 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { ActionInbox } from "../../components/ActionInbox";
-import { AIUsageCard } from "../../components/AIUsageCard";
-import { NeedSomething } from "../../components/NeedSomething";
-import {
-  fetchMembers,
-  fetchTaskInstances,
-  fetchDailyWins,
-  fetchEvents,
-  fetchMeals,
-  fetchUnpaidBills,
-  createWeeklyPayout,
-  fetchParentDashboardInsight,
-  fetchHomeworkSummary,
-  PayoutError,
-  type HomeworkSummary,
-} from "../../lib/api";
-import { calculatePayout, sortMealsByType } from "../../lib/constants";
-import { todayStr, weekStartStr, weekEndStr, formatEventTime, formatDueDate, sourceLabel } from "../../lib/format";
-import { shared, colors } from "../../lib/styles";
-import type {
-  Bill,
-  DailyWin,
-  Event,
-  FamilyMember,
-  Meal,
-  TaskInstance,
-} from "../../lib/types";
+import { colors, fonts, shared } from "../../lib/styles";
+import { ACTION_INBOX, HOMEWORK, ALLOWANCE, LEADERBOARD, getMember } from "../../lib/seedData";
 
-// ============================================================================
-// Weekly status derivation (rule-based, no AI)
-// ============================================================================
+const TINT_BG: Record<string, string> = {
+  purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
+};
+const TINT_TEXT: Record<string, string> = {
+  purple: colors.avPurpleText, teal: colors.avTealText, amber: colors.avAmberText, coral: colors.avCoralText,
+};
 
-type WeeklyStatus = "on_track" | "at_risk" | "off_track" | "complete";
+const INBOX_TONE: Record<string, { bg: string; fg: string; label: string }> = {
+  purchase: { bg: colors.amberBg,    fg: colors.amberText,    label: "Purchase" },
+  brief:    { bg: colors.purpleLight,fg: colors.purpleDeep,   label: "Brief" },
+  chore:    { bg: colors.amberBg,    fg: colors.amberText,    label: "Chore" },
+  win:      { bg: colors.greenBg,    fg: colors.greenText,    label: "Win" },
+};
 
-function deriveWeeklyStatus(wins: number): WeeklyStatus {
-  // What day of the scoring week are we? Mon=1 .. Fri=5
-  const dow = new Date().getDay(); // 0=Sun
-  const scoringDay = dow === 0 ? 5 : Math.min(dow, 5); // clamp weekends to Friday
-  const daysRemaining = 5 - scoringDay;
-  const maxPossible = wins + daysRemaining;
-
-  if (wins === 5) return "complete";
-  if (maxPossible < 3) return "off_track"; // can't reach 60% payout
-  if (wins >= 3 && scoringDay <= 3) return "on_track"; // 3+ by Wed
-  if (wins >= 4 && scoringDay <= 4) return "on_track"; // 4+ by Thu
-  if (wins >= scoringDay) return "on_track"; // winning every day so far
-  if (maxPossible >= 3) return "at_risk"; // still recoverable
-  return "off_track";
-}
-
-function weeklyStatusLabel(status: WeeklyStatus): string {
-  switch (status) {
-    case "complete": return "Complete";
-    case "on_track": return "On track";
-    case "at_risk": return "At risk";
-    case "off_track": return "Off track";
-  }
-}
-
-function weeklyStatusColor(status: WeeklyStatus): string {
-  switch (status) {
-    case "complete": return colors.positive;
-    case "on_track": return colors.positive;
-    case "at_risk": return colors.warning;
-    case "off_track": return colors.negative;
-  }
-}
-
-interface HouseholdInsight {
-  text: string;
-  tone: "positive" | "warning" | "negative" | "neutral";
-}
-
-function deriveHouseholdInsight(
-  statuses: { member: FamilyMember; total: number; completed: number; wins: number }[]
-): HouseholdInsight {
-  if (statuses.length === 0) return { text: "", tone: "neutral" };
-
-  const offTrack = statuses.filter((s) => deriveWeeklyStatus(s.wins) === "off_track");
-  if (offTrack.length > 0) {
-    const names = offTrack.map((s) => s.member.first_name).join(" and ");
-    return { text: `${names} can't reach full payout this week`, tone: "negative" };
-  }
-
-  const atRisk = statuses.filter((s) => deriveWeeklyStatus(s.wins) === "at_risk");
-  if (atRisk.length > 0) {
-    const names = atRisk.map((s) => s.member.first_name).join(" and ");
-    return { text: `${names} ${atRisk.length > 1 ? "are" : "is"} at risk this week`, tone: "warning" };
-  }
-
-  const allDoneToday = statuses.every((s) => s.total > 0 && s.completed === s.total);
-  if (allDoneToday) return { text: "All kids are done for today", tone: "positive" };
-
-  const incomplete = statuses.filter((s) => s.total - s.completed > 0);
-  if (incomplete.length > 0) {
-    const names = incomplete.map((s) => s.member.first_name).join(", ");
-    return { text: `Still working: ${names}`, tone: "neutral" };
-  }
-
-  return { text: "Everyone is on track this week", tone: "positive" };
-}
-
-function insightBorderColor(tone: HouseholdInsight["tone"]): string {
-  switch (tone) {
-    case "positive": return colors.positive;
-    case "warning": return colors.warning;
-    case "negative": return colors.negative;
-    default: return colors.accent;
-  }
-}
-
-// ============================================================================
-// Family Schedule — next 3 days
-// ============================================================================
-
-function FamilyScheduleSection() {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const now = new Date();
-    const horizon = new Date();
-    horizon.setDate(horizon.getDate() + 3);
-    fetchEvents(now.toISOString(), horizon.toISOString())
-      .then((data) => {
-        setEvents(
-          data
-            .filter((e) => !e.is_cancelled)
-            .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-        );
-      })
-      .catch((e) => setError(e.message ?? "Failed to load"))
-      .finally(() => setLoading(false));
-  }, []);
-
+export default function Parent() {
   return (
-    <>
-      <Text style={styles.sectionTitle}>Family Schedule</Text>
-      <View style={styles.card}>
-        {loading && <ActivityIndicator size="small" color={colors.accent} />}
-        {!loading && error && <Text style={styles.errorText}>{error}</Text>}
-        {!loading && !error && events.length === 0 && (
-          <Text style={styles.emptyText}>No upcoming events</Text>
-        )}
-        {!loading && !error && events.length > 0 && (
-          <View style={styles.itemList}>
-            {events.map((e) => (
-              <View key={e.id} style={styles.itemRow}>
-                <View style={styles.itemMain}>
-                  <Text style={styles.itemTitle}>{e.title}</Text>
-                  <Text style={styles.itemMeta}>
-                    {formatEventTime(e.starts_at, e.all_day)}
-                  </Text>
-                </View>
-                {sourceLabel(e.source) && (
-                  <Text style={styles.itemBadge}>{sourceLabel(e.source)}</Text>
-                )}
-              </View>
-            ))}
+    <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
+      <Text style={styles.h1}>Parent Dashboard</Text>
+
+      <View style={[styles.alert, styles.alertRed]}>
+        <Text style={[styles.alertText, { color: colors.redText }]}>
+          River (0/3 chores) and Tyler (2/4 chores) are behind. Allowance payout at risk for both.
+        </Text>
+      </View>
+      <View style={[styles.alert, styles.alertAmber]}>
+        <Text style={[styles.alertText, { color: colors.amberText }]}>
+          1 pending purchase request needs approval · 12 items in action inbox
+        </Text>
+      </View>
+
+      <View style={styles.grid2}>
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Action inbox</Text>
+            <View style={styles.countBadge}><Text style={styles.countBadgeText}>12</Text></View>
           </View>
-        )}
-      </View>
-    </>
-  );
-}
-
-// ============================================================================
-// Meals — today
-// ============================================================================
-
-function MealsSection() {
-  const [meals, setMeals] = useState<Meal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchMeals(todayStr())
-      .then((data) => {
-        setMeals(
-          sortMealsByType(data)
-        );
-      })
-      .catch((e) => setError(e.message ?? "Failed to load"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <>
-      <Text style={styles.sectionTitle}>Meals</Text>
-      <View style={styles.card}>
-        {loading && <ActivityIndicator size="small" color={colors.accent} />}
-        {!loading && error && <Text style={styles.errorText}>{error}</Text>}
-        {!loading && !error && meals.length === 0 && (
-          <Text style={styles.emptyText}>No meals planned today</Text>
-        )}
-        {!loading && !error && meals.length > 0 && (
-          <View style={styles.itemList}>
-            {meals.map((m) => (
-              <View key={m.id} style={styles.itemRow}>
-                <Text style={styles.mealType}>{m.meal_type}</Text>
-                <Text style={styles.itemTitle} numberOfLines={1}>
-                  {m.title}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-    </>
-  );
-}
-
-// ============================================================================
-// Bills — unpaid snapshot
-// ============================================================================
-
-function BillsSection() {
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchUnpaidBills()
-      .then(setBills)
-      .catch((e) => setError(e.message ?? "Failed to load"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  return (
-    <>
-      <Text style={styles.sectionTitle}>Bills</Text>
-      <View style={styles.card}>
-        {loading && <ActivityIndicator size="small" color={colors.accent} />}
-        {!loading && error && <Text style={styles.errorText}>{error}</Text>}
-        {!loading && !error && bills.length === 0 && (
-          <Text style={styles.emptyText}>No unpaid bills</Text>
-        )}
-        {!loading && !error && bills.length > 0 && (
-          <>
-            <View style={styles.cardRow}>
-              <Text style={styles.cardSubtle}>Unpaid</Text>
-              <Text style={styles.statBig}>{bills.length}</Text>
-            </View>
-            <View style={[styles.cardRow, { marginTop: 8 }]}>
-              <Text style={styles.cardSubtle} numberOfLines={1}>
-                Next: {bills[0].title}
-              </Text>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                {sourceLabel(bills[0].source) && (
-                  <Text style={styles.itemBadge}>{sourceLabel(bills[0].source)}</Text>
-                )}
-                <Text style={styles.itemMeta}>{formatDueDate(bills[0].due_date)}</Text>
-              </View>
-            </View>
-          </>
-        )}
-      </View>
-    </>
-  );
-}
-
-// ============================================================================
-// Main Parent Dashboard
-// ============================================================================
-
-interface ChildStatus {
-  member: FamilyMember;
-  total: number;
-  completed: number;
-  wins: number;
-}
-
-export default function ParentDashboard() {
-  const [statuses, setStatuses] = useState<ChildStatus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [actionMsg, setActionMsg] = useState<{ text: string; isError: boolean } | null>(null);
-  const [payoutRan, setPayoutRan] = useState(false);
-  const [aiInsight, setAiInsight] = useState<{ narrative: string; status: string } | null>(null);
-  const [homework, setHomework] = useState<HomeworkSummary | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const today = todayStr();
-      const wStart = weekStartStr();
-      const wEnd = weekEndStr();
-
-      const [members, tasks] = await Promise.all([
-        fetchMembers(),
-        fetchTaskInstances(today),
-      ]);
-
-      const children = members.filter(
-        (m) => m.role === "child" && m.is_active
-      );
-
-      const results: ChildStatus[] = [];
-
-      for (const child of children) {
-        const childTasks = tasks.filter(
-          (t) => t.family_member_id === child.id
-        );
-        const completed = childTasks.filter((t) => t.is_completed).length;
-
-        let wins: DailyWin[] = [];
-        try {
-          wins = await fetchDailyWins(child.id, wStart, wEnd);
-        } catch {
-          // daily wins may not exist yet
-        }
-
-        results.push({
-          member: child,
-          total: childTasks.length,
-          completed,
-          wins: wins.filter((w) => w.is_win).length,
-        });
-      }
-
-      setStatuses(results);
-    } catch (e: any) {
-      setError(e.message ?? "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Parallel fetch for the AI-generated off-track narrative. Does not
-  // block the main dashboard render — if it fails or takes a while,
-  // the banner simply doesn't appear.
-  useEffect(() => {
-    let cancelled = false;
-    fetchParentDashboardInsight()
-      .then((res) => {
-        if (cancelled) return;
-        if (res && res.narrative) {
-          setAiInsight({ narrative: res.narrative, status: res.status });
-        }
-      })
-      .catch(() => {
-        /* silent — fallback is the deterministic banner above */
-      });
-    fetchHomeworkSummary(7)
-      .then((res) => {
-        if (cancelled) return;
-        if (res && res.total_sessions > 0) setHomework(res);
-      })
-      .catch(() => {
-        /* silent — card is hidden if zero sessions or fetch fails */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleRunPayouts = async () => {
-    setActionMsg(null);
-    const wStart = weekStartStr();
-    const results: string[] = [];
-    let hasError = false;
-    let allDuplicate = true;
-    for (const s of statuses) {
-      const { baseline } = calculatePayout(s.member.first_name, 0);
-      if (baseline === 0) continue;
-      try {
-        await createWeeklyPayout(s.member.id, baseline, wStart);
-        results.push(`${s.member.first_name}: payout created`);
-        allDuplicate = false;
-      } catch (e: any) {
-        hasError = true;
-        if (e instanceof PayoutError && e.status === 409) {
-          results.push(`${s.member.first_name}: payout already exists for this week`);
-        } else {
-          results.push(`${s.member.first_name}: payout failed`);
-          allDuplicate = false;
-        }
-      }
-    }
-    setPayoutRan(true);
-    setActionMsg({
-      text: allDuplicate
-        ? "Payout already run for this week"
-        : results.join("\n"),
-      isError: hasError && !allDuplicate,
-    });
-  };
-
-  const handleBonus = (name: string) => {
-    setActionMsg({ text: `Bonus for ${name} — not implemented yet`, isError: false });
-  };
-
-  const handlePenalty = (name: string) => {
-    setActionMsg({ text: `Penalty for ${name} — not implemented yet`, isError: false });
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.pageCenter}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.pageCenter}>
-        <Text style={styles.errorLarge}>{error}</Text>
-      </View>
-    );
-  }
-
-  const totalTasks = statuses.reduce((sum, s) => sum + s.total, 0);
-  const totalCompleted = statuses.reduce((sum, s) => sum + s.completed, 0);
-
-  return (
-    <ScrollView style={styles.pageContainer} contentContainerStyle={styles.pageContent}>
-      {/* ---- Header ---- */}
-      <View style={styles.headerBlock}>
-        <Text style={styles.headerTitle}>Parent Dashboard</Text>
-        <Text style={styles.headerSubtitle}>{todayStr()}</Text>
-      </View>
-
-      {actionMsg && (
-        <View style={[styles.msgBox, actionMsg.isError && styles.msgBoxError]}>
-          <Text style={[styles.msgText, actionMsg.isError && styles.msgTextError]}>
-            {actionMsg.text}
-          </Text>
-        </View>
-      )}
-
-      {/* ---- Household Insight ---- */}
-      {statuses.length > 0 && (() => {
-        const insight = deriveHouseholdInsight(statuses);
-        return insight.text ? (
-          <View style={[s.insightCard, { borderLeftColor: insightBorderColor(insight.tone) }]}>
-            <Text style={s.insightText}>{insight.text}</Text>
-          </View>
-        ) : null;
-      })()}
-
-      {/* ---- AI-generated off-track narrative (from /dashboard/parent/insight) ---- */}
-      {aiInsight && aiInsight.narrative && (
-        <View
-          style={[
-            s.insightCard,
-            { borderLeftColor: aiInsight.status === "on_track" ? colors.positive : colors.accent },
-          ]}
-        >
-          <Text style={s.insightText}>{aiInsight.narrative}</Text>
-        </View>
-      )}
-
-      {/* ---- Homework summary (hidden when no sessions in the last 7 days) ---- */}
-      {homework && homework.total_sessions > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Kids homework this week</Text>
-          <Text style={styles.cardSubtle}>
-            {homework.total_sessions} total session{homework.total_sessions === 1 ? "" : "s"} across the family
-          </Text>
-          {homework.children.map((c) => {
-            const subjLine = Object.entries(c.subjects)
-              .sort((a, b) => b[1] - a[1])
-              .map(([k, v]) => `${k}: ${v}`)
-              .join(", ");
+          {ACTION_INBOX.map((item) => {
+            const tone = INBOX_TONE[item.kind];
             return (
-              <View key={c.member_id} style={{ marginTop: 8 }}>
-                <Text style={styles.homeworkName}>{c.first_name}</Text>
-                <Text style={styles.homeworkLine}>
-                  {c.sessions} session{c.sessions === 1 ? "" : "s"}
-                  {subjLine ? ` · ${subjLine}` : ""}
+              <View key={item.title} style={styles.inboxRow}>
+                <View style={[styles.inboxTag, { backgroundColor: tone.bg }]}>
+                  <Text style={[styles.inboxTagText, { color: tone.fg }]}>{tone.label}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inboxTitle}>{item.title}</Text>
+                  <Text style={styles.inboxSub}>{item.sub}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Kids homework this week</Text>
+            <Text style={shared.cardAction}> </Text>
+          </View>
+          {HOMEWORK.map((h) => {
+            const m = getMember(h.memberId)!;
+            return (
+              <View key={h.memberId} style={styles.kidRow}>
+                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
+                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+                </View>
+                <Text style={styles.kidName}>{m.firstName}</Text>
+                <Text style={styles.hwMeta}>{h.sessions} sessions · {h.topics}</Text>
+                <Tag tone={h.status === "on_track" ? "green" : "amber"}>
+                  {h.status === "on_track" ? "On track" : "Low"}
+                </Tag>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.grid2}>
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Allowance this week</Text>
+            <Text style={shared.cardAction}>Manage</Text>
+          </View>
+          {ALLOWANCE.map((a) => {
+            const m = getMember(a.memberId)!;
+            const pct = a.max === 0 ? 0 : Math.round((a.earned / a.max) * 100);
+            const color = pct === 100 ? colors.green : pct >= 50 ? colors.amber : colors.red;
+            return (
+              <View key={a.memberId} style={styles.kidRow}>
+                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
+                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+                </View>
+                <Text style={styles.kidName}>{m.firstName}</Text>
+                <View style={styles.bar}><View style={[styles.barFill, { width: `${pct}%` }]} /></View>
+                <Text style={[styles.allowanceAmount, { color }]}>
+                  ${a.earned} / ${a.max}
                 </Text>
               </View>
             );
           })}
         </View>
-      )}
 
-      {/* ---- Action Inbox ---- */}
-      <ActionInbox />
-
-      {/* ---- AI usage / cost rollup (Tier 3 F11) ---- */}
-      <AIUsageCard />
-
-      {/* ---- 1. Family Schedule ---- */}
-      <FamilyScheduleSection />
-
-      {/* ---- 2. Kids Status ---- */}
-      <Text style={styles.sectionTitle}>Kids Today</Text>
-      {statuses.map((st) => {
-        const remaining = st.total - st.completed;
-        const done = remaining === 0 && st.total > 0;
-        return (
-          <View key={st.member.id} style={styles.card}>
-            <View style={styles.cardRow}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                {!done && st.total > 0 && (
-                  <View style={s.attentionDot} />
-                )}
-                <Text style={styles.cardTitle}>{st.member.first_name}</Text>
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Points leaderboard · This week</Text>
+            <Text style={shared.cardAction}> </Text>
+          </View>
+          {LEADERBOARD.map((l) => {
+            const m = getMember(l.memberId)!;
+            const top = LEADERBOARD[0].points;
+            const pct = Math.round((l.points / top) * 100);
+            return (
+              <View key={l.memberId} style={styles.kidRow}>
+                <Text style={styles.rank}>{l.rank}</Text>
+                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
+                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+                </View>
+                <Text style={styles.kidName}>{m.firstName}</Text>
+                <View style={styles.bar}><View style={[styles.barFill, { width: `${pct}%` }]} /></View>
+                <Text style={styles.pointsText}>{l.points} pts</Text>
               </View>
-              <Text style={styles.statBig}>
-                {st.completed}
-                <Text style={styles.statBigMuted}>/{st.total}</Text>
-              </Text>
-            </View>
-            <Text style={[styles.cardSubtle, done && styles.doneText]}>
-              {done
-                ? "All done for today"
-                : `${st.completed}/${st.total} done — ${remaining} left`}
-            </Text>
-          </View>
-        );
-      })}
-
-      {/* ---- 3. Weekly Progress ---- */}
-      <Text style={styles.sectionTitle}>Weekly Progress</Text>
-      {statuses.map((st) => {
-        const { baseline, amountCents } = calculatePayout(st.member.first_name, st.wins);
-        const wStatus = deriveWeeklyStatus(st.wins);
-        return (
-          <View key={st.member.id} style={styles.card}>
-            <View style={styles.cardRow}>
-              <Text style={styles.cardTitle}>{st.member.first_name}</Text>
-              <Text style={styles.statBig}>
-                {st.wins}
-                <Text style={styles.statBigMuted}>/5</Text>
-              </Text>
-            </View>
-            <View style={[styles.cardRow, { marginTop: 4 }]}>
-              <Text style={styles.cardSubtle}>
-                ${(amountCents / 100).toFixed(2)} of ${(baseline / 100).toFixed(2)}
-              </Text>
-              <View style={[s.statusPill, { backgroundColor: weeklyStatusColor(wStatus) + "22" }]}>
-                <Text style={[s.statusPillText, { color: weeklyStatusColor(wStatus) }]}>
-                  {weeklyStatusLabel(wStatus)}
-                </Text>
-              </View>
-            </View>
-          </View>
-        );
-      })}
-
-      {/* ---- 4. Meals ---- */}
-      <MealsSection />
-
-      {/* ---- 5. Bills ---- */}
-      <BillsSection />
-
-      {/* ---- 6. Household Overview ---- */}
-      <Text style={styles.sectionTitle}>Household</Text>
-      <View style={styles.card}>
-        <View style={styles.statGrid}>
-          <View style={styles.statCell}>
-            <Text style={styles.statNumber}>{totalTasks}</Text>
-            <Text style={styles.statLabel}>tasks</Text>
-          </View>
-          <View style={styles.statCell}>
-            <Text style={[styles.statNumber, styles.statNumberOk]}>
-              {totalCompleted}
-            </Text>
-            <Text style={styles.statLabel}>done</Text>
-          </View>
-          <View style={styles.statCell}>
-            <Text style={styles.statNumber}>{totalTasks - totalCompleted}</Text>
-            <Text style={styles.statLabel}>left</Text>
-          </View>
+            );
+          })}
         </View>
-        {totalTasks > 0 && totalCompleted === totalTasks && (
-          <Text style={styles.householdDone}>
-            Everyone's responsibilities are complete for today
-          </Text>
-        )}
       </View>
-
-      {/* ---- 7. Weekly Payout ---- */}
-      <Text style={styles.sectionTitle}>Weekly Payout</Text>
-      {statuses.map((s) => {
-        const { baseline, pct, amountCents } = calculatePayout(s.member.first_name, s.wins);
-        return (
-          <View key={s.member.id} style={styles.card}>
-            <View style={styles.cardRow}>
-              <View style={styles.cardLeft}>
-                <Text style={styles.cardTitle}>{s.member.first_name}</Text>
-                <Text style={styles.cardSubtle}>
-                  {pct}% of ${(baseline / 100).toFixed(2)}
-                </Text>
-              </View>
-              <Text style={styles.amount}>${(amountCents / 100).toFixed(2)}</Text>
-            </View>
-            <View style={styles.buttonRow}>
-              <Pressable
-                style={styles.buttonSmall}
-                onPress={() => handleBonus(s.member.first_name)}
-              >
-                <Text style={styles.buttonSmallText}>Add Bonus</Text>
-              </Pressable>
-              <Pressable
-                style={styles.buttonSmall}
-                onPress={() => handlePenalty(s.member.first_name)}
-              >
-                <Text style={styles.buttonSmallText}>Add Penalty</Text>
-              </Pressable>
-            </View>
-          </View>
-        );
-      })}
-
-      <Pressable
-        style={[styles.button, payoutRan && styles.buttonDisabled]}
-        onPress={payoutRan ? undefined : handleRunPayouts}
-        disabled={payoutRan}
-        accessibilityLabel="Run Weekly Payout"
-        accessibilityRole="button"
-      >
-        <Text style={[styles.buttonText, payoutRan && styles.buttonTextDisabled]}>
-          {payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}
-        </Text>
-      </Pressable>
-
-      {/* ---- Need Something? ---- */}
-      <NeedSomething />
     </ScrollView>
   );
 }
 
-// Use shared.* for common styles; local `s` for parent-specific only
-const s = StyleSheet.create({
-  cardLeft: { flex: 1 },
-  amount: {
-    color: colors.positive,
-    fontSize: 22,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"] as any,
-  },
-  statGrid: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    paddingVertical: 4,
-  },
-  statCell: { alignItems: "center" },
-  statNumber: {
-    color: colors.textPrimary,
-    fontSize: 26,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"] as any,
-  },
-  statNumberOk: { color: colors.positive },
-  statLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginTop: 4,
-  },
-  doneText: { color: colors.positive },
-  householdDone: {
-    color: colors.positive,
-    fontSize: 13,
-    textAlign: "center",
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
-  },
+function Tag({ tone, children }: { tone: "green" | "amber" | "red"; children: string }) {
+  const palette = {
+    green: { bg: colors.greenBg, fg: colors.greenText },
+    amber: { bg: colors.amberBg, fg: colors.amberText },
+    red:   { bg: colors.redBg,   fg: colors.redText },
+  }[tone];
+  return (
+    <View style={[styles.tag, { backgroundColor: palette.bg }]}>
+      <Text style={[styles.tagText, { color: palette.fg }]}>{children}</Text>
+    </View>
+  );
+}
 
-  // Household Insight
-  insightCard: {
-    backgroundColor: colors.card,
-    borderRadius: 14,
+const styles = StyleSheet.create({
+  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
+
+  alert: {
+    borderRadius: 8,
+    padding: 12,
     borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    padding: 16,
-    marginBottom: 4,
+    borderWidth: 1,
   },
-  insightText: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: "600",
-    lineHeight: 20,
-  },
+  alertRed:   { backgroundColor: colors.redBg,   borderColor: "#FCA5A5", borderLeftColor: colors.red },
+  alertAmber: { backgroundColor: colors.amberBg, borderColor: "#FCD34D", borderLeftColor: colors.amber },
+  alertText:  { fontSize: 12, lineHeight: 16, fontFamily: fonts.body },
 
-  // Attention dot (per-child incomplete indicator)
-  attentionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.warning,
-  },
+  grid2: { flexDirection: "row", gap: 12 },
 
-  // Weekly status pill
-  statusPill: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  countBadge: { backgroundColor: colors.red, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
+  countBadgeText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700", fontFamily: fonts.body },
+
+  inboxRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+  inboxTag: { borderRadius: 5, paddingHorizontal: 8, paddingVertical: 2, marginTop: 2 },
+  inboxTagText: { fontSize: 9, fontWeight: "700", fontFamily: fonts.body },
+  inboxTitle: { fontSize: 12, color: colors.text, fontWeight: "500", fontFamily: fonts.body },
+  inboxSub: { fontSize: 11, color: colors.muted, marginTop: 2, fontFamily: fonts.body },
+
+  kidRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  homeworkName: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  homeworkLine: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginTop: 2,
-  },
+  av: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  avText: { fontSize: 11, fontWeight: "600", fontFamily: fonts.body },
+  kidName: { fontSize: 12, color: colors.text, minWidth: 56, fontFamily: fonts.body },
+  hwMeta: { flex: 1, fontSize: 11, color: colors.muted, fontFamily: fonts.body },
+  bar: { flex: 1, height: 5, backgroundColor: colors.border, borderRadius: 3, overflow: "hidden" },
+  barFill: { height: "100%", backgroundColor: colors.green, borderRadius: 3 },
+  allowanceAmount: { fontSize: 12, fontFamily: fonts.mono, fontWeight: "500" },
+  rank: { width: 18, textAlign: "center", fontSize: 11, color: colors.muted, fontFamily: fonts.body },
+  pointsText: { fontSize: 11, color: colors.text, fontFamily: fonts.mono },
+
+  tag: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  tagText: { fontSize: 10, fontWeight: "700", fontFamily: fonts.body },
 });
-
-// Merge: use `shared` by name in JSX for all common, `s` for parent-specific
-const styles = { ...shared, ...s } as typeof shared & typeof s;
