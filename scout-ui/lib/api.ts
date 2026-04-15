@@ -550,8 +550,8 @@ export async function sendChatMessageStream(
 }
 
 // ---------------------------------------------------------------------------
-// Platform readiness probe — used by ScoutPanel to render a disabled state
-// when the backend reports ai_available=false.
+// Platform readiness probe — used by ScoutSheet and ScoutSidebar to render a
+// disabled state when the backend reports ai_available=false.
 // ---------------------------------------------------------------------------
 
 export interface ReadyState {
