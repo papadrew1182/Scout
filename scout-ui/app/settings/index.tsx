@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
+import { useAuth } from "../../lib/auth";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -25,6 +26,8 @@ const ROLE_TAG = {
 
 export default function Settings() {
   const [toggles, setToggles] = useState(SCOUT_AI_TOGGLES.map((t) => t.on));
+  const { member } = useAuth();
+  const isAdult = member?.role === "adult";
   const andrew = FAMILY[0];
 
   return (
@@ -75,6 +78,15 @@ export default function Settings() {
               );
             })}
           </View>
+
+          {isAdult && (
+            <View style={shared.card}>
+              <Text style={shared.cardTitle}>Accounts & Access</Text>
+              <Text style={styles.accountsBlurb}>
+                Manage sign-in methods and session access for family members. Only admins can see this section.
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.col}>
@@ -196,4 +208,12 @@ const styles = StyleSheet.create({
   },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   integrationName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
+
+  accountsBlurb: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    lineHeight: 17,
+    marginTop: 4,
+  },
 });
