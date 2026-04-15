@@ -24,17 +24,59 @@ TEST_DATABASE_URL = "postgresql://scout:scout@localhost:5432/scout_test"
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "database" / "migrations"
 
 engine = create_engine(TEST_DATABASE_URL)
+
+# Mirror app.database's search_path guard. Postgres default
+# search_path resolves "$user" to the DB role name ("scout"), which
+# after migration 022 creates the scout schema shadows unqualified
+# references to public tables that still hold the legacy shape.
+# Force public,scout so legacy unqualified queries hit public first.
+from sqlalchemy import event as _event  # noqa: E402
+
+
+@_event.listens_for(engine, "connect")
+def _set_test_search_path(dbapi_conn, _):
+    cursor = dbapi_conn.cursor()
+    try:
+        cursor.execute("SET search_path TO public, scout")
+    finally:
+        cursor.close()
+
+
 TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+# Session 2 added the `scout` and `connector_*` schemas. The test
+# harness must drop THEM too — otherwise cross-schema views from
+# scout.* hanging on to public.* rows survive pytest session
+# boundaries and fail the next migration run.
+_MANAGED_SCHEMAS = [
+    "scout",
+    "connector_google_calendar",
+    "connector_greenlight",
+    "connector_rex",
+    "connector_ynab",
+    "connector_apple_health",
+    "connector_nike_run_club",
+    "connector_exxir",
+]
+
+
+def _reset_managed_schemas(conn) -> None:
+    """Drop public + every Session-2 schema and recreate public.
+    Idempotent and safe on the first run (DROP ... IF EXISTS CASCADE).
+    """
+    for schema in _MANAGED_SCHEMAS:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    conn.execute(text("DROP SCHEMA public CASCADE"))
+    conn.execute(text("CREATE SCHEMA public"))
+    conn.execute(text("GRANT ALL ON SCHEMA public TO scout"))
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
     """Build test schema from real SQL migrations."""
     with engine.connect() as conn:
-        # Drop all tables cleanly
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-        conn.execute(text("GRANT ALL ON SCHEMA public TO scout"))
+        _reset_managed_schemas(conn)
         conn.commit()
 
         # Run each migration in order
@@ -45,11 +87,9 @@ def setup_database():
 
     yield
 
-    # Teardown: drop all tables
+    # Teardown: drop public + all session-2 managed schemas.
     with engine.connect() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-        conn.execute(text("GRANT ALL ON SCHEMA public TO scout"))
+        _reset_managed_schemas(conn)
         conn.commit()
 
 
