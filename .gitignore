@@ -34,3 +34,13 @@ Thumbs.db
 smoke-tests/node_modules/
 smoke-tests/playwright-report/
 smoke-tests/test-results/
+
+# Agent / tooling scratch
+# Agent-generated plan files (superpowers and similar tools write plans
+# to docs/superpowers/plans/ which are per-session scratch and not part
+# of the Scout product).
+docs/superpowers/
+
+# Orphan design mockups dropped at the repo root during exploration.
+# Keep out of version control so they don't get committed by accident.
+scout_mockups.html
