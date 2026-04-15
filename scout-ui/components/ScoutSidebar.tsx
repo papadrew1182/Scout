@@ -152,6 +152,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.text,
     fontFamily: fonts.body,
+    outlineWidth: 0,
   } as any,
   miniSend: {
     width: 18,
