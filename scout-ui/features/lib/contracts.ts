@@ -1,178 +1,169 @@
 /**
- * Session 3 published contracts.
+ * Session 3 published contracts — aligned to backend/app/routes/canonical.py
+ * (Session 2 commit ad912e7) and the Session 3 charter rules pinned in the
+ * Block 2 prompt:
  *
- * These types match the API shapes named in the Session 3 charter:
- *   GET  /api/me
- *   GET  /api/family/context/current
- *   GET  /api/household/today
- *   POST /api/household/completions
- *   GET  /api/rewards/week/current
- *   GET  /api/connectors
- *   GET  /api/connectors/health
- *   GET  /api/calendar/exports/upcoming
- *   GET  /api/control-plane/summary
+ *   GET  /api/me                        → {user, family}
+ *   GET  /api/family/context/current    → {family, date, active_time_block, kids[], household_rules}
+ *   GET  /api/household/today           → {date, summary, blocks[], standalone_chores[], weekly_items[]}
+ *   POST /api/household/completions     → {task_occurrence_id, status, daily_win_recomputed, reward_preview_changed}
+ *   GET  /api/rewards/week/current      → {period|null, members[], approval}
+ *   GET  /api/connectors                → {items[]}
+ *   GET  /api/connectors/health         → {items[]}
+ *   GET  /api/calendar/exports/upcoming → (not yet shipped — mock-only)
+ *   GET  /api/control-plane/summary     → (not yet shipped — mock-only)
  *
- * They are *exactly* the contracts the Session 3 frontend lane is
- * expected to consume. They will be served by the real backend once
- * Session 2 lands; until then `mockClient.ts` answers them locally
- * with the seed data in `mockData.ts`.
- *
- * No Session-3-only alternate contract is invented. If something here
- * is ambiguous it should be resolved by amending the charter, not by
- * shipping a different shape under the same name.
+ * The completion response is intentionally bare. There is no `updated_block`
+ * and no `daily_win_preview` echo. The frontend must invalidate / refetch
+ * householdToday + rewardsWeek after a successful completion if it wants
+ * fresh derived state.
  */
 
 // ---------------------------------------------------------------------------
 // Common primitives
 // ---------------------------------------------------------------------------
 
-export type ISODateTime = string; // e.g. "2026-04-14T07:25:00-05:00"
-export type ISODate = string;     // e.g. "2026-04-14"
+export type ISODateTime = string;
+export type ISODate = string;
 export type UUID = string;
-export type Cents = number;
 
-export type RoleTier = "adult" | "child";
+/**
+ * Canonical role tier keys from public.role_tiers (widened in migration 022).
+ * `parent`-tier privileges = PRIMARY_PARENT or PARENT.
+ */
+export type RoleTierKey =
+  | "PRIMARY_PARENT"
+  | "PARENT"
+  | "TEEN"
+  | "CHILD"
+  | "YOUNG_CHILD"
+  | "DISPLAY_ONLY";
 
-export interface PersonRef {
-  member_id: UUID;
-  first_name: string;
-  role: RoleTier;
+export function isParentTier(role: RoleTierKey | string | null | undefined): boolean {
+  return role === "PRIMARY_PARENT" || role === "PARENT";
 }
 
+export type CompletionMode = "manual" | "auto" | "parent_override" | "ai_recorded";
+
 // ---------------------------------------------------------------------------
-// /api/me
+// GET /api/me
 // ---------------------------------------------------------------------------
 
-export interface MeResponse {
-  member_id: UUID;
-  family_id: UUID;
-  first_name: string;
-  last_name: string | null;
-  role: RoleTier;
-  family_name: string;
-  // permissions surfaced for the operating surface.
-  capabilities: {
-    can_complete_for: UUID[];      // member_ids whose tasks this user may complete
-    can_approve_payouts: boolean;
-    can_view_control_plane: boolean;
+export interface MeUser {
+  id: UUID | null;
+  email: string | null;
+  full_name: string;
+  role_tier_key: RoleTierKey;
+  family_member_id: UUID;
+  feature_flags: {
+    calendar_publish: boolean;
+    greenlight_settlement: boolean;
+    meal_planning: boolean;
   };
 }
 
-// ---------------------------------------------------------------------------
-// /api/family/context/current
-// ---------------------------------------------------------------------------
-
-export interface FamilyContextResponse {
-  family_id: UUID;
-  family_name: string;
+export interface MeFamily {
+  id: UUID;
+  name: string;
   timezone: string;
-  members: Array<{
-    member_id: UUID;
-    first_name: string;
-    last_name: string | null;
-    role: RoleTier;
-    is_active: boolean;
-    birthdate: ISODate | null;
-  }>;
-  // Reward policy snapshot — kept thin on purpose. Full policy lives in
-  // /api/rewards/week/current.
-  reward_baselines: Record<UUID, Cents>;
+}
+
+export interface MeResponse {
+  user: MeUser;
+  family: MeFamily;
 }
 
 // ---------------------------------------------------------------------------
-// /api/household/today
+// GET /api/family/context/current
+// ---------------------------------------------------------------------------
+
+export interface ActiveTimeBlock {
+  id: UUID | null;
+  block_key: string;
+  label: string;
+  starts_at: ISODateTime;
+  ends_at: ISODateTime;
+  status: "upcoming" | "active" | "closed";
+}
+
+export interface FamilyKid {
+  family_member_id: UUID;
+  name: string;
+  age: number | null;
+  role_tier_key: RoleTierKey;
+}
+
+export interface FamilyContextResponse {
+  family: MeFamily;
+  date: ISODate;
+  active_time_block: ActiveTimeBlock | null;
+  kids: FamilyKid[];
+  /**
+   * Free-form household rules. Charter ships at least:
+   *   one_owner_per_task: boolean
+   *   one_reminder_max:  boolean
+   * but the bag is open-ended.
+   */
+  household_rules: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/household/today
 // ---------------------------------------------------------------------------
 
 /**
- * Status pill for a routine block or a single task occurrence.
- *
- * - `upcoming`   — start time hasn't arrived yet today
- * - `active`     — currently within the block window
- * - `due_soon`   — within the next 30 min of its deadline
- * - `late`       — past deadline, not yet complete
- * - `done`       — every task in the block is complete
- * - `blocked`    — explicitly blocked (e.g. assistant rule unmet)
+ * Status string from scout.v_household_today: backend uses `open`, `late`,
+ * `complete`, `excused`. We accept all four.
  */
-export type BlockStatus =
-  | "upcoming"
-  | "active"
-  | "due_soon"
-  | "late"
-  | "done"
-  | "blocked";
+export type OccurrenceStatus = "open" | "complete" | "late" | "excused";
 
-export type BlockKind =
-  | "morning_routine"
-  | "after_school_routine"
-  | "evening_routine"
-  | "ownership_chore"
-  | "rotating_chore"
-  | "weekly_event"      // Saturday Power 60, Backyard Poop Patrol
-  | "dog_walks";
-
-export type CompletionStatus = "pending" | "complete" | "missed" | "excused";
-
-export interface StandardOfDone {
-  label: string;          // short description
-  detail?: string | null; // optional longer copy
-}
-
+/**
+ * Single occurrence row as it comes out of v_household_today. The shape is
+ * deliberately flat — no nested owner ref, no embedded standards.
+ */
 export interface TaskOccurrence {
-  occurrence_id: UUID;
-  task_template_id: UUID | null;
-  title: string;
-  description: string | null;
-  owner: PersonRef;
-  assistants: PersonRef[];
-  due_at: ISODateTime;
-  /**
-   * If this task belongs to a routine block, the block id; otherwise null
-   * (e.g. ownership chores that stand alone outside a block).
-   */
-  block_id: UUID | null;
-  status: CompletionStatus;
-  late: boolean;
-  // standards-of-done preview
-  standards: StandardOfDone[];
-  // any one-tap eligibility hint the UI can act on before the network
-  one_tap_eligible: boolean;
+  task_occurrence_id: UUID;
+  template_key: string | null;
+  label: string;
+  owner_family_member_id: UUID | null;
+  owner_name: string | null;
+  due_at: ISODateTime | null;
+  status: OccurrenceStatus;
+  /** Optional block label string the backend may attach (e.g. "Morning Routine") */
+  block_label?: string | null;
+  /** Optional grouping key set by the backend for routine block membership */
+  routine_key?: string | null;
 }
 
-export interface RoutineBlock {
-  block_id: UUID;
-  kind: BlockKind;
-  title: string;            // "Morning Routine", "Power 60", etc.
-  // human-readable scheduling window
-  starts_at: ISODateTime | null;  // null for blocks with no fixed start
-  due_at: ISODateTime;            // hard deadline used for late logic
-  status: BlockStatus;
-  // who this block applies to. Multiple if the block spans more than one
-  // child (Common Area Closeout = Townes/River; Power 60 = all three).
-  members: PersonRef[];
+/**
+ * Block-level group (routine block, weekly item). Shape kept thin to match
+ * canonical.py — `blocks[]` is empty until the legacy → scout backfill runs,
+ * but the contract keeps the key so Session 3 can render against it.
+ */
+export interface HouseholdBlock {
+  block_key: string;
+  label: string;
+  starts_at: ISODateTime | null;
+  ends_at: ISODateTime | null;
+  due_at: ISODateTime | null;
+  status: "upcoming" | "active" | "due_soon" | "late" | "done" | "blocked";
+  member_family_member_ids: UUID[];
   occurrences: TaskOccurrence[];
-  // optional "why is this blocked" explanation when status === "blocked"
-  blocked_reason?: string | null;
-  // notes for adults — e.g. "ODD day → Townes leads"
   note?: string | null;
 }
 
-export interface ChildDailyWinPreview {
-  member_id: UUID;
-  on_track: boolean;
-  required_count: number;      // how many requirements the child has today
+export interface HouseholdTodaySummary {
+  due_count: number;
   completed_count: number;
-  remaining_count: number;
-  // explain the gap if not on track
-  blocking_titles: string[];
+  late_count: number;
 }
 
 export interface HouseholdTodayResponse {
   date: ISODate;
-  generated_at: ISODateTime;
-  blocks: RoutineBlock[];
-  // standalone occurrences not tied to a block
-  standalone_occurrences: TaskOccurrence[];
-  daily_win_preview: ChildDailyWinPreview[];
+  summary: HouseholdTodaySummary;
+  blocks: HouseholdBlock[];
+  standalone_chores: TaskOccurrence[];
+  weekly_items: TaskOccurrence[];
 }
 
 // ---------------------------------------------------------------------------
@@ -180,108 +171,112 @@ export interface HouseholdTodayResponse {
 // ---------------------------------------------------------------------------
 
 export interface CompletionRequest {
-  occurrence_id: UUID;
-  // The user marking it complete; backend validates against capabilities.
-  completed_by_member_id: UUID;
-  // Optional client-side timestamp; backend may override.
+  task_occurrence_id: UUID;
+  completed_by_family_member_id: UUID;
   completed_at?: ISODateTime;
-  /**
-   * Optional standards-of-done acknowledgements. Empty array means the
-   * caller did not surface them; backend should still record the
-   * completion.
-   */
-  acknowledged_standards?: number[]; // indices into TaskOccurrence.standards
-  note?: string;
+  completion_mode?: CompletionMode;
+  notes?: string;
 }
 
+/**
+ * Charter-pinned response. Four fields, no echo data.
+ *
+ * `daily_win_recomputed` and `reward_preview_changed` are flags. When either
+ * is true, the frontend must refetch the affected slice. When both are false
+ * the frontend can keep its optimistic local mutation.
+ */
 export interface CompletionResponse {
-  occurrence_id: UUID;
-  status: CompletionStatus;
-  // Rewards may move; the response surfaces enough state for the
-  // optimistic cache to refresh both Today and Rewards.
-  daily_win_preview: ChildDailyWinPreview | null;
-  // If completion changed a block-level status, the new block is echoed.
-  updated_block: RoutineBlock | null;
+  task_occurrence_id: UUID;
+  status: "complete";
+  daily_win_recomputed: boolean;
+  reward_preview_changed: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// /api/rewards/week/current
+// GET /api/rewards/week/current
 // ---------------------------------------------------------------------------
 
-export interface RewardWeekChild {
-  member_id: UUID;
-  first_name: string;
-  baseline_cents: Cents;
-  // Per-day Daily Win flags Mon..Fri (length 5). null = not yet decided.
-  day_wins: Array<boolean | null>;
-  win_count: number;        // count of true entries
-  // 5/4/3/2-or-fewer → 100/80/60/0 percent
+export interface RewardsPeriod {
+  id: UUID;
+  start_date: ISODate;
+  end_date: ISODate;
+}
+
+export interface RewardsMember {
+  family_member_id: UUID;
+  name: string;
+  /** Dollars (not cents) — matches canonical.py float division. */
+  baseline_allowance: number;
+  /** Whole number of daily wins earned so far this period. */
+  daily_wins: number;
   payout_percent: number;
-  payout_cents: Cents;
-  // Strings the UI can use to explain a missed day
-  missed_reasons: string[];
-  // Approval state, used by the rewards approval sheet
-  approval_status: "draft" | "ready_for_review" | "approved";
+  projected_payout: number;
+  miss_reasons: string[];
 }
 
-export interface RewardWeekResponse {
-  week_start: ISODate; // Monday
-  week_end: ISODate;   // Sunday
-  children: RewardWeekChild[];
-  // Family-level total for the week (sum of payout_cents).
-  total_payout_cents: Cents;
+export interface RewardsApproval {
+  state: "draft" | "ready_for_review" | "approved";
+}
+
+export interface RewardsCurrentWeekResponse {
+  period: RewardsPeriod | null;
+  members: RewardsMember[];
+  approval: RewardsApproval;
 }
 
 // ---------------------------------------------------------------------------
-// /api/connectors  +  /api/connectors/health
+// GET /api/connectors
 // ---------------------------------------------------------------------------
 
-export type ConnectorId =
-  | "google_calendar"
-  | "ical_hearth"
-  | "greenlight"
-  | "rex"
-  | "ynab"
-  | "google_maps"
-  | "apple_health"
-  | "nike_run_club";
+export type ConnectorStatus =
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "decision_gated"
+  | "pending";
 
-export interface Connector {
-  id: ConnectorId;
-  display_name: string;
-  tier: 1 | 2 | 3 | 4;
-  status: "not_linked" | "linked" | "syncing" | "error" | "disabled";
-  scope_summary: string;
-  // most recent meaningful event from this connector
-  last_event_at: ISODateTime | null;
+export interface ConnectorListItem {
+  connector_key: string;
+  label: string;
+  status: ConnectorStatus | string;
+  last_sync_at: ISODateTime | null;
 }
 
 export interface ConnectorsResponse {
-  connectors: Connector[];
-}
-
-export interface ConnectorHealth {
-  id: ConnectorId;
-  // overall health + freshness
-  ok: boolean;
-  last_sync_at: ISODateTime | null;
-  last_sync_status: "success" | "partial" | "error" | "never";
-  freshness_seconds: number | null; // age of last sync; null = never synced
-  message: string | null;           // operator-facing detail
-}
-
-export interface ConnectorsHealthResponse {
-  connectors: ConnectorHealth[];
-  generated_at: ISODateTime;
+  items: ConnectorListItem[];
 }
 
 // ---------------------------------------------------------------------------
-// /api/calendar/exports/upcoming
+// GET /api/connectors/health
+// ---------------------------------------------------------------------------
+
+export type ConnectorFreshness =
+  | "fresh"
+  | "stale"
+  | "very_stale"
+  | "never_synced"
+  | "unknown";
+
+export interface ConnectorHealthItem {
+  connector_key: string;
+  healthy: boolean;
+  freshness_state: ConnectorFreshness | string;
+  last_success_at: ISODateTime | null;
+  last_error_at: ISODateTime | null;
+  last_error_message: string | null;
+}
+
+export interface ConnectorsHealthResponse {
+  items: ConnectorHealthItem[];
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/calendar/exports/upcoming   (NOT YET SHIPPED — mock-only)
 // ---------------------------------------------------------------------------
 
 export interface CalendarExport {
   export_id: UUID;
-  title: string;          // e.g. "Morning Routine"
+  title: string;
   starts_at: ISODateTime;
   ends_at: ISODateTime;
   google_calendar_event_id: string | null;
@@ -295,16 +290,13 @@ export interface CalendarExportsResponse {
 }
 
 // ---------------------------------------------------------------------------
-// /api/control-plane/summary
+// GET /api/control-plane/summary   (NOT YET SHIPPED — mock-only)
 // ---------------------------------------------------------------------------
 
 export interface ControlPlaneSummaryResponse {
   generated_at: ISODateTime;
-  // Rolled-up health
   household_status: "healthy" | "warning" | "critical";
-  // Connector health snapshot keyed by id (subset of full health response)
-  connectors: ConnectorHealth[];
-  // Sync orchestration view
+  connectors: ConnectorHealthItem[];
   sync_jobs: Array<{
     job_id: UUID;
     name: string;
@@ -313,14 +305,12 @@ export interface ControlPlaneSummaryResponse {
     next_run_at: ISODateTime | null;
     error_message: string | null;
   }>;
-  // Publication view (Hearth lane via calendar exports)
   publications: Array<{
     surface: "hearth_calendar_lane";
     last_published_at: ISODateTime | null;
     pending_count: number;
     failed_count: number;
   }>;
-  // Notification rules summary
   notifications: {
     rules_active: number;
     deliveries_24h: number;
@@ -329,19 +319,80 @@ export interface ControlPlaneSummaryResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Standards-of-done — frontend-side detail layer
+//
+// The household/today contract ships only `template_key + label`. The
+// standards from family_chore_system.md are not in the API. We keep them in
+// the frontend so the CompletionSheet can show meaningful done-detail
+// without inventing backend fields.
+// ---------------------------------------------------------------------------
+
+export interface StandardOfDone {
+  label: string;
+}
+
+export const STANDARDS_BY_TEMPLATE_KEY: Record<string, StandardOfDone[]> = {
+  // Room reset (per family_chore_system.md → "Room Reset = DONE when")
+  evening_room_reset: [
+    { label: "Floor mostly clear (no loose clothes/toys)" },
+    { label: "Clothes in hamper" },
+    { label: "Dishes/cups removed" },
+    { label: "Trash in trash can" },
+    { label: "Bed made (simple is fine)" },
+  ],
+  // Common Area Closeout (rotating chore — Townes/River)
+  rotating_common_area_closeout: [
+    { label: "Cups/plates/trash moved to kitchen" },
+    { label: "Blankets folded to basket" },
+    { label: "Toys/items put in bins" },
+    { label: "Remotes returned" },
+    { label: "Floor clear enough a robot vacuum could run" },
+  ],
+  // Living Room Reset (River ownership chore)
+  ownership_living_room_reset: [
+    { label: "Blankets folded to basket" },
+    { label: "Toys to bins" },
+    { label: "Cups/dishes to kitchen" },
+  ],
+  // Trash (used by ownership / sweep)
+  ownership_kitchen_trash: [
+    { label: "Kitchen can checked; if ~75% full → taken out" },
+    { label: "Bag tied, taken to outdoor bin" },
+    { label: "New bag installed" },
+  ],
+  // Dog walks (Sadie lead) — done-detail comes from the chore doc
+  afterschool_dog_walks: [
+    { label: "Memphis walked (Sadie handling) 15-20 min" },
+    { label: "Willie walked 10-15 min (assistant rule applies)" },
+    { label: "Leashes/harnesses returned to hook" },
+    { label: "Paws wiped if wet" },
+    { label: "Poop bags restocked if low" },
+  ],
+  // Backyard Poop Patrol (weekly — Townes owner / River assistant on
+  // current rotation; rotation flips every 8 weeks per the doc).
+  weekly_backyard_poop_patrol: [
+    { label: "Gloves on / grab bags or scooper" },
+    { label: "Pick up all visible poop" },
+    { label: "Tie bag + outdoor bin" },
+    { label: "Put tools away" },
+  ],
+};
+
+export function standardsForTemplate(template_key: string | null | undefined): StandardOfDone[] {
+  if (!template_key) return [];
+  return STANDARDS_BY_TEMPLATE_KEY[template_key] ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // Client interface
 // ---------------------------------------------------------------------------
 
-/**
- * Single client surface every Session 3 hook depends on. mockClient.ts
- * implements it against in-memory data; realClient.ts wraps fetch().
- */
 export interface ScoutClient {
   getMe(): Promise<MeResponse>;
   getFamilyContext(): Promise<FamilyContextResponse>;
   getHouseholdToday(): Promise<HouseholdTodayResponse>;
   postCompletion(body: CompletionRequest): Promise<CompletionResponse>;
-  getRewardsWeek(): Promise<RewardWeekResponse>;
+  getRewardsWeek(): Promise<RewardsCurrentWeekResponse>;
   getConnectors(): Promise<ConnectorsResponse>;
   getConnectorsHealth(): Promise<ConnectorsHealthResponse>;
   getCalendarExports(): Promise<CalendarExportsResponse>;

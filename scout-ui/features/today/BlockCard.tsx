@@ -1,77 +1,102 @@
 /**
- * BlockCard — one routine block (Morning / After School / Evening / Power 60 / etc.)
+ * BlockCard — one routine block (Morning / After School / Evening / etc.)
  *
- * Renders a status pill, due-time badge, owner avatars, an optional
- * note ("ODD day → Townes"), and an inline ChoreList of the block's
- * task occurrences.
- *
- * Quiet-enforcement principle from family_chore_system.md: the card
- * shows status; it does not nag. The single inline reminder copy is
- * left to the parent, not the UI.
+ * Aligned to the canonical HouseholdBlock shape from canonical.py. The
+ * block carries `label`, `due_at`, `status`, `member_family_member_ids`,
+ * and `occurrences[]`. Owner avatars are stubbed from the member id
+ * list since the canonical contract does not echo back full names per
+ * member at the block level — full names are available on the
+ * occurrence rows themselves.
  */
 
 import { StyleSheet, Text, View } from "react-native";
 
-import { BlockStatus, RoutineBlock } from "../lib/contracts";
+import { HouseholdBlock, TaskOccurrence } from "../lib/contracts";
+import { useFamilyContext } from "../hooks";
 import { formatRelativeDue, formatTime } from "../lib/formatters";
 import { colors } from "../../lib/styles";
 import { ChoreList } from "./ChoreList";
 
 interface Props {
-  block: RoutineBlock;
+  block: HouseholdBlock;
 }
 
 export function BlockCard({ block }: Props) {
+  const family = useFamilyContext();
+  // Resolve the kid names referenced by the block. Adults and kids are
+  // both modeled, but block.member_family_member_ids in practice holds
+  // child IDs. We look them up against family_context.kids and fall
+  // back to whatever owner_name is on the first occurrence.
+  const memberNames = resolveMemberNames(block, family.data?.kids);
+
   return (
     <View style={[styles.card, statusCardStyle(block.status)]}>
       <View style={styles.headerRow}>
         <View style={styles.titleCol}>
-          <Text style={styles.title}>{block.title}</Text>
+          <Text style={styles.title}>{block.label}</Text>
           <Text style={styles.due}>
-            Due {formatTime(block.due_at)}
-            {block.status !== "done" ? ` · ${formatRelativeDue(block.due_at)}` : ""}
+            {block.due_at ? `Due ${formatTime(block.due_at)}` : "No deadline"}
+            {block.due_at && block.status !== "done"
+              ? ` · ${formatRelativeDue(block.due_at)}`
+              : ""}
           </Text>
         </View>
         <StatusPill status={block.status} />
       </View>
 
-      {block.members.length > 0 && (
+      {memberNames.length > 0 && (
         <View style={styles.peopleRow}>
-          {block.members.map((m) => (
-            <View key={m.member_id} style={styles.avatar}>
-              <Text style={styles.avatarText}>{m.first_name[0]}</Text>
+          {memberNames.map((m) => (
+            <View key={m} style={styles.avatar}>
+              <Text style={styles.avatarText}>{m[0]}</Text>
             </View>
           ))}
-          <Text style={styles.peopleLabel}>
-            {block.members.map((m) => m.first_name).join(" · ")}
-          </Text>
+          <Text style={styles.peopleLabel}>{memberNames.join(" · ")}</Text>
         </View>
       )}
 
       {block.note && <Text style={styles.note}>{block.note}</Text>}
-
-      {block.blocked_reason && (
-        <View style={styles.blockedRow}>
-          <Text style={styles.blockedLabel}>Blocked:</Text>
-          <Text style={styles.blockedText}>{block.blocked_reason}</Text>
-        </View>
-      )}
 
       <ChoreList occurrences={block.occurrences} />
     </View>
   );
 }
 
-function StatusPill({ status }: { status: BlockStatus }) {
-  const label = labelForStatus(status);
+function resolveMemberNames(
+  block: HouseholdBlock,
+  kids: { family_member_id: string; name: string }[] | undefined,
+): string[] {
+  if (kids && kids.length) {
+    const map = new Map(kids.map((k) => [k.family_member_id, k.name]));
+    const mapped = block.member_family_member_ids
+      .map((id) => map.get(id))
+      .filter((n): n is string => !!n);
+    if (mapped.length) return mapped;
+  }
+  // Fallback: pull unique owner names off the occurrences themselves.
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const o of block.occurrences) {
+    const n = o.owner_name;
+    if (n && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+function StatusPill({ status }: { status: HouseholdBlock["status"] }) {
   return (
     <View style={[styles.pill, pillStyle(status)]}>
-      <Text style={[styles.pillText, pillTextStyle(status)]}>{label}</Text>
+      <Text style={[styles.pillText, pillTextStyle(status)]}>
+        {labelForStatus(status)}
+      </Text>
     </View>
   );
 }
 
-function labelForStatus(s: BlockStatus): string {
+function labelForStatus(s: HouseholdBlock["status"]): string {
   switch (s) {
     case "active":
       return "Active now";
@@ -89,9 +114,10 @@ function labelForStatus(s: BlockStatus): string {
   }
 }
 
-function statusCardStyle(s: BlockStatus) {
+function statusCardStyle(s: HouseholdBlock["status"]) {
   switch (s) {
     case "late":
+    case "blocked":
       return { borderLeftColor: colors.negative };
     case "due_soon":
       return { borderLeftColor: colors.warning };
@@ -99,14 +125,12 @@ function statusCardStyle(s: BlockStatus) {
       return { borderLeftColor: colors.accent };
     case "done":
       return { borderLeftColor: colors.positive, opacity: 0.85 };
-    case "blocked":
-      return { borderLeftColor: colors.negative };
     default:
       return { borderLeftColor: colors.cardBorder };
   }
 }
 
-function pillStyle(s: BlockStatus) {
+function pillStyle(s: HouseholdBlock["status"]) {
   switch (s) {
     case "late":
     case "blocked":
@@ -122,7 +146,7 @@ function pillStyle(s: BlockStatus) {
   }
 }
 
-function pillTextStyle(s: BlockStatus) {
+function pillTextStyle(s: HouseholdBlock["status"]) {
   switch (s) {
     case "late":
     case "blocked":
@@ -183,6 +207,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
     marginBottom: 4,
+    flexWrap: "wrap",
   },
   avatar: {
     width: 22,
@@ -208,21 +233,4 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 8,
   },
-  blockedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 8,
-    backgroundColor: colors.negativeBg,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  blockedLabel: {
-    color: "#C0392B",
-    fontSize: 11,
-    fontWeight: "800",
-    marginRight: 6,
-    textTransform: "uppercase",
-  },
-  blockedText: { color: "#C0392B", fontSize: 12, flexShrink: 1 },
 });

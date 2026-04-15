@@ -1,9 +1,9 @@
 /**
  * Thin convenience hooks over `AppContext`.
  *
- * Each hook auto-loads its slice the first time it is used and exposes
- * the standard `{data, status, error, refresh}` shape so leaf components
- * never reach into AppContext directly for slice metadata.
+ * Each slice hook auto-loads its slice the first time it is used and
+ * exposes the standard `{data, status, error, refresh}` shape so leaf
+ * components never reach into AppContext directly for slice metadata.
  */
 
 import { useEffect } from "react";
@@ -16,9 +16,14 @@ import {
   FamilyContextResponse,
   HouseholdTodayResponse,
   MeResponse,
-  RewardWeekResponse,
+  RewardsCurrentWeekResponse,
 } from "../lib/contracts";
-import { LoadStatus, RemoteSlice, useAppContext } from "../app/AppContext";
+import {
+  CompletionInput,
+  LoadStatus,
+  RemoteSlice,
+  useAppContext,
+} from "../app/AppContext";
 
 interface UseSliceResult<T> {
   data: T | null;
@@ -66,7 +71,7 @@ export function useHouseholdToday() {
 }
 
 export function useRewardsWeek() {
-  return useSlice<RewardWeekResponse>("rewardsWeek");
+  return useSlice<RewardsCurrentWeekResponse>("rewardsWeek");
 }
 
 export function useConnectors() {
@@ -87,14 +92,18 @@ export function useControlPlaneSummary() {
 
 /**
  * Mutator hook for marking a task complete from anywhere in the tree.
- * Returns `{run, statusOf}` — `run(occurrence_id)` posts the completion;
- * `statusOf(occurrence_id)` reports the current in-flight state for
- * optimistic UI.
+ *
+ *   const completion = useCompletionMutation();
+ *   completion.run("occ-0007");                          // simple
+ *   completion.run({ task_occurrence_id: "occ-0007", notes: "had help" });
+ *
+ *   completion.statusOf("occ-0007");   // "pending" | "success" | "error" | null
+ *   completion.errorOf("occ-0007");    // last error string or null
  */
 export function useCompletionMutation() {
   const { state, completeOccurrence } = useAppContext();
   return {
-    run: completeOccurrence,
+    run: (input: string | CompletionInput) => completeOccurrence(input),
     statusOf: (occurrence_id: string) =>
       state.completionMutations[occurrence_id]?.status ?? null,
     errorOf: (occurrence_id: string) =>
@@ -103,7 +112,7 @@ export function useCompletionMutation() {
 }
 
 /**
- * UI hooks (focus filter, sheet open state).
+ * UI hooks (focus filter, sheet open state, transient toast).
  */
 export function useUiFocusMember() {
   const { state, focusMember } = useAppContext();
@@ -117,4 +126,20 @@ export function useUiCompletionSheet() {
     open: (id: string) => openCompletionSheet(id),
     close: () => openCompletionSheet(null),
   };
+}
+
+export function useUiToast() {
+  const { state, dismissToast } = useAppContext();
+  return { toast: state.uiState.toast, dismiss: dismissToast };
+}
+
+/**
+ * Capability helper: returns true if the current actor has parent-tier
+ * privileges (PRIMARY_PARENT or PARENT). Used by surfaces that need to
+ * gate parent-only affordances without hardcoding age.
+ */
+export function useIsParent(): boolean {
+  const { state } = useAppContext();
+  const role = state.me.data?.user.role_tier_key;
+  return role === "PRIMARY_PARENT" || role === "PARENT";
 }

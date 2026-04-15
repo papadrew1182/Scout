@@ -1,12 +1,11 @@
 /**
  * Real Session 3 ScoutClient — wraps `fetch` against the published API.
  *
- * Until Session 2 ships any of these endpoints they will return 404,
- * which is fine: the AppContext defaults to `mockClient` unless
- * `EXPO_PUBLIC_SCOUT_API_MODE === "real"` is set at build time.
- *
- * No legacy `lib/api.ts` paths are reused. Session 3 explicitly speaks
- * the published contracts and nothing else.
+ * Endpoints are the canonical Session 2 routes shipped in
+ * backend/app/routes/canonical.py. Two endpoints are intentionally NOT
+ * implemented here yet (calendar exports + control-plane summary) — they
+ * are not on the backend yet, so the real client throws NotImplemented
+ * and the AppContext keeps the mock for those slices when in real mode.
  */
 
 import { API_BASE_URL } from "../../lib/config";
@@ -20,7 +19,7 @@ import {
   FamilyContextResponse,
   HouseholdTodayResponse,
   MeResponse,
-  RewardWeekResponse,
+  RewardsCurrentWeekResponse,
   ScoutClient,
 } from "./contracts";
 
@@ -58,12 +57,21 @@ export const realClient: ScoutClient = {
   postCompletion: (body: CompletionRequest) =>
     request<CompletionResponse>("POST", "/api/household/completions", body),
   getRewardsWeek: () =>
-    request<RewardWeekResponse>("GET", "/api/rewards/week/current"),
+    request<RewardsCurrentWeekResponse>("GET", "/api/rewards/week/current"),
   getConnectors: () => request<ConnectorsResponse>("GET", "/api/connectors"),
   getConnectorsHealth: () =>
     request<ConnectorsHealthResponse>("GET", "/api/connectors/health"),
-  getCalendarExports: () =>
-    request<CalendarExportsResponse>("GET", "/api/calendar/exports/upcoming"),
-  getControlPlaneSummary: () =>
-    request<ControlPlaneSummaryResponse>("GET", "/api/control-plane/summary"),
+  // The two endpoints below are not yet shipped by the backend. The
+  // realClient surfaces a clear error rather than silently returning
+  // mocked data — the AppContext can decide to fall back if it wants.
+  getCalendarExports: async (): Promise<CalendarExportsResponse> => {
+    throw new Error(
+      "GET /api/calendar/exports/upcoming is not yet implemented by the backend.",
+    );
+  },
+  getControlPlaneSummary: async (): Promise<ControlPlaneSummaryResponse> => {
+    throw new Error(
+      "GET /api/control-plane/summary is not yet implemented by the backend.",
+    );
+  },
 };

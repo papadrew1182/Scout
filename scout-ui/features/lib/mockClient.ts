@@ -15,7 +15,7 @@ import {
   FamilyContextResponse,
   HouseholdTodayResponse,
   MeResponse,
-  RewardWeekResponse,
+  RewardsCurrentWeekResponse,
   ScoutClient,
 } from "./contracts";
 import {
@@ -30,7 +30,6 @@ import {
   mockRewardsWeek,
 } from "./mockData";
 
-// Tiny artificial latency so loading states are visible during dev.
 function delay<T>(value: T, ms = 80): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
@@ -41,7 +40,7 @@ export const mockClient: ScoutClient = {
   getHouseholdToday: (): Promise<HouseholdTodayResponse> => delay(mockHouseholdToday()),
   postCompletion: (body: CompletionRequest): Promise<CompletionResponse> =>
     delay(mockPostCompletion(body), 40),
-  getRewardsWeek: (): Promise<RewardWeekResponse> => delay(mockRewardsWeek()),
+  getRewardsWeek: (): Promise<RewardsCurrentWeekResponse> => delay(mockRewardsWeek()),
   getConnectors: (): Promise<ConnectorsResponse> => delay(mockConnectors()),
   getConnectorsHealth: (): Promise<ConnectorsHealthResponse> => delay(mockConnectorsHealth()),
   getCalendarExports: (): Promise<CalendarExportsResponse> => delay(mockCalendarExports()),
