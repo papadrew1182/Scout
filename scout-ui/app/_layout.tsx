@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { Slot } from "expo-router";
+import { Slot, usePathname } from "expo-router";
 
 import { AuthProvider, useAuth } from "../lib/auth";
 import { setApiToken, setApiFamilyId } from "../lib/api";
@@ -10,9 +10,19 @@ import { NavBar } from "../components/NavBar";
 import { ScoutPanel } from "../components/ScoutLauncher";
 import { colors } from "../lib/styles";
 
+// Routes that belong to the Session 3 operating surface. They render
+// inside their own ScoutShell (header + bottom-tab nav) and must not
+// be wrapped in the legacy NavBar.
+const SCOUT_PATHS = ["/today", "/rewards", "/calendar", "/control-plane", "/assist"];
+
+function isScoutPath(pathname: string): boolean {
+  return SCOUT_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 function AppShell() {
   const { token, member, loading } = useAuth();
   const [scoutOpen, setScoutOpen] = useState(false);
+  const pathname = usePathname();
 
   // Sync auth token + family to API module
   useEffect(() => {
@@ -32,11 +42,17 @@ function AppShell() {
     return <LoginScreen />;
   }
 
+  // Inside the Session 3 group the Shell brings its own chrome.
+  // Legacy routes still get the desktop NavBar + ScoutPanel modal.
+  const inScoutShell = isScoutPath(pathname);
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <NavBar onScoutPress={() => setScoutOpen(true)} />
+      {!inScoutShell && <NavBar onScoutPress={() => setScoutOpen(true)} />}
       <Slot />
-      <ScoutPanel visible={scoutOpen} onClose={() => setScoutOpen(false)} />
+      {!inScoutShell && (
+        <ScoutPanel visible={scoutOpen} onClose={() => setScoutOpen(false)} />
+      )}
     </View>
   );
 }

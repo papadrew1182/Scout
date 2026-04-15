@@ -12,6 +12,7 @@ from app.routes import (
     allowance,
     auth,
     calendar,
+    canonical,
     chores,
     daily_wins,
     dashboard,
@@ -96,6 +97,7 @@ app.include_router(dashboard.router)
 app.include_router(ai.router)
 app.include_router(memory_routes.router)
 app.include_router(mcp_http.router)
+app.include_router(canonical.router)
 
 
 @app.get("/health")
