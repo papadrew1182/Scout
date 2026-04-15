@@ -1,7 +1,7 @@
 # Scout Release Candidate Report
 
-**Current commit on main:** `4e8d2e9`
-**Last reconciliation:** 2026-04-13 (post-Sprint-2-feature-work)
+**Current commit on main:** `0a876c1`
+**Last reconciliation:** 2026-04-15 (post-Session-2 canonical household + Session-3 operating surface consolidation)
 **Initial launch commit:** `549723b` (2026-04-12)
 
 ## Current Verification Results (2026-04-13 against `4e8d2e9`)
