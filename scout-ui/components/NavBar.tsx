@@ -28,13 +28,13 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
-    if (href === "/child") return pathname.startsWith("/child");
+    if (href === "/child") return pathname === "/child" || pathname.startsWith("/child/");
     return pathname === href || pathname.startsWith(href + "/");
   };
 
   return (
     <View style={styles.bar}>
-      <Pressable onPress={() => router.push("/")} style={styles.logoBtn}>
+      <Pressable onPress={() => router.push("/")} style={styles.logoBtn} accessibilityRole="link" accessibilityLabel="Scout home">
         <Text style={styles.logo}>
           SC<Text style={styles.logoO}>O</Text>UT
         </Text>
@@ -45,19 +45,19 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
           {LINKS.map((l) => {
             const active = isActive(l.href);
             return (
-              <Pressable key={l.href} style={[styles.link, active && styles.linkActive]} onPress={() => router.push(l.href as any)}>
+              <Pressable key={l.href} style={[styles.link, active && styles.linkActive]} onPress={() => router.push(l.href as any)} accessibilityRole="link" accessibilityState={{ selected: active }}>
                 <Text style={[styles.linkText, active && styles.linkTextActive]}>{l.label}</Text>
               </Pressable>
             );
           })}
         </View>
       ) : (
-        <Pressable style={styles.menuBtn} onPress={onMenuPress}>
+        <Pressable style={styles.menuBtn} onPress={onMenuPress} accessibilityRole="button" accessibilityLabel="Open menu">
           <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
       )}
 
-      <Pressable style={styles.pill} onPress={onScoutPress}>
+      <Pressable style={styles.pill} onPress={onScoutPress} accessibilityRole="button" accessibilityLabel={pillLabel}>
         <View style={styles.pillDot} />
         <Text style={styles.pillText}>{pillLabel}</Text>
       </Pressable>
