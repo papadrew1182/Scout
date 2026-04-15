@@ -53,7 +53,7 @@ export function ScoutSidebar({ surface }: Props) {
       <View style={{ marginTop: 8 }}>
         <Text style={styles.actionsHead}>Quick actions</Text>
         {actions.map((a) => (
-          <Pressable key={a} style={styles.actionPill} onPress={() => send(a)}>
+          <Pressable key={a} style={styles.actionPill} onPress={() => send(a)} accessibilityRole="button" accessibilityLabel={`Run quick action: ${a}`}>
             <Text style={styles.actionText}>{a}</Text>
           </Pressable>
         ))}
@@ -69,7 +69,7 @@ export function ScoutSidebar({ surface }: Props) {
           onSubmitEditing={() => send(value)}
           returnKeyType="send"
         />
-        <Pressable style={styles.miniSend} onPress={() => send(value)}>
+        <Pressable style={styles.miniSend} onPress={() => send(value)} accessibilityRole="button" accessibilityLabel="Send to Scout">
           <Text style={styles.miniSendArrow}>↗</Text>
         </Pressable>
       </View>
