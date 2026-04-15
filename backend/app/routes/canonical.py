@@ -35,6 +35,10 @@ from sqlalchemy.orm import Session
 from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.models.foundation import Family, FamilyMember
+from app.services.canonical_household_service import (
+    generate_task_occurrences_for_date,
+    recompute_daily_win,
+)
 from services.connectors.registry import CONNECTOR_REGISTRY
 from services.connectors.sync_service import SyncService
 
@@ -233,10 +237,19 @@ def get_household_today(
     tz = pytz.timezone(family.timezone or "America/Chicago") if family else pytz.UTC
     today_local = datetime.now(tz).date()
 
-    # v_household_today is the charter-blessed read model. It's
-    # empty until the legacy → scout backfill runs, so for now the
-    # route returns an empty-but-stable envelope. Session 3 builds
-    # against these keys.
+    # Block 2 — make sure the day's occurrences exist before the
+    # read. The generator is idempotent, so calling it on every
+    # request is cheap; in production this can move behind the
+    # scheduler. Failures here must NOT break the read — fall
+    # through to whatever is already in the table.
+    try:
+        generate_task_occurrences_for_date(
+            db, family_id=actor.family_id, on_date=today_local
+        )
+        db.flush()
+    except Exception:  # pragma: no cover — best-effort
+        pass
+
     rows = db.execute(
         text(
             """
@@ -262,9 +275,59 @@ def get_household_today(
         {"fid": actor.family_id, "today": today_local},
     ).all()
 
-    due_count = sum(1 for r in rows if r.status == "open")
+    due_count = sum(1 for r in rows if not r.is_completed)
     completed_count = sum(1 for r in rows if r.is_completed)
     late_count = sum(1 for r in rows if r.status == "late")
+
+    # Group routine occurrences by block_label/routine_key for the
+    # `blocks` payload section, and split out task_template-backed
+    # rows into the `standalone_chores` section. Weekly recurrences
+    # (Power 60, Poop Patrol — both 'weekly' in the template) land
+    # in `weekly_items`.
+    blocks_by_key: dict[str, dict] = {}
+    standalone: list[dict] = []
+    weekly: list[dict] = []
+
+    weekly_template_keys = _weekly_template_keys(db, actor.family_id)
+
+    for r in rows:
+        flat = {
+            "task_occurrence_id": str(r.task_occurrence_id),
+            "template_key": r.template_key,
+            "routine_key": r.routine_key,
+            "label": r.label,
+            "owner_family_member_id": (
+                str(r.family_member_id) if r.family_member_id else None
+            ),
+            "owner_name": r.member_name,
+            "due_at": r.due_at.isoformat() if r.due_at else None,
+            "status": "complete" if r.is_completed else r.status,
+        }
+        if r.routine_key:
+            block_key = r.routine_key
+            block_entry = blocks_by_key.setdefault(
+                block_key,
+                {
+                    "block_key": block_key,
+                    "label": r.block_label or block_key.title(),
+                    "due_at": flat["due_at"],
+                    "exported_to_calendar": False,
+                    "assignments": [],
+                },
+            )
+            block_entry["assignments"].append(
+                {
+                    "routine_instance_id": flat["task_occurrence_id"],
+                    "family_member_id": flat["owner_family_member_id"],
+                    "member_name": flat["owner_name"],
+                    "status": flat["status"],
+                    "steps": [],
+                }
+            )
+        elif r.template_key in weekly_template_keys:
+            weekly.append(flat)
+        else:
+            standalone.append(flat)
 
     return {
         "date": today_local.isoformat(),
@@ -273,24 +336,24 @@ def get_household_today(
             "completed_count": completed_count,
             "late_count": late_count,
         },
-        "blocks": [],
-        "standalone_chores": [
-            {
-                "task_occurrence_id": str(r.task_occurrence_id),
-                "template_key": r.template_key,
-                "label": r.label,
-                "owner_family_member_id": (
-                    str(r.family_member_id) if r.family_member_id else None
-                ),
-                "owner_name": r.member_name,
-                "due_at": r.due_at.isoformat() if r.due_at else None,
-                "status": "complete" if r.is_completed else r.status,
-            }
-            for r in rows
-            if r.template_key is not None
-        ],
-        "weekly_items": [],
+        "blocks": list(blocks_by_key.values()),
+        "standalone_chores": standalone,
+        "weekly_items": weekly,
     }
+
+
+def _weekly_template_keys(db: Session, family_id: uuid.UUID) -> set[str]:
+    rows = db.execute(
+        text(
+            """
+            SELECT template_key
+            FROM scout.task_templates
+            WHERE family_id = :fid AND recurrence = 'weekly'
+            """
+        ),
+        {"fid": family_id},
+    ).all()
+    return {r.template_key for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -357,15 +420,41 @@ def post_household_completion(
         ),
         {"id": payload.task_occurrence_id},
     )
+
+    # Block 2 — Daily Win recompute lives here now. Recompute against
+    # the assignee of the occurrence (which may differ from the
+    # caller in parent-override flows) using the occurrence's date.
+    occ_assignee_row = db.execute(
+        text(
+            """
+            SELECT assigned_to, occurrence_date
+            FROM scout.task_occurrences
+            WHERE id = :id
+            """
+        ),
+        {"id": payload.task_occurrence_id},
+    ).first()
+
+    daily_win_recomputed = False
+    if occ_assignee_row and occ_assignee_row.assigned_to:
+        recompute_result = recompute_daily_win(
+            db,
+            family_id=actor.family_id,
+            family_member_id=occ_assignee_row.assigned_to,
+            on_date=occ_assignee_row.occurrence_date,
+        )
+        daily_win_recomputed = recompute_result.changed
+
     db.commit()
 
-    # Daily Win recompute and reward preview recomputation are
-    # deferred to the rewards work packet. Return stable keys with
-    # conservative values so Session 3 can render.
     return {
         "task_occurrence_id": str(payload.task_occurrence_id),
         "status": "complete",
-        "daily_win_recomputed": False,
+        "daily_win_recomputed": daily_win_recomputed,
+        # Reward preview recomputation lands with the rewards
+        # settlement packet (work packet F real implementation).
+        # Until then we report False, which Session 3 already
+        # builds against.
         "reward_preview_changed": False,
     }
 
@@ -406,11 +495,11 @@ def get_rewards_current_week(
     ).all()
 
     if not rows:
-        return {
-            "period": None,
-            "members": [],
-            "approval": {"state": "draft"},
-        }
+        # Block 2 fallback — if no allowance_period rows exist yet,
+        # synthesize a preview from active reward_policies and the
+        # week's daily_win_results so Session 3 can render the
+        # weekly card before the real settlement worker lands.
+        return _rewards_preview_from_policies(db, actor.family_id)
 
     period_row = rows[0]
     members = [
@@ -440,6 +529,243 @@ def get_rewards_current_week(
 # ---------------------------------------------------------------------------
 # GET /api/connectors
 # ---------------------------------------------------------------------------
+
+
+def _rewards_preview_from_policies(db: Session, family_id: uuid.UUID) -> dict:
+    """Fallback rewards payload when no allowance_period exists yet.
+    Reads scout.reward_policies + scout.daily_win_results and
+    composes a per-member preview that matches the v_rewards_current_week
+    JSON shape exactly so callers don't need to branch.
+
+    Period bounds are computed as the current ISO Mon-Fri (the
+    Roberts allowance week per family_chore_system.md). Empty-week
+    families get a `period: null` envelope identical to the
+    earlier behaviour."""
+    today_local = date.today()
+    week_start = today_local - timedelta(days=today_local.weekday())  # Monday
+    week_end = week_start + timedelta(days=4)  # Friday (Mon-Fri = 5 days)
+
+    policies = db.execute(
+        text(
+            """
+            SELECT
+                rp.id, rp.family_member_id, rp.baseline_amount_cents,
+                fm.first_name AS member_name
+            FROM scout.reward_policies rp
+            JOIN public.family_members fm ON fm.id = rp.family_member_id
+            WHERE rp.family_id = :fid
+              AND rp.policy_key = 'weekly_allowance'
+              AND rp.effective_from <= :end_date
+              AND (rp.effective_until IS NULL OR rp.effective_until >= :start_date)
+            ORDER BY fm.first_name
+            """
+        ),
+        {"fid": family_id, "start_date": week_start, "end_date": week_end},
+    ).all()
+
+    if not policies:
+        return {"period": None, "members": [], "approval": {"state": "draft"}}
+
+    members_payload = []
+    for p in policies:
+        wins_row = db.execute(
+            text(
+                """
+                SELECT COUNT(*) FILTER (WHERE earned) AS wins,
+                       jsonb_agg(missing_items) FILTER (WHERE NOT earned AND missing_items IS NOT NULL) AS misses
+                FROM scout.daily_win_results
+                WHERE family_member_id = :mid
+                  AND for_date BETWEEN :start_date AND :end_date
+                """
+            ),
+            {"mid": p.family_member_id, "start_date": week_start, "end_date": week_end},
+        ).first()
+        wins_earned = int(wins_row.wins or 0) if wins_row else 0
+        # Daily Win schedule: 5/4/3/<3 -> 100/80/60/0 per family file
+        if wins_earned >= 5:
+            payout_pct = 1.0
+        elif wins_earned == 4:
+            payout_pct = 0.8
+        elif wins_earned == 3:
+            payout_pct = 0.6
+        else:
+            payout_pct = 0.0
+        projected_cents = int(round(p.baseline_amount_cents * payout_pct))
+        members_payload.append(
+            {
+                "family_member_id": str(p.family_member_id),
+                "name": p.member_name,
+                "baseline_allowance": p.baseline_amount_cents / 100.0,
+                "daily_wins": wins_earned,
+                "payout_percent": payout_pct,
+                "projected_payout": projected_cents / 100.0,
+                "miss_reasons": [],
+            }
+        )
+
+    return {
+        "period": {
+            "id": None,
+            "start_date": week_start.isoformat(),
+            "end_date": week_end.isoformat(),
+        },
+        "members": members_payload,
+        "approval": {"state": "draft"},
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/calendar/exports/upcoming
+# ---------------------------------------------------------------------------
+
+
+@router.get("/calendar/exports/upcoming")
+def get_calendar_exports_upcoming(
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+    limit: int = 50,
+):
+    """Charter §GET /api/calendar/exports/upcoming. Reads from
+    scout.v_calendar_publication, filtered to exports whose
+    starts_at is in the future. Items are returned in chronological
+    order so the operating surface can render an upcoming-block
+    list directly."""
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                calendar_export_id,
+                label,
+                starts_at,
+                ends_at,
+                source_type,
+                source_id,
+                target,
+                hearth_visible,
+                export_status,
+                last_exported_at
+            FROM scout.v_calendar_publication
+            WHERE family_id = :fid
+              AND ends_at >= clock_timestamp()
+            ORDER BY starts_at ASC
+            LIMIT :limit
+            """
+        ),
+        {"fid": actor.family_id, "limit": max(1, min(int(limit), 200))},
+    ).all()
+
+    return {
+        "items": [
+            {
+                "calendar_export_id": str(r.calendar_export_id),
+                "label": r.label,
+                "starts_at": r.starts_at.isoformat() if r.starts_at else None,
+                "ends_at": r.ends_at.isoformat() if r.ends_at else None,
+                "source_type": r.source_type,
+                "source_id": str(r.source_id) if r.source_id else None,
+                "target": r.target,
+                "hearth_visible": bool(r.hearth_visible),
+                "export_status": r.export_status,
+                "last_exported_at": (
+                    r.last_exported_at.isoformat() if r.last_exported_at else None
+                ),
+            }
+            for r in rows
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /api/control-plane/summary
+# ---------------------------------------------------------------------------
+
+
+@router.get("/control-plane/summary")
+def get_control_plane_summary(
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Charter §GET /api/control-plane/summary. Aggregates the
+    control-plane health across all of this family's connector
+    accounts plus pending sync/export/approval counts."""
+    connector_summary = db.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE freshness_state = 'live'
+                ) AS healthy_count,
+                COUNT(*) FILTER (
+                    WHERE freshness_state IN ('lagging', 'stale')
+                ) AS stale_count,
+                COUNT(*) FILTER (
+                    WHERE last_error_at IS NOT NULL AND last_success_at IS NULL
+                ) AS error_count
+            FROM scout.v_control_plane
+            WHERE family_id = :fid
+            """
+        ),
+        {"fid": actor.family_id},
+    ).first()
+
+    sync_summary = db.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE sr.status = 'running') AS running_count,
+                COUNT(*) FILTER (WHERE sr.status = 'error') AS failed_count
+            FROM scout.sync_runs sr
+            JOIN scout.sync_jobs sj ON sj.id = sr.sync_job_id
+            JOIN scout.connector_accounts ca ON ca.id = sj.connector_account_id
+            WHERE ca.family_id = :fid
+              AND sr.started_at >= clock_timestamp() - interval '24 hours'
+            """
+        ),
+        {"fid": actor.family_id},
+    ).first()
+
+    calendar_summary = db.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE export_status = 'pending') AS pending_count,
+                COUNT(*) FILTER (WHERE export_status = 'error') AS failed_count
+            FROM scout.calendar_exports
+            WHERE family_id = :fid
+            """
+        ),
+        {"fid": actor.family_id},
+    ).first()
+
+    rewards_summary = db.execute(
+        text(
+            """
+            SELECT COUNT(*) AS pending_approval_count
+            FROM scout.allowance_periods
+            WHERE family_id = :fid AND status = 'pending_approval'
+            """
+        ),
+        {"fid": actor.family_id},
+    ).first()
+
+    return {
+        "connectors": {
+            "healthy_count": int(connector_summary.healthy_count or 0) if connector_summary else 0,
+            "stale_count": int(connector_summary.stale_count or 0) if connector_summary else 0,
+            "error_count": int(connector_summary.error_count or 0) if connector_summary else 0,
+        },
+        "sync_jobs": {
+            "running_count": int(sync_summary.running_count or 0) if sync_summary else 0,
+            "failed_count": int(sync_summary.failed_count or 0) if sync_summary else 0,
+        },
+        "calendar_exports": {
+            "pending_count": int(calendar_summary.pending_count or 0) if calendar_summary else 0,
+            "failed_count": int(calendar_summary.failed_count or 0) if calendar_summary else 0,
+        },
+        "rewards": {
+            "pending_approval_count": int(rewards_summary.pending_approval_count or 0) if rewards_summary else 0,
+        },
+    }
 
 
 @router.get("/connectors")
