@@ -1,9 +1,56 @@
+import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { GROCERY } from "../../lib/seedData";
+import {
+  fetchPendingReviewItems,
+  fetchPurchaseRequests,
+  updateGroceryItem,
+  convertPurchaseRequestToGrocery,
+} from "../../lib/api";
+import type { GroceryItem, PurchaseRequest } from "../../lib/types";
 
 export default function Grocery() {
+  const [pending, setPending] = useState<GroceryItem[]>([]);
+  const [requests, setRequests] = useState<PurchaseRequest[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const [p, r] = await Promise.all([
+        fetchPendingReviewItems(),
+        fetchPurchaseRequests("pending"),
+      ]);
+      setPending(p);
+      setRequests(r);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load");
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const handleApprove = async (item: GroceryItem) => {
+    try {
+      await updateGroceryItem(item.id, { approval_status: "active" });
+      load();
+    } catch (e: any) {
+      setError(e?.message ?? "Approve failed");
+    }
+  };
+
+  const handleConvert = async (req: PurchaseRequest) => {
+    try {
+      await convertPurchaseRequestToGrocery(req.id);
+      load();
+    } catch (e: any) {
+      setError(e?.message ?? "Convert failed");
+    }
+  };
+
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
@@ -19,6 +66,60 @@ export default function Grocery() {
           River's purchase request: <Text style={{ fontWeight: "700" }}>Paper towels</Text> — waiting for your approval.
         </Text>
       </View>
+
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Needs Review</Text>
+          <Text style={styles.itemCount}>{pending.length} pending</Text>
+        </View>
+        {pending.length === 0 ? (
+          <Text style={styles.emptyText}>Nothing pending.</Text>
+        ) : (
+          pending.map((item) => (
+            <View key={item.id} style={styles.reviewRow}>
+              <Text style={styles.reviewName}>{item.title}</Text>
+              <Pressable
+                style={styles.btnPrimary}
+                onPress={() => handleApprove(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`Approve ${item.title}`}
+              >
+                <Text style={styles.btnPrimaryText}>Approve</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </View>
+
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Purchase Requests</Text>
+          <Text style={styles.itemCount}>{requests.length} pending</Text>
+        </View>
+        {requests.length === 0 ? (
+          <Text style={styles.emptyText}>No pending requests.</Text>
+        ) : (
+          requests.map((req) => (
+            <View key={req.id} style={styles.reviewRow}>
+              <Text style={styles.reviewName}>{req.title}</Text>
+              <Pressable
+                style={styles.btnPrimary}
+                onPress={() => handleConvert(req)}
+                accessibilityRole="button"
+                accessibilityLabel={`Add ${req.title} to list`}
+              >
+                <Text style={styles.btnPrimaryText}>Add to List</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
+      </View>
+
+      {error && (
+        <View style={[styles.alert]}>
+          <Text style={styles.alertText}>{error}</Text>
+        </View>
+      )}
 
       <View style={styles.grid2}>
         {GROCERY.map((store) => {
@@ -124,4 +225,15 @@ const styles = StyleSheet.create({
   reqTagText: { fontSize: 9, color: colors.amberText, fontWeight: "700", fontFamily: fonts.body },
 
   approveRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+
+  reviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  reviewName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
+  emptyText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, paddingVertical: 6 },
 });
