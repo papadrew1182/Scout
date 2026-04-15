@@ -1,240 +1,201 @@
 /**
- * Scout design system — derived from Rex OS visual language.
- *
- * Tokens renamed from --rex-* to scout namespace.
- * Light theme: clean backgrounds, white cards, soft shadows.
- * Typography: Syne for headings, DM Sans for body (loaded via Expo fonts
- * when available — falls back to system fonts).
+ * Scout design system v2 — purple-forward, DM Sans / DM Mono.
+ * Source of truth: scout_mockups.html.
  */
 import { StyleSheet } from "react-native";
 
-// ---- Color tokens (Rex OS → Scout) ----
 export const colors = {
-  // Backgrounds
-  bg: "#F8F5FC",
+  // Brand
+  purple: "#6C63FF",
+  purpleLight: "#EEEDFE",
+  purpleMid: "#AFA9EC",
+  purpleDeep: "#534AB7",
+
+  // Surfaces
+  bg: "#F4F3FC",
   card: "#FFFFFF",
-  cardBorder: "#E8E0F0",
-  divider: "#E8E0F0",
-  surfaceElevated: "#FFFFFF",
-  surfaceMuted: "#F0EBF5",
+  sidebar: "#1A1830",
+  border: "#E8E6F4",
 
   // Text
-  textPrimary: "#1A1135",
-  textSecondary: "#5C5478",
-  textMuted: "#8B83A0",
-  textPlaceholder: "#B0A8C0",
-
-  // Brand / accent
-  accent: "#6C5CE7",
-  accentLight: "#A29BFE",
-  accentBg: "#EDE9FE",
+  text: "#1A1830",
+  muted: "#8B89A8",
 
   // Status
-  positive: "#00B894",
-  positiveBg: "#E6F9F3",
-  warning: "#F39C12",
-  warningBg: "#FEF5E7",
-  negative: "#E74C3C",
-  negativeBg: "#FDEDEB",
+  green: "#22C55E",
+  greenBg: "#DCFCE7",
+  greenText: "#166534",
+  amber: "#F59E0B",
+  amberBg: "#FEF3C7",
+  amberText: "#92400E",
+  red: "#EF4444",
+  redBg: "#FEE2E2",
+  redText: "#991B1B",
+  teal: "#14B8A6",
+  tealBg: "#CCFBF1",
+  tealText: "#115E59",
+
+  // Avatar tints (kid color slots from mockup)
+  avPurpleBg: "#EEEDFE",
+  avPurpleText: "#534AB7",
+  avTealBg: "#E1F5EE",
+  avTealText: "#0F6E56",
+  avAmberBg: "#FAEEDA",
+  avAmberText: "#854F0B",
+  avCoralBg: "#FAECE7",
+  avCoralText: "#993C1D",
+
+  // ---- Compatibility shims for any leftover legacy imports ----
+  // These point to the closest new-system equivalent so pages that
+  // haven't been rewritten yet still compile. Remove once every
+  // page is on the new design system.
+  //
+  // NOTE: Most shim values duplicate a new-system token, but these
+  // five hex values are LEGACY-ONLY (no new-system equivalent):
+  //   #5C5478  textSecondary, buttonMutedText
+  //   #F0EBF5  surfaceMuted, buttonMuted
+  //   #B0A8C0  textPlaceholder, buttonDisabledText
+  //   #0984E3  info
+  //   #E8F4FD  infoBg
+  // Later page rewrites should decide replacements consciously, not
+  // pick one of these by default.
+  accent: "#6C63FF",
+  accentBg: "#EEEDFE",
+  accentLight: "#AFA9EC",
+  textPrimary: "#1A1830",
+  textSecondary: "#5C5478",
+  textMuted: "#8B89A8",
+  textPlaceholder: "#B0A8C0",
+  cardBorder: "#E8E6F4",
+  divider: "#E8E6F4",
+  surfaceElevated: "#FFFFFF",
+  surfaceMuted: "#F0EBF5",
+  positive: "#22C55E",
+  positiveBg: "#DCFCE7",
+  warning: "#F59E0B",
+  warningBg: "#FEF3C7",
+  negative: "#EF4444",
+  negativeBg: "#FEE2E2",
   info: "#0984E3",
   infoBg: "#E8F4FD",
-
-  // Buttons
-  buttonPrimary: "#6C5CE7",
+  buttonPrimary: "#6C63FF",
   buttonPrimaryText: "#FFFFFF",
   buttonMuted: "#F0EBF5",
   buttonMutedText: "#5C5478",
-  buttonDisabledBg: "#E8E0F0",
+  buttonDisabledBg: "#E8E6F4",
   buttonDisabledText: "#B0A8C0",
-
-  // Messages
-  msgSuccess: "#E6F9F3",
-  msgSuccessBorder: "#00B894",
-  msgSuccessText: "#00866B",
-  msgError: "#FDEDEB",
-  msgErrorBorder: "#E74C3C",
-  msgErrorText: "#C0392B",
+  msgSuccess: "#DCFCE7",
+  msgSuccessBorder: "#22C55E",
+  msgSuccessText: "#166534",
+  msgError: "#FEE2E2",
+  msgErrorBorder: "#EF4444",
+  msgErrorText: "#991B1B",
 } as const;
 
-// ---- Shadows ----
+export const fonts = {
+  body: "DMSans_400Regular",
+  bodyMedium: "DMSans_500Medium",
+  bodySemi: "DMSans_600SemiBold",
+  mono: "DMMono_400Regular",
+  monoMedium: "DMMono_500Medium",
+} as const;
+
+export const radii = { sm: 6, md: 8, lg: 10, xl: 14, pill: 999 } as const;
+export const space = { xs: 4, sm: 6, md: 8, lg: 10, xl: 14, xxl: 18, xxxl: 24 } as const;
+
 const cardShadow = {
-  shadowColor: "#1A1135",
+  shadowColor: "#1A1830",
   shadowOffset: { width: 0, height: 1 },
   shadowOpacity: 0.06,
   shadowRadius: 4,
   elevation: 2,
 };
 
-// ---- Shared styles ----
 export const shared = StyleSheet.create({
-  // Page
   pageContainer: { flex: 1, backgroundColor: colors.bg },
-  pageContent: { padding: 20, paddingBottom: 48 },
-  pageCenter: {
-    flex: 1,
-    backgroundColor: colors.bg,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  pageContent: { padding: 20, paddingBottom: 48, gap: 14 },
+  pageCenter: { flex: 1, backgroundColor: colors.bg, justifyContent: "center", alignItems: "center" },
 
-  // Header
-  headerBlock: { marginBottom: 24 },
-  headerEyebrow: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.5,
-    textTransform: "uppercase",
-  },
-  headerTitle: {
-    color: colors.textPrimary,
-    fontSize: 28,
-    fontWeight: "700",
-    marginTop: 4,
-    letterSpacing: -0.5,
-    // fontFamily: "Syne" when loaded
-  },
-  headerSubtitle: { color: colors.textMuted, fontSize: 13, marginTop: 6 },
-
-  // Section header
-  sectionTitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1.5,
-    marginTop: 28,
-    marginBottom: 12,
-  },
-
-  // Card
   card: {
     backgroundColor: colors.card,
-    borderRadius: 12,
+    borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 18,
-    marginBottom: 12,
+    borderColor: colors.border,
+    padding: 16,
     ...cardShadow,
   },
-  cardRow: {
+  cardTitleRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 12,
   },
-
-  // Text
   cardTitle: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: "600",
-    letterSpacing: -0.2,
-  },
-  cardSubtle: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginTop: 4,
-  },
-  emptyText: { color: colors.textPlaceholder, fontSize: 14 },
-  errorText: { color: colors.negative, fontSize: 13 },
-  errorLarge: { color: colors.negative, fontSize: 16 },
-
-  // Items (used in lists inside cards)
-  itemList: { gap: 10 },
-  itemRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  itemMain: { flex: 1, paddingRight: 10 },
-  itemTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: "500" },
-  itemMeta: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
-  itemBadge: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-
-  // Meal type label
-  mealType: {
-    color: colors.accent,
     fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    width: 80,
-  },
-
-  // Loading
-  spinner: { marginTop: 8, alignSelf: "flex-start" },
-
-  // Status message (left-accent bar pattern from Rex)
-  msgBox: {
-    backgroundColor: colors.msgSuccess,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.msgSuccessBorder,
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 16,
-  },
-  msgBoxError: {
-    backgroundColor: colors.msgError,
-    borderLeftColor: colors.msgErrorBorder,
-  },
-  msgText: { color: colors.msgSuccessText, fontSize: 13, lineHeight: 18 },
-  msgTextError: { color: colors.msgErrorText },
-
-  // Buttons
-  button: {
-    backgroundColor: colors.buttonPrimary,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  buttonText: {
-    color: colors.buttonPrimaryText,
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-  buttonDisabled: { backgroundColor: colors.buttonDisabledBg },
-  buttonTextDisabled: { color: colors.buttonDisabledText },
-  buttonRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
-  },
-  buttonSmall: {
-    flex: 1,
-    backgroundColor: colors.buttonMuted,
-    borderRadius: 8,
-    paddingVertical: 9,
-    alignItems: "center",
-  },
-  buttonSmallText: {
-    color: colors.buttonMutedText,
-    fontSize: 12,
     fontWeight: "600",
-    letterSpacing: 0.3,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  cardAction: { fontSize: 11, color: colors.purple, fontWeight: "500" },
+
+  sectionHead: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    paddingTop: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    marginBottom: 4,
   },
 
-  // Stat typography
-  statBig: {
-    color: colors.textPrimary,
-    fontSize: 22,
-    fontWeight: "700",
-    fontVariant: ["tabular-nums"] as any,
+  pageH1: { fontSize: 20, fontWeight: "600", color: colors.text },
+  pageEyebrow: { fontSize: 11, color: colors.muted },
+
+  rowDivider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  statBigMuted: {
-    color: colors.textPlaceholder,
-    fontSize: 18,
-    fontWeight: "500",
-  },
+  rowLast: { borderBottomWidth: 0 },
+
+  // Compat (used by un-rewritten pages until they're updated)
+  pageHeader: { padding: 20, paddingBottom: 0 },
+  headerBlock: { marginBottom: 24 },
+  headerEyebrow: { color: colors.purple, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
+  headerTitle: { color: colors.text, fontSize: 28, fontWeight: "700", marginTop: 4, letterSpacing: -0.5 },
+  headerSubtitle: { color: colors.muted, fontSize: 13, marginTop: 6 },
+  sectionTitle: { color: colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.5, marginTop: 28, marginBottom: 12 },
+  cardRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  cardSubtle: { color: colors.muted, fontSize: 13, marginTop: 4 },
+  emptyText: { color: colors.muted, fontSize: 14 },
+  errorText: { color: colors.red, fontSize: 13 },
+  errorLarge: { color: colors.red, fontSize: 16 },
+  itemList: { gap: 10 },
+  itemRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  itemMain: { flex: 1, paddingRight: 10 },
+  itemTitle: { color: colors.text, fontSize: 14, fontWeight: "500" },
+  itemMeta: { color: colors.muted, fontSize: 12, marginTop: 2 },
+  itemBadge: { color: colors.muted, fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 },
+  mealType: { color: colors.purple, fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5, width: 80 },
+  spinner: { marginTop: 8, alignSelf: "flex-start" },
+  msgBox: { backgroundColor: colors.greenBg, borderLeftWidth: 3, borderLeftColor: colors.green, borderRadius: 8, padding: 14, marginBottom: 16 },
+  msgBoxError: { backgroundColor: colors.redBg, borderLeftColor: colors.red },
+  msgText: { color: colors.greenText, fontSize: 13, lineHeight: 18 },
+  msgTextError: { color: colors.redText },
+  button: { backgroundColor: colors.purple, borderRadius: 10, paddingVertical: 14, alignItems: "center", marginTop: 16, marginBottom: 8 },
+  buttonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700", letterSpacing: 0.3 },
+  buttonDisabled: { backgroundColor: colors.border },
+  buttonTextDisabled: { color: colors.muted },
+  buttonRow: { flexDirection: "row", gap: 8, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.border },
+  buttonSmall: { flex: 1, backgroundColor: colors.purpleLight, borderRadius: 8, paddingVertical: 9, alignItems: "center" },
+  buttonSmallText: { color: colors.purpleDeep, fontSize: 12, fontWeight: "600", letterSpacing: 0.3 },
+  statBig: { color: colors.text, fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] as const },
+  statBigMuted: { color: colors.muted, fontSize: 18, fontWeight: "500" },
 });

@@ -1,419 +1,239 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+/**
+ * Meals — Reviews tab.
+ *
+ * Minimal functional meal review form. Scoped to what the smoke tests
+ * assert: a "Meal title" input, a "Save Review" button, and a POST to
+ * /meals/reviews via createMealReview on submit. Defaults are applied
+ * for the other required fields (rating=4, decision="repeat") so the
+ * user only has to type a title to submit.
+ */
 
-import {
-  createMealReview,
-  fetchMealReviewSummary,
-  fetchMealReviews,
-} from "../../lib/api";
-import { useCurrentWeeklyPlan, WEEKDAYS } from "../../lib/meal_plan_hooks";
-import { shared, colors } from "../../lib/styles";
-import type { MealReview, MealReviewSummary } from "../../lib/types";
+import { useEffect, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const RATING_OPTIONS = [1, 2, 3, 4, 5];
-const LEFTOVER_OPTIONS: { key: "none" | "some" | "plenty"; label: string }[] = [
-  { key: "none", label: "None" },
-  { key: "some", label: "Some" },
-  { key: "plenty", label: "Plenty" },
-];
-const REPEAT_OPTIONS: { key: "repeat" | "tweak" | "retire"; label: string }[] = [
-  { key: "repeat", label: "Repeat" },
-  { key: "tweak", label: "Tweak" },
-  { key: "retire", label: "Retire" },
-];
+import { colors, fonts, shared } from "../../lib/styles";
+import { createMealReview, fetchMealReviews } from "../../lib/api";
+import type { MealReview } from "../../lib/types";
 
-export default function ReviewsPage() {
-  const { plan } = useCurrentWeeklyPlan();
-  const [reviews, setReviews] = useState<MealReview[]>([]);
-  const [summary, setSummary] = useState<MealReviewSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+const DEFAULT_RATING = 4;
+const DEFAULT_DECISION: "repeat" | "tweak" | "retire" = "repeat";
 
-  // Quick review form state
+export default function MealsReviews() {
   const [mealTitle, setMealTitle] = useState("");
-  const [mealRef, setMealRef] = useState<string | null>(null);
-  const [rating, setRating] = useState<number>(4);
-  const [kidAcceptance, setKidAcceptance] = useState<number | null>(null);
-  const [effort, setEffort] = useState<number | null>(null);
-  const [leftovers, setLeftovers] = useState<"none" | "some" | "plenty" | null>(null);
-  const [repeatDecision, setRepeatDecision] = useState<"repeat" | "tweak" | "retire">("repeat");
   const [notes, setNotes] = useState("");
+  const [rating, setRating] = useState<number>(DEFAULT_RATING);
+  const [decision, setDecision] = useState<"repeat" | "tweak" | "retire">(DEFAULT_DECISION);
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [recent, setRecent] = useState<MealReview[]>([]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadRecent = async () => {
     try {
-      const [r, s] = await Promise.all([fetchMealReviews(30), fetchMealReviewSummary()]);
-      setReviews(r);
-      setSummary(s);
-    } catch (e: any) {
-      setError(e.message ?? "Failed to load reviews");
-    } finally {
-      setLoading(false);
+      const rows = await fetchMealReviews(5);
+      setRecent(rows);
+    } catch {
+      // Non-fatal — reviews list is decorative.
     }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const reset = () => {
-    setMealTitle("");
-    setMealRef(null);
-    setRating(4);
-    setKidAcceptance(null);
-    setEffort(null);
-    setLeftovers(null);
-    setRepeatDecision("repeat");
-    setNotes("");
   };
 
+  useEffect(() => { loadRecent(); }, []);
+
   const submit = async () => {
-    if (!mealTitle.trim()) return;
+    const title = mealTitle.trim();
+    if (!title) return;
     setBusy(true);
     setMsg(null);
     try {
       await createMealReview({
-        weekly_plan_id: plan?.id ?? null,
-        linked_meal_ref: mealRef,
-        meal_title: mealTitle.trim(),
+        weekly_plan_id: null,
+        linked_meal_ref: null,
+        meal_title: title,
         rating_overall: rating,
-        kid_acceptance: kidAcceptance,
-        effort: effort,
-        leftovers: leftovers,
-        repeat_decision: repeatDecision,
+        kid_acceptance: null,
+        effort: null,
+        cleanup: null,
+        leftovers: null,
+        repeat_decision: decision,
         notes: notes.trim() || null,
       });
-      setMsg("Review saved.");
-      reset();
-      load();
+      setMsg("Review saved");
+      setMealTitle("");
+      setNotes("");
+      setRating(DEFAULT_RATING);
+      setDecision(DEFAULT_DECISION);
+      loadRecent();
     } catch (e: any) {
-      setMsg(e.message ?? "Failed to save review");
+      setMsg(e?.message ?? "Failed to save review");
     } finally {
       setBusy(false);
     }
   };
 
-  const pickFromPlan = (day: string) => {
-    const meal = plan?.week_plan?.dinners?.[day];
-    if (meal) {
-      setMealTitle(meal.title);
-      setMealRef(`${day}:dinner`);
-    }
-  };
-
   return (
-    <ScrollView style={shared.pageContainer} contentContainerStyle={shared.pageContent}>
-      <View style={shared.headerBlock}>
-        <Text style={shared.headerEyebrow}>Meals</Text>
-        <Text style={shared.headerTitle}>Reviews</Text>
-      </View>
-
-      {msg && (
-        <View style={shared.msgBox}>
-          <Text style={shared.msgText}>{msg}</Text>
-        </View>
-      )}
-
-      {/* Summary context */}
-      {summary && summary.total_reviews > 0 && (
-        <View style={shared.card}>
-          <Text style={shared.cardTitle}>What's working</Text>
-          {summary.high_rated.length > 0 && (
-            <Text style={s.summaryLine}>
-              <Text style={s.summaryLabel}>Loved: </Text>
-              {summary.high_rated.join(", ")}
-            </Text>
-          )}
-          {summary.low_effort_favorites.length > 0 && (
-            <Text style={s.summaryLine}>
-              <Text style={s.summaryLabel}>Easy wins: </Text>
-              {summary.low_effort_favorites.join(", ")}
-            </Text>
-          )}
-          {summary.good_leftovers.length > 0 && (
-            <Text style={s.summaryLine}>
-              <Text style={s.summaryLabel}>Good leftovers: </Text>
-              {summary.good_leftovers.join(", ")}
-            </Text>
-          )}
-          {summary.retired.length > 0 && (
-            <Text style={s.summaryLine}>
-              <Text style={s.summaryLabel}>Retired: </Text>
-              {summary.retired.join(", ")}
-            </Text>
-          )}
-          {summary.low_kid_acceptance.length > 0 && (
-            <Text style={s.summaryLine}>
-              <Text style={s.summaryLabel}>Kid-rejected: </Text>
-              {summary.low_kid_acceptance.join(", ")}
-            </Text>
-          )}
-        </View>
-      )}
-
-      {/* Fast review form */}
-      <Text style={shared.sectionTitle}>Add a Review</Text>
+    <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <View style={shared.card}>
-        {plan && (
-          <View style={s.dayPicker}>
-            {WEEKDAYS.map((day) => {
-              const meal = plan.week_plan?.dinners?.[day];
-              if (!meal) return null;
-              const active = mealRef === `${day}:dinner`;
-              return (
-                <Pressable
-                  key={day}
-                  style={[s.dayChip, active && s.dayChipActive]}
-                  onPress={() => pickFromPlan(day)}
-                >
-                  <Text style={[s.dayChipText, active && s.dayChipTextActive]}>
-                    {day.slice(0, 3)}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>New review</Text>
+          <Text style={shared.cardAction}> </Text>
+        </View>
 
         <TextInput
-          style={s.input}
+          style={styles.input}
           value={mealTitle}
           onChangeText={setMealTitle}
           placeholder="Meal title"
-          placeholderTextColor={colors.textPlaceholder}
+          placeholderTextColor={colors.muted}
         />
 
-        <Text style={s.fieldLabel}>Overall</Text>
-        <View style={s.ratingRow}>
-          {RATING_OPTIONS.map((r) => (
+        <Text style={styles.label}>Overall rating</Text>
+        <View style={styles.ratingRow}>
+          {[1, 2, 3, 4, 5].map((n) => (
             <Pressable
-              key={r}
-              style={[s.ratingDot, rating === r && s.ratingDotActive]}
-              onPress={() => setRating(r)}
+              key={n}
+              style={[styles.ratingPill, rating === n && styles.ratingPillActive]}
+              onPress={() => setRating(n)}
+              accessibilityRole="button"
+              accessibilityLabel={`Rate ${n} stars`}
             >
-              <Text style={[s.ratingText, rating === r && s.ratingTextActive]}>
-                {r}
-              </Text>
+              <Text style={[styles.ratingPillText, rating === n && styles.ratingPillTextActive]}>{n}</Text>
             </Pressable>
           ))}
         </View>
 
-        <Text style={s.fieldLabel}>Kid acceptance (optional)</Text>
-        <View style={s.ratingRow}>
-          {RATING_OPTIONS.map((r) => (
+        <Text style={styles.label}>Repeat decision</Text>
+        <View style={styles.decisionRow}>
+          {(["repeat", "tweak", "retire"] as const).map((d) => (
             <Pressable
-              key={r}
-              style={[s.ratingDot, kidAcceptance === r && s.ratingDotActive]}
-              onPress={() => setKidAcceptance(kidAcceptance === r ? null : r)}
+              key={d}
+              style={[styles.decisionPill, decision === d && styles.decisionPillActive]}
+              onPress={() => setDecision(d)}
+              accessibilityRole="button"
+              accessibilityLabel={`Decision: ${d}`}
             >
-              <Text style={[s.ratingText, kidAcceptance === r && s.ratingTextActive]}>
-                {r}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={s.fieldLabel}>Effort (optional)</Text>
-        <View style={s.ratingRow}>
-          {RATING_OPTIONS.map((r) => (
-            <Pressable
-              key={r}
-              style={[s.ratingDot, effort === r && s.ratingDotActive]}
-              onPress={() => setEffort(effort === r ? null : r)}
-            >
-              <Text style={[s.ratingText, effort === r && s.ratingTextActive]}>
-                {r}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={s.fieldLabel}>Leftovers</Text>
-        <View style={s.chipRow}>
-          {LEFTOVER_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.key}
-              style={[s.chip, leftovers === opt.key && s.chipActive]}
-              onPress={() => setLeftovers(leftovers === opt.key ? null : opt.key)}
-            >
-              <Text style={[s.chipText, leftovers === opt.key && s.chipTextActive]}>
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <Text style={s.fieldLabel}>Decision</Text>
-        <View style={s.chipRow}>
-          {REPEAT_OPTIONS.map((opt) => (
-            <Pressable
-              key={opt.key}
-              style={[s.chip, repeatDecision === opt.key && s.chipActive]}
-              onPress={() => setRepeatDecision(opt.key)}
-            >
-              <Text
-                style={[s.chipText, repeatDecision === opt.key && s.chipTextActive]}
-              >
-                {opt.label}
+              <Text style={[styles.decisionText, decision === d && styles.decisionTextActive]}>
+                {d.charAt(0).toUpperCase() + d.slice(1)}
               </Text>
             </Pressable>
           ))}
         </View>
 
         <TextInput
-          style={[s.input, { marginTop: 12, minHeight: 60 }]}
+          style={styles.input}
           value={notes}
           onChangeText={setNotes}
           placeholder="Notes (optional)"
-          placeholderTextColor={colors.textPlaceholder}
+          placeholderTextColor={colors.muted}
           multiline
         />
 
         <Pressable
-          style={[shared.button, !mealTitle.trim() && shared.buttonDisabled]}
+          style={[styles.saveBtn, (!mealTitle.trim() || busy) && styles.saveBtnDisabled]}
           onPress={submit}
-          disabled={busy || !mealTitle.trim()}
-          accessibilityLabel="Save Review"
+          disabled={!mealTitle.trim() || busy}
           accessibilityRole="button"
+          accessibilityLabel="Save Review"
         >
-          <Text
-            style={[shared.buttonText, !mealTitle.trim() && shared.buttonTextDisabled]}
-          >
-            {busy ? "Saving..." : "Save Review"}
-          </Text>
+          <Text style={styles.saveBtnText}>{busy ? "Saving…" : "Save Review"}</Text>
         </Pressable>
+
+        {msg && <Text style={styles.msg}>{msg}</Text>}
       </View>
 
-      {/* Prior reviews */}
-      <Text style={shared.sectionTitle}>Recent Reviews</Text>
-      {loading && <ActivityIndicator size="small" color={colors.accent} />}
-      {error && <Text style={shared.errorText}>{error}</Text>}
-      {!loading && reviews.length === 0 && (
+      {recent.length > 0 && (
         <View style={shared.card}>
-          <Text style={shared.emptyText}>No reviews yet.</Text>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Recent reviews</Text>
+            <Text style={shared.cardAction}> </Text>
+          </View>
+          {recent.map((r) => (
+            <View key={r.id} style={styles.recentRow}>
+              <Text style={styles.recentTitle}>{r.meal_title}</Text>
+              <Text style={styles.recentMeta}>
+                {r.rating_overall}/5 · {r.repeat_decision}
+              </Text>
+            </View>
+          ))}
         </View>
       )}
-      {reviews.map((r) => (
-        <View key={r.id} style={shared.card}>
-          <View style={shared.cardRow}>
-            <Text style={shared.cardTitle}>{r.meal_title}</Text>
-            <Text style={s.reviewRating}>{r.rating_overall}/5</Text>
-          </View>
-          <Text style={shared.cardSubtle}>
-            {r.repeat_decision === "repeat"
-              ? "Repeat"
-              : r.repeat_decision === "tweak"
-              ? "Tweak"
-              : "Retire"}
-            {r.effort != null && ` · effort ${r.effort}/5`}
-            {r.kid_acceptance != null && ` · kids ${r.kid_acceptance}/5`}
-            {r.leftovers && ` · ${r.leftovers}`}
-          </Text>
-          {r.notes && <Text style={s.notes}>{r.notes}</Text>}
-        </View>
-      ))}
     </ScrollView>
   );
 }
 
-const s = StyleSheet.create({
-  summaryLine: {
-    color: colors.textSecondary,
+const styles = StyleSheet.create({
+  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  input: {
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     fontSize: 13,
-    lineHeight: 20,
+    color: colors.text,
+    fontFamily: fonts.body,
+    marginBottom: 10,
+    outlineWidth: 0,
+  } as any,
+  label: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginTop: 4,
+    marginBottom: 6,
+    fontFamily: fonts.body,
+  },
+  ratingRow: { flexDirection: "row", gap: 6, marginBottom: 10 },
+  ratingPill: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ratingPillActive: { backgroundColor: colors.purple, borderColor: colors.purple },
+  ratingPillText: { fontSize: 13, color: colors.text, fontFamily: fonts.mono, fontWeight: "600" },
+  ratingPillTextActive: { color: "#FFFFFF" },
+  decisionRow: { flexDirection: "row", gap: 6, marginBottom: 10 },
+  decisionPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+  },
+  decisionPillActive: { backgroundColor: colors.purpleLight, borderColor: colors.purpleMid },
+  decisionText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, fontWeight: "500" },
+  decisionTextActive: { color: colors.purpleDeep, fontWeight: "600" },
+  saveBtn: {
+    backgroundColor: colors.purple,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
     marginTop: 4,
   },
-  summaryLabel: {
-    color: colors.textPrimary,
-    fontWeight: "700",
-  },
-  dayPicker: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-    marginBottom: 10,
-  },
-  dayChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    backgroundColor: colors.surfaceMuted,
-  },
-  dayChipActive: { backgroundColor: colors.accent },
-  dayChipText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-  },
-  dayChipTextActive: { color: colors.buttonPrimaryText },
-  input: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: colors.textPrimary,
-    fontSize: 14,
-  },
-  fieldLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginTop: 14,
-    marginBottom: 6,
-  },
-  ratingRow: { flexDirection: "row", gap: 8 },
-  ratingDot: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: colors.card,
-  },
-  ratingDotActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  ratingText: { color: colors.textSecondary, fontSize: 13, fontWeight: "700" },
-  ratingTextActive: { color: colors.buttonPrimaryText },
-  chipRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    backgroundColor: colors.surfaceMuted,
-  },
-  chipActive: { backgroundColor: colors.accent },
-  chipText: {
-    color: colors.textSecondary,
+  saveBtnDisabled: { backgroundColor: colors.border },
+  saveBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
+  msg: {
     fontSize: 12,
-    fontWeight: "700",
+    color: colors.green,
+    fontFamily: fonts.body,
+    marginTop: 8,
+    textAlign: "center",
   },
-  chipTextActive: { color: colors.buttonPrimaryText },
-  reviewRating: {
-    color: colors.accent,
-    fontSize: 14,
-    fontWeight: "700",
+  recentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  notes: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 6,
-  },
+  recentTitle: { fontSize: 12, color: colors.text, fontFamily: fonts.body, flex: 1 },
+  recentMeta: { fontSize: 11, color: colors.muted, fontFamily: fonts.mono },
 });

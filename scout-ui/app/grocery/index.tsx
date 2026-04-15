@@ -1,295 +1,239 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useEffect, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { NeedSomething } from "../../components/NeedSomething";
-import { ReceiptCaptureButton } from "../../components/ReceiptCaptureButton";
+import { colors, fonts, shared } from "../../lib/styles";
+import { GROCERY } from "../../lib/seedData";
 import {
-  fetchGroceryItems,
   fetchPendingReviewItems,
   fetchPurchaseRequests,
   updateGroceryItem,
-  approvePurchaseRequest,
-  rejectPurchaseRequest,
   convertPurchaseRequestToGrocery,
 } from "../../lib/api";
-import { sourceLabel } from "../../lib/format";
-import { shared, colors } from "../../lib/styles";
 import type { GroceryItem, PurchaseRequest } from "../../lib/types";
 
-export default function GroceryPage() {
-  const [items, setItems] = useState<GroceryItem[]>([]);
+export default function Grocery() {
   const [pending, setPending] = useState<GroceryItem[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = async () => {
     try {
-      const [g, p, r] = await Promise.all([
-        fetchGroceryItems(),
+      const [p, r] = await Promise.all([
         fetchPendingReviewItems(),
         fetchPurchaseRequests("pending"),
       ]);
-      setItems(g);
       setPending(p);
       setRequests(r);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleTogglePurchased = async (item: GroceryItem) => {
-    try {
-      await updateGroceryItem(item.id, { is_purchased: !item.is_purchased });
-      load();
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load");
     }
   };
 
-  const handleApproveItem = async (item: GroceryItem) => {
+  useEffect(() => {
+    load();
+  }, []);
+
+  const handleApprove = async (item: GroceryItem) => {
     try {
       await updateGroceryItem(item.id, { approval_status: "active" });
       load();
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setError(e?.message ?? "Approve failed");
     }
   };
 
-  const handleApproveRequest = async (req: PurchaseRequest) => {
-    try {
-      await approvePurchaseRequest(req.id);
-      load();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleRejectRequest = async (req: PurchaseRequest) => {
-    try {
-      await rejectPurchaseRequest(req.id);
-      load();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleConvertRequest = async (req: PurchaseRequest) => {
+  const handleConvert = async (req: PurchaseRequest) => {
     try {
       await convertPurchaseRequestToGrocery(req.id);
       load();
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      setError(e?.message ?? "Convert failed");
     }
   };
 
-  // Group items by store
-  const activeItems = items.filter((i) => i.approval_status === "active" && !i.is_purchased);
-  const purchasedItems = items.filter((i) => i.is_purchased);
-  const stores = [...new Set(activeItems.map((i) => i.preferred_store || "Other"))].sort();
-
-  if (loading) {
-    return (
-      <View style={shared.pageCenter}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
-  }
-
   return (
-    <ScrollView style={shared.pageContainer} contentContainerStyle={shared.pageContent}>
-      <View style={shared.headerBlock}>
-        <Text style={shared.headerTitle}>Grocery List</Text>
+    <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
+      <View style={styles.headerRow}>
+        <Text style={styles.h1}>Grocery List</Text>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable style={styles.btnGhost} accessibilityRole="button" accessibilityLabel="Scan receipt"><Text style={styles.btnGhostText}>Scan receipt</Text></Pressable>
+          <Pressable style={styles.btnPrimary} accessibilityRole="button" accessibilityLabel="Add item"><Text style={styles.btnPrimaryText}>+ Add item</Text></Pressable>
+        </View>
       </View>
 
-      <View style={{ marginBottom: 12 }}>
-        <ReceiptCaptureButton onAdded={() => load()} />
+      <View style={[styles.alert]}>
+        <Text style={styles.alertText}>
+          River's purchase request: <Text style={{ fontWeight: "700" }}>Paper towels</Text> — waiting for your approval.
+        </Text>
       </View>
 
-      <NeedSomething onComplete={load} />
-
-      {/* Pending review (parent only) */}
-      {pending.length > 0 && (
-        <>
-          <Text style={shared.sectionTitle}>Needs Review</Text>
-          {pending.map((item) => (
-            <View key={item.id} style={s.reviewCard}>
-              <Text style={s.reviewTitle}>{item.title}</Text>
-              {item.notes && <Text style={s.reviewMeta}>{item.notes}</Text>}
-              <View style={s.reviewActions}>
-                <Pressable style={s.approveBtn} onPress={() => handleApproveItem(item)}>
-                  <Text style={s.approveBtnText}>Approve</Text>
-                </Pressable>
-              </View>
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Needs Review</Text>
+          <Text style={styles.itemCount}>{pending.length} pending</Text>
+        </View>
+        {pending.length === 0 ? (
+          <Text style={styles.emptyText}>Nothing pending.</Text>
+        ) : (
+          pending.map((item) => (
+            <View key={item.id} style={styles.reviewRow}>
+              <Text style={styles.reviewName}>{item.title}</Text>
+              <Pressable
+                style={styles.btnPrimary}
+                onPress={() => handleApprove(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`Approve ${item.title}`}
+              >
+                <Text style={styles.btnPrimaryText}>Approve</Text>
+              </Pressable>
             </View>
-          ))}
-        </>
-      )}
+          ))
+        )}
+      </View>
 
-      {/* Pending purchase requests (parent only) */}
-      {requests.length > 0 && (
-        <>
-          <Text style={shared.sectionTitle}>Purchase Requests</Text>
-          {requests.map((req) => (
-            <View key={req.id} style={s.reviewCard}>
-              <Text style={s.reviewTitle}>{req.title}</Text>
-              {req.details && <Text style={s.reviewMeta}>{req.details}</Text>}
-              {req.urgency && <Text style={s.urgencyBadge}>{req.urgency}</Text>}
-              <View style={s.reviewActions}>
-                <Pressable style={s.approveBtn} onPress={() => handleConvertRequest(req)}>
-                  <Text style={s.approveBtnText}>Add to List</Text>
-                </Pressable>
-                <Pressable style={s.approveBtn} onPress={() => handleApproveRequest(req)}>
-                  <Text style={s.approveBtnText}>Approve</Text>
-                </Pressable>
-                <Pressable style={s.rejectBtn} onPress={() => handleRejectRequest(req)}>
-                  <Text style={s.rejectBtnText}>Reject</Text>
-                </Pressable>
-              </View>
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Purchase Requests</Text>
+          <Text style={styles.itemCount}>{requests.length} pending</Text>
+        </View>
+        {requests.length === 0 ? (
+          <Text style={styles.emptyText}>No pending requests.</Text>
+        ) : (
+          requests.map((req) => (
+            <View key={req.id} style={styles.reviewRow}>
+              <Text style={styles.reviewName}>{req.title}</Text>
+              <Pressable
+                style={styles.btnPrimary}
+                onPress={() => handleConvert(req)}
+                accessibilityRole="button"
+                accessibilityLabel={`Add ${req.title} to list`}
+              >
+                <Text style={styles.btnPrimaryText}>Add to List</Text>
+              </Pressable>
             </View>
-          ))}
-        </>
-      )}
+          ))
+        )}
+      </View>
 
-      {/* Active grocery list grouped by store */}
-      <Text style={shared.sectionTitle}>Shopping List</Text>
-      {activeItems.length === 0 && (
-        <View style={shared.card}>
-          <Text style={shared.emptyText}>No items on the list</Text>
+      {error && (
+        <View style={[styles.alert]}>
+          <Text style={styles.alertText}>{error}</Text>
         </View>
       )}
-      {stores.map((store) => {
-        const storeItems = activeItems.filter((i) => (i.preferred_store || "Other") === store);
-        return (
-          <View key={store}>
-            <Text style={s.storeLabel}>{store}</Text>
-            {storeItems.map((item) => (
-              <Pressable
-                key={item.id}
-                style={s.itemRow}
-                onPress={() => handleTogglePurchased(item)}
-              >
-                <View style={s.checkbox}>
-                  {item.is_purchased && <Text style={s.checkmark}>✓</Text>}
-                </View>
-                <View style={s.itemContent}>
-                  <Text style={s.itemTitle}>{item.title}</Text>
-                  {(item.quantity || item.unit) && (
-                    <Text style={s.itemMeta}>
-                      {item.quantity}{item.unit ? ` ${item.unit}` : ""}
-                    </Text>
-                  )}
-                </View>
-                {item.source !== "manual" && (
-                  <Text style={shared.itemBadge}>{item.source === "meal_ai" ? "MEAL" : "REQ"}</Text>
-                )}
-              </Pressable>
-            ))}
-          </View>
-        );
-      })}
 
-      {/* Purchased */}
-      {purchasedItems.length > 0 && (
-        <>
-          <Text style={shared.sectionTitle}>Purchased</Text>
-          {purchasedItems.map((item) => (
-            <Pressable
-              key={item.id}
-              style={[s.itemRow, s.itemPurchased]}
-              onPress={() => handleTogglePurchased(item)}
-            >
-              <View style={[s.checkbox, s.checkboxDone]}>
-                <Text style={s.checkmark}>✓</Text>
+      <View style={styles.grid2}>
+        {GROCERY.map((store) => {
+          const sections: Record<string, typeof store.items> = {};
+          store.items.forEach((i) => {
+            (sections[i.section] ||= []).push(i);
+          });
+          const isTomThumb = store.name === "Tom Thumb";
+          return (
+            <View key={store.name} style={shared.card}>
+              <View style={shared.cardTitleRow}>
+                <Text style={shared.cardTitle}>{store.name}</Text>
+                <Text style={styles.itemCount}>{store.items.length} items</Text>
               </View>
-              <Text style={s.itemTitleDone}>{item.title}</Text>
-            </Pressable>
-          ))}
-        </>
-      )}
+              {Object.entries(sections).map(([section, items]) => (
+                <View key={section}>
+                  <Text style={shared.sectionHead}>{section}</Text>
+                  {items.map((i) => (
+                    <View key={i.name} style={styles.itemRow}>
+                      <View style={[styles.check, i.done && styles.checkDone]}>
+                        {i.done && <Text style={styles.checkMark}>✓</Text>}
+                      </View>
+                      <Text style={[styles.itemName, i.done && { color: colors.muted, textDecorationLine: "line-through" }]}>
+                        {i.name}
+                      </Text>
+                      {i.requestedBy && (
+                        <View style={styles.reqTag}>
+                          <Text style={styles.reqTagText}>{i.requestedBy}'s request</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ))}
+              {isTomThumb && (
+                <View style={styles.approveRow}>
+                  <Pressable style={[styles.btnPrimary, { flex: 1 }]} accessibilityRole="button" accessibilityLabel="Approve request">
+                    <Text style={styles.btnPrimaryText}>Approve request</Text>
+                  </Pressable>
+                  <Pressable style={styles.btnGhost} accessibilityRole="button" accessibilityLabel="Reject request">
+                    <Text style={styles.btnGhostText}>Reject</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+          );
+        })}
+      </View>
     </ScrollView>
   );
 }
 
-const s = StyleSheet.create({
-  reviewCard: {
-    backgroundColor: colors.warningBg,
-    borderRadius: 10,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.warning,
-    padding: 14,
-    marginBottom: 8,
-  },
-  reviewTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: "600" },
-  reviewMeta: { color: colors.textSecondary, fontSize: 13, marginTop: 4 },
-  urgencyBadge: {
-    color: colors.warning,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    marginTop: 4,
-  },
-  reviewActions: { flexDirection: "row", gap: 8, marginTop: 10 },
-  approveBtn: {
-    backgroundColor: colors.positive,
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  approveBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
-  rejectBtn: {
-    backgroundColor: colors.negativeBg,
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  rejectBtnText: { color: colors.negative, fontSize: 12, fontWeight: "600" },
+const styles = StyleSheet.create({
+  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
 
-  storeLabel: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginTop: 12,
-    marginBottom: 6,
+  btnPrimary: {
+    backgroundColor: colors.purple,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  btnPrimaryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "500", fontFamily: fonts.body },
+  btnGhost: {
+    borderWidth: 1,
+    borderColor: colors.purpleMid,
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  btnGhostText: { color: colors.purple, fontSize: 12, fontWeight: "500", fontFamily: fonts.body },
+
+  alert: {
+    backgroundColor: colors.amberBg,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    borderLeftWidth: 3,
+    borderLeftColor: colors.amber,
+    borderRadius: 8,
+    padding: 12,
+  },
+  alertText: { fontSize: 12, color: colors.amberText, fontFamily: fonts.body, lineHeight: 16 },
+
+  grid2: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  itemCount: { fontSize: 11, color: colors.muted, fontFamily: fonts.body },
+
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.card,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    padding: 14,
-    marginBottom: 6,
+    gap: 8,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  itemPurchased: { opacity: 0.5 },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: colors.accent,
-    justifyContent: "center",
+  check: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
+  checkMark: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
+  itemName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
+  reqTag: { backgroundColor: colors.amberBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  reqTagText: { fontSize: 9, color: colors.amberText, fontWeight: "700", fontFamily: fonts.body },
+
+  approveRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+
+  reviewRow: {
+    flexDirection: "row",
     alignItems: "center",
-    marginRight: 12,
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  checkboxDone: { backgroundColor: colors.positive, borderColor: colors.positive },
-  checkmark: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  itemContent: { flex: 1 },
-  itemTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: "500" },
-  itemTitleDone: { color: colors.textMuted, fontSize: 15, textDecorationLine: "line-through", flex: 1 },
-  itemMeta: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  reviewName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
+  emptyText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, paddingVertical: 6 },
 });

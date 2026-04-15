@@ -1,35 +1,35 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Slot, usePathname, useRouter } from "expo-router";
 
-import { colors } from "../../lib/styles";
+import { colors, fonts } from "../../lib/styles";
 
 const TABS = [
-  { href: "/meals/this-week", label: "This Week" },
-  { href: "/meals/prep", label: "Prep Plan" },
-  { href: "/meals/groceries", label: "Groceries" },
-  { href: "/meals/reviews", label: "Reviews" },
+  { href: "/meals",          label: "This week" },
+  { href: "/meals/prep",     label: "Prep plan" },
+  { href: "/meals/groceries",label: "Groceries" },
+  { href: "/meals/reviews",  label: "Reviews" },
 ];
 
 export default function MealsLayout() {
   const router = useRouter();
   const pathname = usePathname();
-
-  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+  const isActive = (href: string) =>
+    href === "/meals" ? pathname === "/meals" || pathname === "/meals/this-week" : pathname.startsWith(href);
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={styles.tabs}>
-        {TABS.map((t) => (
-          <Pressable
-            key={t.href}
-            style={[styles.tab, isActive(t.href) && styles.tabActive]}
-            onPress={() => router.push(t.href as any)}
-          >
-            <Text style={[styles.tabText, isActive(t.href) && styles.tabTextActive]}>
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
+      <View style={styles.headerRow}>
+        <Text style={styles.h1}>Meals</Text>
+        <View style={styles.tabs}>
+          {TABS.map((t) => {
+            const active = isActive(t.href);
+            return (
+              <Pressable key={t.href} style={[styles.tab, active && styles.tabActive]} onPress={() => router.push(t.href as any)} accessibilityRole="link" accessibilityState={{ selected: active }}>
+                <Text style={[styles.tabText, active && styles.tabTextActive]}>{t.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
       <Slot />
     </View>
@@ -37,31 +37,19 @@ export default function MealsLayout() {
 }
 
 const styles = StyleSheet.create({
-  tabs: {
+  headerRow: {
     flexDirection: "row",
-    gap: 4,
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingTop: 20,
     paddingBottom: 6,
     backgroundColor: colors.bg,
   },
-  tab: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: colors.surfaceMuted,
-  },
-  tabActive: {
-    backgroundColor: colors.accent,
-  },
-  tabText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  tabTextActive: {
-    color: colors.buttonPrimaryText,
-  },
+  h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
+  tabs: { flexDirection: "row", gap: 4 },
+  tab: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 8 },
+  tabActive: { backgroundColor: colors.purple },
+  tabText: { fontSize: 11, color: colors.muted, fontFamily: fonts.body, fontWeight: "600" },
+  tabTextActive: { color: "#FFFFFF" },
 });

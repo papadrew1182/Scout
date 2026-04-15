@@ -1,369 +1,210 @@
-import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import {
-  approveWeeklyPlan,
-  archiveWeeklyPlan,
-  generateWeeklyMealPlan,
-  regenerateWeeklyPlanDay,
-} from "../../lib/api";
-import { useAuth } from "../../lib/auth";
-import { useCurrentWeeklyPlan, WEEKDAYS, formatWeekStart } from "../../lib/meal_plan_hooks";
-import { shared, colors } from "../../lib/styles";
-import type { WeeklyMealPlanGenerateResponse } from "../../lib/types";
+import { colors, fonts, shared } from "../../lib/styles";
+import { MEALS_THIS_WEEK, BATCH_COOK, FAMILY } from "../../lib/seedData";
+import { approveWeeklyPlan, fetchCurrentWeeklyPlan } from "../../lib/api";
+import type { WeeklyMealPlan } from "../../lib/types";
 
-function nextMondayISO(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7;
-  d.setDate(d.getDate() + daysUntilMonday);
-  return d.toISOString().split("T")[0];
-}
+const TINT_BG: Record<string, string> = {
+  purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
+};
+const TINT_TEXT: Record<string, string> = {
+  purple: colors.avPurpleText, teal: colors.avTealText, amber: colors.avAmberText, coral: colors.avCoralText,
+};
 
-export default function ThisWeekPage() {
-  const { plan, loading, notFound, error, reload } = useCurrentWeeklyPlan();
-  const { member } = useAuth();
-  const [generating, setGenerating] = useState(false);
-  const [questions, setQuestions] = useState<{ key: string; question: string; hint?: string | null }[] | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState<string | null>(null);
+const DIETARY_TONE: Record<string, "purple" | "green" | "amber"> = {
+  "No restrictions": "purple",
+  "Vegetarian-lean": "green",
+  "No onions":       "amber",
+};
+
+export default function MealsThisWeek() {
+  const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  const isAdult = member?.role === "adult";
-  const status = plan?.status;
-
-  const runGenerate = async (answersPayload?: Record<string, string>) => {
-    setGenerating(true);
-    setMsg(null);
+  const load = async () => {
     try {
-      const res: WeeklyMealPlanGenerateResponse = await generateWeeklyMealPlan(
-        nextMondayISO(),
-        answersPayload ? { answers: answersPayload } : undefined,
-      );
-      if (res.status === "needs_clarification" && res.questions && res.questions.length > 0) {
-        setQuestions(res.questions);
-        setAnswers({});
-        setMsg("Scout needs a few details before planning.");
-      } else if (res.status === "ready") {
-        setQuestions(null);
-        setAnswers({});
-        setMsg("Draft plan saved. Review and approve below.");
-        reload();
-      }
-    } catch (e: any) {
-      setMsg(e.message ?? "Failed to generate plan");
-    } finally {
-      setGenerating(false);
+      const p = await fetchCurrentWeeklyPlan();
+      setPlan(p);
+    } catch {
+      setPlan(null);
     }
   };
 
+  useEffect(() => {
+    load();
+  }, []);
+
   const handleApprove = async () => {
-    if (!plan) return;
+    if (!plan || busy) return;
     setBusy(true);
     setMsg(null);
     try {
       await approveWeeklyPlan(plan.id);
-      setMsg("Plan approved. Groceries synced.");
-      reload();
+      setMsg("Plan approved");
+      await load();
     } catch (e: any) {
-      setMsg(e.message ?? "Failed to approve plan");
+      setMsg(e?.message ?? "Approve failed");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleArchive = async () => {
-    if (!plan) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      await archiveWeeklyPlan(plan.id);
-      setMsg("Plan archived.");
-      reload();
-    } catch (e: any) {
-      setMsg(e.message ?? "Failed to archive plan");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRegenerateDay = async (day: string) => {
-    if (!plan) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      await regenerateWeeklyPlanDay(plan.id, day);
-      setMsg(`Regenerated ${day}.`);
-      reload();
-    } catch (e: any) {
-      setMsg(e.message ?? "Failed to regenerate");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <View style={shared.pageCenter}>
-        <ActivityIndicator size="large" color={colors.accent} />
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={shared.pageCenter}>
-        <Text style={shared.errorLarge}>{error}</Text>
-        <Pressable style={[shared.button, { marginTop: 16 }]} onPress={reload}>
-          <Text style={shared.buttonText}>Retry</Text>
-        </Pressable>
-      </View>
-    );
-  }
+  const canApprove = plan && plan.status !== "approved";
 
   return (
-    <ScrollView style={shared.pageContainer} contentContainerStyle={shared.pageContent}>
-      <View style={shared.headerBlock}>
-        <Text style={shared.headerEyebrow}>Meals</Text>
-        <Text style={shared.headerTitle}>This Week</Text>
-        {plan && (
-          <Text style={shared.headerSubtitle}>
-            Week of {formatWeekStart(plan.week_start_date)} · {status}
-          </Text>
-        )}
-      </View>
-
-      {msg && (
-        <View style={shared.msgBox}>
-          <Text style={shared.msgText}>{msg}</Text>
+    <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
+      {canApprove && (
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>{plan?.title ?? "Current plan"}</Text>
+            <Text style={shared.cardAction}>{plan?.status ?? ""}</Text>
+          </View>
+          <Pressable
+            style={[styles.approveBtn, busy && styles.approveBtnDisabled]}
+            onPress={handleApprove}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Approve Plan"
+          >
+            <Text style={styles.approveBtnText}>{busy ? "Approving…" : "Approve Plan"}</Text>
+          </Pressable>
+          {msg && <Text style={styles.planMsg}>{msg}</Text>}
         </View>
       )}
-
-      {/* Clarifying questions from AI */}
-      {questions && isAdult && (
-        <View style={s.questionsCard}>
-          <Text style={s.questionsTitle}>Scout needs a bit more info</Text>
-          {questions.map((q) => (
-            <View key={q.key} style={{ marginBottom: 12 }}>
-              <Text style={s.questionText}>{q.question}</Text>
-              {q.hint && <Text style={s.questionHint}>{q.hint}</Text>}
-              <TextInput
-                style={s.input}
-                value={answers[q.key] || ""}
-                onChangeText={(v) => setAnswers((prev) => ({ ...prev, [q.key]: v }))}
-                placeholder="Your answer"
-                placeholderTextColor={colors.textPlaceholder}
-              />
+      {!canApprove && msg && (
+        <View style={shared.card}>
+          <Text style={styles.planMsg}>{msg}</Text>
+        </View>
+      )}
+      <View style={shared.card}>
+        <View style={shared.cardTitleRow}>
+          <Text style={shared.cardTitle}>Week of Apr 13–19</Text>
+          <Text style={shared.cardAction}>Edit plan</Text>
+        </View>
+        <View style={styles.weekGrid}>
+          {MEALS_THIS_WEEK.map((m) => (
+            <View key={m.day} style={styles.dayCol}>
+              <Text style={[styles.dayLabel, m.isToday && { color: colors.purple, fontWeight: "700" }]}>{m.day}</Text>
+              <View style={[styles.cell, m.isToday && styles.cellToday]}>
+                <Text style={[styles.cellName, m.isToday && { color: colors.purpleDeep, fontWeight: "500" }]}>{m.name}</Text>
+              </View>
+              <Text style={[styles.cellNote, m.isToday && { color: colors.purple }]}>{m.note}</Text>
             </View>
           ))}
-          <Pressable
-            style={shared.button}
-            onPress={() => runGenerate(answers)}
-            disabled={generating}
-          >
-            <Text style={shared.buttonText}>{generating ? "Planning..." : "Continue"}</Text>
-          </Pressable>
         </View>
-      )}
+      </View>
 
-      {/* No plan yet */}
-      {notFound && !questions && (
+      <View style={styles.grid2}>
         <View style={shared.card}>
-          <Text style={shared.cardTitle}>No weekly plan yet</Text>
-          <Text style={shared.cardSubtle}>
-            Ask Scout to draft one. You can tweak or regenerate before approving.
-          </Text>
-          {isAdult && (
-            <Pressable
-              style={shared.button}
-              onPress={() => runGenerate()}
-              disabled={generating}
-            >
-              <Text style={shared.buttonText}>
-                {generating ? "Planning..." : "Generate Weekly Plan"}
-              </Text>
-            </Pressable>
-          )}
-          {!isAdult && (
-            <Text style={shared.emptyText}>An adult needs to generate the plan.</Text>
-          )}
-        </View>
-      )}
-
-      {/* Plan rendered from saved backend object */}
-      {plan && (
-        <>
-          {plan.plan_summary && (
-            <View style={shared.card}>
-              <Text style={shared.cardTitle}>Summary</Text>
-              <Text style={s.bodyText}>{plan.plan_summary}</Text>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Sunday batch cook</Text>
+            <Text style={shared.cardAction}>Edit</Text>
+          </View>
+          {BATCH_COOK.map((b) => (
+            <View key={b.name} style={styles.batchRow}>
+              <View style={[styles.check, b.done && styles.checkDone]}>
+                {b.done && <Text style={styles.checkMark}>✓</Text>}
+              </View>
+              <Text style={[styles.batchName, b.done && { color: colors.muted, textDecorationLine: "line-through" }]}>{b.name}</Text>
+              <Text style={styles.batchTime}>{b.minutes} min</Text>
             </View>
-          )}
+          ))}
+        </View>
 
-          <Text style={shared.sectionTitle}>Dinners</Text>
-          {WEEKDAYS.map((day) => {
-            const meal = plan.week_plan?.dinners?.[day];
-            if (!meal) return null;
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Dietary notes</Text>
+            <Text style={shared.cardAction}>Edit</Text>
+          </View>
+          {FAMILY.slice(0, 5).map((m) => {
+            const tone = DIETARY_TONE[m.dietary ?? "No restrictions"] ?? "purple";
+            const palette = {
+              purple: { bg: colors.purpleLight, fg: colors.purpleDeep },
+              green:  { bg: colors.greenBg,     fg: colors.greenText },
+              amber:  { bg: colors.amberBg,     fg: colors.amberText },
+            }[tone];
             return (
-              <View key={day} style={shared.card}>
-                <View style={shared.cardRow}>
-                  <Text style={s.dayLabel}>{day}</Text>
-                  {isAdult && status !== "archived" && (
-                    <Pressable
-                      style={shared.buttonSmall}
-                      onPress={() => handleRegenerateDay(day)}
-                      disabled={busy}
-                    >
-                      <Text style={shared.buttonSmallText}>Swap</Text>
-                    </Pressable>
-                  )}
+              <View key={m.id} style={styles.dietRow}>
+                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
+                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
                 </View>
-                <Text style={s.mealTitle}>{meal.title}</Text>
-                {meal.description && <Text style={s.bodyText}>{meal.description}</Text>}
+                <Text style={styles.dietName}>{m.firstName}</Text>
+                <View style={[styles.tag, { backgroundColor: palette.bg }]}>
+                  <Text style={[styles.tagText, { color: palette.fg }]}>{m.dietary}</Text>
+                </View>
               </View>
             );
           })}
-
-          {plan.week_plan?.breakfast?.plan && (
-            <>
-              <Text style={shared.sectionTitle}>Breakfast</Text>
-              <View style={shared.card}>
-                <Text style={s.bodyText}>{plan.week_plan.breakfast.plan}</Text>
-              </View>
-            </>
-          )}
-
-          {plan.week_plan?.lunch?.plan && (
-            <>
-              <Text style={shared.sectionTitle}>Lunch</Text>
-              <View style={shared.card}>
-                <Text style={s.bodyText}>{plan.week_plan.lunch.plan}</Text>
-              </View>
-            </>
-          )}
-
-          {plan.week_plan?.snacks && plan.week_plan.snacks.length > 0 && (
-            <>
-              <Text style={shared.sectionTitle}>Snacks</Text>
-              <View style={shared.card}>
-                {plan.week_plan.snacks.map((snack, i) => (
-                  <Text key={i} style={s.bulletText}>
-                    · {snack}
-                  </Text>
-                ))}
-              </View>
-            </>
-          )}
-
-          {isAdult && status === "draft" && (
-            <>
-              <Pressable
-                style={shared.button}
-                onPress={handleApprove}
-                disabled={busy}
-                accessibilityLabel="Approve Plan"
-                accessibilityRole="button"
-              >
-                <Text style={shared.buttonText}>Approve Plan</Text>
-              </Pressable>
-              <Pressable
-                style={[shared.button, s.archiveBtn]}
-                onPress={handleArchive}
-                disabled={busy}
-                accessibilityLabel="Archive Draft"
-                accessibilityRole="button"
-              >
-                <Text style={shared.buttonText}>Archive Draft</Text>
-              </Pressable>
-            </>
-          )}
-
-          {isAdult && status === "approved" && (
-            <Pressable
-              style={shared.button}
-              onPress={() => runGenerate()}
-              disabled={generating}
-            >
-              <Text style={shared.buttonText}>
-                {generating ? "Planning..." : "Generate Next Draft"}
-              </Text>
-            </Pressable>
-          )}
-        </>
-      )}
+        </View>
+      </View>
     </ScrollView>
   );
 }
 
-const s = StyleSheet.create({
-  dayLabel: {
-    color: colors.accent,
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  mealTitle: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: "600",
-    marginTop: 6,
-  },
-  bodyText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 4,
-  },
-  bulletText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  questionsCard: {
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-    padding: 16,
-    marginBottom: 12,
-  },
-  questionsTitle: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
-  questionText: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  questionHint: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  input: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 8,
+const styles = StyleSheet.create({
+  content: { padding: 20, gap: 14, paddingBottom: 48 },
+  weekGrid: { flexDirection: "row", gap: 6, marginTop: 4 },
+  dayCol: { flex: 1, alignItems: "center", gap: 4 },
+  dayLabel: { fontSize: 10, color: colors.muted, fontWeight: "500", fontFamily: fonts.body },
+  cell: {
+    width: "100%",
+    backgroundColor: colors.bg,
+    borderRadius: 7,
+    padding: 8,
     borderWidth: 1,
-    borderColor: colors.cardBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: colors.textPrimary,
-    fontSize: 14,
-    marginTop: 6,
+    borderColor: colors.border,
+    alignItems: "center",
   },
-  archiveBtn: {
-    backgroundColor: colors.surfaceMuted,
+  cellToday: { backgroundColor: colors.purpleLight, borderColor: colors.purpleMid },
+  cellName: { fontSize: 11, color: colors.text, fontFamily: fonts.body, textAlign: "center" },
+  cellNote: { fontSize: 10, color: colors.muted, fontFamily: fonts.body },
+
+  grid2: { flexDirection: "row", gap: 12 },
+
+  batchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  check: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
+  checkMark: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
+  batchName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
+  batchTime: { fontSize: 11, color: colors.muted, fontFamily: fonts.body },
+
+  dietRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  av: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  avText: { fontSize: 11, fontWeight: "600", fontFamily: fonts.body },
+  dietName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
+  tag: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
+  tagText: { fontSize: 10, fontWeight: "700", fontFamily: fonts.body },
+
+  approveBtn: {
+    backgroundColor: colors.purple,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  approveBtnDisabled: { backgroundColor: colors.border },
+  approveBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
+  planMsg: {
+    fontSize: 12,
+    color: colors.green,
+    fontFamily: fonts.body,
+    textAlign: "center",
+    marginTop: 8,
   },
 });
