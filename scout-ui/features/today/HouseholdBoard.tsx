@@ -7,14 +7,15 @@
  *   2. standalone_chores[] as a single grouped section
  *   3. weekly_items[] as a single grouped section
  *
- * The `blocks[]` field can be empty in real mode until the backend
- * backfill runs — we still render headers for whichever sections
- * have content.
+ * Block ordering: any block with a late assignment first, then any
+ * still-open block, then fully-done blocks. Within each tier, sort by
+ * due_at. The canonical block contract no longer carries a block-level
+ * status enum — tier is derived from assignment statuses instead.
  */
 
 import { StyleSheet, Text, View } from "react-native";
 
-import { HouseholdTodayResponse, TaskOccurrence } from "../lib/contracts";
+import { HouseholdBlock, HouseholdTodayResponse } from "../lib/contracts";
 import { colors } from "../../lib/styles";
 import { BlockCard } from "./BlockCard";
 import { ChoreList } from "./ChoreList";
@@ -55,14 +56,19 @@ export function HouseholdBoard({ data }: Props) {
   );
 }
 
-function blockSort(
-  a: HouseholdTodayResponse["blocks"][number],
-  b: HouseholdTodayResponse["blocks"][number],
-): number {
-  const rank = (s: string) =>
-    ({ late: 0, due_soon: 1, active: 2, blocked: 3, upcoming: 4, done: 5 })[s] ?? 99;
-  const r = rank(a.status) - rank(b.status);
-  if (r !== 0) return r;
+function blockTier(b: HouseholdBlock): number {
+  if (b.assignments.length > 0 && b.assignments.every((a) => a.status === "complete")) {
+    return 2; // done
+  }
+  if (b.assignments.some((a) => a.status === "late")) {
+    return 0; // late first
+  }
+  return 1; // open in the middle
+}
+
+function blockSort(a: HouseholdBlock, b: HouseholdBlock): number {
+  const tierDelta = blockTier(a) - blockTier(b);
+  if (tierDelta !== 0) return tierDelta;
   const ad = a.due_at ? new Date(a.due_at).getTime() : Number.POSITIVE_INFINITY;
   const bd = b.due_at ? new Date(b.due_at).getTime() : Number.POSITIVE_INFINITY;
   return ad - bd;

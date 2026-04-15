@@ -239,17 +239,62 @@ function StatusPill({ done, late }: { done: boolean; late: boolean }) {
   );
 }
 
+/**
+ * Resolve a completable target by id across the canonical
+ * household-today shape. Standalone + weekly rows are full
+ * TaskOccurrence objects, so they're returned as-is. Block-internal
+ * targets need to be synthesized from the parent block + parent
+ * assignment because steps only carry {task_occurrence_id, label,
+ * status} and the assignment carries owner; due_at lives on the block.
+ *
+ * The lookup matches an id against EITHER `assignment.routine_instance_id`
+ * (the canonical projection currently overloads this with the
+ * task_occurrence_id) OR `step.task_occurrence_id` (when the backend
+ * ships richer steps[]). Both code paths return the same shape so the
+ * sheet renders uniformly.
+ */
 function findOccurrence(
   source: HouseholdTodayResponse,
   id: string,
 ): TaskOccurrence | null {
-  for (const b of source.blocks) {
-    const hit = b.occurrences.find((o) => o.task_occurrence_id === id);
-    if (hit) return hit;
-  }
   const std = source.standalone_chores.find((o) => o.task_occurrence_id === id);
   if (std) return std;
-  return source.weekly_items.find((o) => o.task_occurrence_id === id) ?? null;
+  const wk = source.weekly_items.find((o) => o.task_occurrence_id === id);
+  if (wk) return wk;
+
+  for (const b of source.blocks) {
+    for (const a of b.assignments) {
+      // Empty-steps assignment: the assignment itself is the target.
+      if (a.steps.length === 0 && a.routine_instance_id === id) {
+        return synthesizeFromAssignment(b, a, a.routine_instance_id, a.status);
+      }
+      const step = a.steps.find((s) => s.task_occurrence_id === id);
+      if (step) {
+        return synthesizeFromAssignment(b, a, step.task_occurrence_id, step.status, step.label);
+      }
+    }
+  }
+  return null;
+}
+
+function synthesizeFromAssignment(
+  block: HouseholdTodayResponse["blocks"][number],
+  assignment: HouseholdTodayResponse["blocks"][number]["assignments"][number],
+  task_occurrence_id: string,
+  status: TaskOccurrence["status"],
+  stepLabel?: string,
+): TaskOccurrence {
+  return {
+    task_occurrence_id,
+    template_key: null,
+    label: stepLabel ?? `${block.label} · ${assignment.member_name ?? "Unassigned"}`,
+    owner_family_member_id: assignment.family_member_id,
+    owner_name: assignment.member_name,
+    due_at: block.due_at,
+    status,
+    block_label: block.label,
+    routine_key: block.block_key,
+  };
 }
 
 const styles = StyleSheet.create({

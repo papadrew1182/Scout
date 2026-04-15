@@ -146,27 +146,45 @@ function flipOccurrenceComplete(
   if (!today) return state;
   const flipOcc = (o: TaskOccurrence): TaskOccurrence =>
     o.task_occurrence_id === occurrence_id ? { ...o, status: "complete" } : o;
-  const blocks = today.blocks.map((b) => {
-    const occs = b.occurrences.map(flipOcc);
-    const all_done = occs.length > 0 && occs.every((o) => o.status === "complete");
-    return {
-      ...b,
-      occurrences: occs,
-      status: all_done ? ("done" as const) : b.status,
-    };
-  });
+
+  // Walk assignments + steps. An occurrence_id can match either an
+  // assignment's routine_instance_id (when steps[] is empty — the
+  // canonical backend's current projection) or a step's
+  // task_occurrence_id (when a richer mock or future backend ships
+  // step rows). Re-derive the assignment's status from its steps when
+  // we flipped any of them.
+  const blocks = today.blocks.map((b) => ({
+    ...b,
+    assignments: b.assignments.map((a) => {
+      const matchedAssignment =
+        a.steps.length === 0 && a.routine_instance_id === occurrence_id;
+      const newSteps = a.steps.map((s) =>
+        s.task_occurrence_id === occurrence_id ? { ...s, status: "complete" as const } : s,
+      );
+      const newStatus = matchedAssignment
+        ? ("complete" as const)
+        : newSteps.length > 0 && newSteps.every((s) => s.status === "complete")
+          ? ("complete" as const)
+          : a.status;
+      return { ...a, steps: newSteps, status: newStatus };
+    }),
+  }));
+
   const standalone_chores = today.standalone_chores.map(flipOcc);
   const weekly_items = today.weekly_items.map(flipOcc);
-  // Recompute summary counts from the flipped state.
-  const all = [
-    ...blocks.flatMap((b) => b.occurrences),
-    ...standalone_chores,
-    ...weekly_items,
+
+  // Recompute summary counts. Each routine assignment counts as one,
+  // each standalone/weekly occurrence counts as one — matching the
+  // semantic in summarizeForKid.
+  const allStatuses: TaskOccurrence["status"][] = [
+    ...blocks.flatMap((b) => b.assignments.map((a) => a.status)),
+    ...standalone_chores.map((o) => o.status),
+    ...weekly_items.map((o) => o.status),
   ];
   const summary = {
-    due_count: all.filter((o) => o.status === "open" || o.status === "late").length,
-    completed_count: all.filter((o) => o.status === "complete").length,
-    late_count: all.filter((o) => o.status === "late").length,
+    due_count: allStatuses.filter((s) => s === "open" || s === "late").length,
+    completed_count: allStatuses.filter((s) => s === "complete").length,
+    late_count: allStatuses.filter((s) => s === "late").length,
   };
   return {
     ...state,

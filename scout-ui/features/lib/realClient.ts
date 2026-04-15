@@ -2,10 +2,10 @@
  * Real Session 3 ScoutClient — wraps `fetch` against the published API.
  *
  * Endpoints are the canonical Session 2 routes shipped in
- * backend/app/routes/canonical.py. Two endpoints are intentionally NOT
- * implemented here yet (calendar exports + control-plane summary) — they
- * are not on the backend yet, so the real client throws NotImplemented
- * and the AppContext keeps the mock for those slices when in real mode.
+ * backend/app/routes/canonical.py. As of Session 2 block 3 (commit
+ * 3a3bf31), every endpoint Session 3 consumes is real and DB-backed —
+ * including /api/calendar/exports/upcoming and /api/control-plane/summary,
+ * which were the two stub holdouts in Session 3 block 3.
  */
 
 import { API_BASE_URL } from "../../lib/config";
@@ -61,17 +61,8 @@ export const realClient: ScoutClient = {
   getConnectors: () => request<ConnectorsResponse>("GET", "/api/connectors"),
   getConnectorsHealth: () =>
     request<ConnectorsHealthResponse>("GET", "/api/connectors/health"),
-  // The two endpoints below are not yet shipped by the backend. The
-  // realClient surfaces a clear error rather than silently returning
-  // mocked data — the AppContext can decide to fall back if it wants.
-  getCalendarExports: async (): Promise<CalendarExportsResponse> => {
-    throw new Error(
-      "GET /api/calendar/exports/upcoming is not yet implemented by the backend.",
-    );
-  },
-  getControlPlaneSummary: async (): Promise<ControlPlaneSummaryResponse> => {
-    throw new Error(
-      "GET /api/control-plane/summary is not yet implemented by the backend.",
-    );
-  },
+  getCalendarExports: () =>
+    request<CalendarExportsResponse>("GET", "/api/calendar/exports/upcoming"),
+  getControlPlaneSummary: () =>
+    request<ControlPlaneSummaryResponse>("GET", "/api/control-plane/summary"),
 };
