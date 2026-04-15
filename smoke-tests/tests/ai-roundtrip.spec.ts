@@ -25,7 +25,17 @@ async function login(page: Page, email: string, password: string) {
   await page.fill('input[placeholder="Email"]', email);
   await page.fill('input[placeholder="Password"]', password);
   await page.click("text=Sign In");
-  await page.waitForSelector("text=Personal", { timeout: 15000 });
+  // Wait for LoginScreen to disappear — surface-agnostic post-login
+  // signal. Works against both the legacy Personal-tab default landing
+  // and the Session 3 `/today` redirect which suppresses the legacy
+  // NavBar. See scout-ui/app/_layout.tsx SCOUT_PATHS.
+  await expect(page.locator('input[placeholder="Email"]')).not.toBeVisible({ timeout: 15000 });
+  // Navigate explicitly to the legacy Personal surface so downstream
+  // test steps can continue relying on NavBar + Personal tab. On main's
+  // frontend this is a no-op. On the Session 3 frontend, `/personal` is
+  // still routable and is NOT in SCOUT_PATHS, so NavBar renders there.
+  await page.goto("/personal");
+  await page.waitForSelector("text=Personal", { timeout: 10000 });
 }
 
 async function probeAiAvailable(page: Page): Promise<boolean> {
