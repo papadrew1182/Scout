@@ -46,6 +46,7 @@ def ai_chat(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — any authenticated family member may chat; governance (ai.manage) controls admin toggles, not the chat surface itself
     trace_id = request.headers.get("x-scout-trace-id", "")
     if body.family_id:
         actor.require_family(body.family_id)
@@ -86,6 +87,7 @@ def ai_chat_stream(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — streaming variant of /chat; same access model (any authenticated family member)
     """Server-Sent Events version of /api/ai/chat.
 
     Streams the assistant's response incrementally. Confirm-tool resubmits
@@ -146,6 +148,7 @@ async def ai_transcribe(
     audio: UploadFile = File(...),
     actor: Actor = Depends(get_current_actor),
 ):
+    # noqa: public-route — voice-input helper; available to any authenticated member; no family state mutated
     """Transcribe an uploaded audio blob (voice-input mic path).
 
     The frontend records via MediaRecorder (webm/opus on most browsers),
@@ -201,6 +204,7 @@ async def ai_receipt(
     image: UploadFile = File(...),
     actor: Actor = Depends(get_current_actor),
 ):
+    # noqa: public-route — read-only vision extraction; returns proposals, does NOT write grocery rows
     """Extract grocery items from a receipt photo.
 
     Vision-powered by Claude. Returns a list of proposals; does NOT
@@ -280,6 +284,7 @@ def daily_brief(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — any authenticated family member may generate their own daily brief
     if body.family_id:
         actor.require_family(body.family_id)
     result = orchestrator.generate_daily_brief(db, actor.family_id, actor.member_id)
@@ -292,6 +297,7 @@ def weekly_plan(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — any authenticated family member may generate a weekly plan; plan approval requires meal_plan.approve
     if body.family_id:
         actor.require_family(body.family_id)
     result = orchestrator.generate_weekly_plan(db, actor.family_id, actor.member_id)
@@ -304,6 +310,7 @@ def staple_meals(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — suggestion endpoint; returns proposals only, no state written
     if body.family_id:
         actor.require_family(body.family_id)
     result = orchestrator.suggest_staple_meals(db, actor.family_id, actor.member_id)
@@ -424,6 +431,7 @@ def end_conversation(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — member can only end their own conversation (ownership checked below)
     """Mark a conversation ended so it drops out of the resumable set.
 
     Used by the 'Start new chat' affordance in ScoutPanel. The row is
