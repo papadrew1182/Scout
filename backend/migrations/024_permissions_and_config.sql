@@ -81,10 +81,10 @@ CREATE TRIGGER trg_role_tier_overrides_updated_at
 
 CREATE TABLE IF NOT EXISTS family_config (
     id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id        UUID        NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id        UUID        NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     key              TEXT        NOT NULL,
     value            JSONB       NOT NULL,
-    updated_by       UUID        REFERENCES family_members(id) ON DELETE SET NULL,
+    updated_by       UUID        REFERENCES public.family_members(id) ON DELETE SET NULL,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (family_id, key)
@@ -103,10 +103,10 @@ CREATE TRIGGER trg_family_config_updated_at
 
 CREATE TABLE IF NOT EXISTS member_config (
     id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_member_id UUID        NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+    family_member_id UUID        NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
     key              TEXT        NOT NULL,
     value            JSONB       NOT NULL,
-    updated_by       UUID        REFERENCES family_members(id) ON DELETE SET NULL,
+    updated_by       UUID        REFERENCES public.family_members(id) ON DELETE SET NULL,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (family_member_id, key)
