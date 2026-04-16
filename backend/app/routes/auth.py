@@ -163,7 +163,7 @@ def list_accounts(
     db: Session = Depends(get_db),
 ):
     """List family members with account status. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     return auth_service.list_family_accounts(db, actor.family_id)
 
 
@@ -174,7 +174,7 @@ def create_account(
     db: Session = Depends(get_db),
 ):
     """Create a user account for a family member. Adults only, same family."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     target = db.get(FamilyMember, body.family_member_id)
     if target:
         actor.require_family(target.family_id)
@@ -190,7 +190,7 @@ def admin_reset_password(
     db: Session = Depends(get_db),
 ):
     """Reset a family member's password. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     from app.models.foundation import UserAccount
     target_account = db.get(UserAccount, account_id)
     if target_account:
@@ -208,7 +208,7 @@ def deactivate_account(
     db: Session = Depends(get_db),
 ):
     """Deactivate an account and revoke all sessions. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     auth_service.deactivate_account(db, account_id)
     return {"status": "ok"}
 
@@ -220,7 +220,7 @@ def activate_account(
     db: Session = Depends(get_db),
 ):
     """Reactivate a deactivated account. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     auth_service.activate_account(db, account_id)
     return {"status": "ok"}
 
@@ -232,6 +232,6 @@ def revoke_account_sessions(
     db: Session = Depends(get_db),
 ):
     """Revoke all sessions for a family member's account. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     count = auth_service.revoke_account_sessions(db, account_id)
     return {"status": "ok", "revoked": count}

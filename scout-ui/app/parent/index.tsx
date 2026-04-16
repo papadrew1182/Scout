@@ -8,6 +8,7 @@ import { createWeeklyPayout, fetchMembers, PayoutError } from "../../lib/api";
 import { calculatePayout } from "../../lib/constants";
 import { weekStartStr } from "../../lib/format";
 import type { FamilyMember } from "../../lib/types";
+import { useHasPermission } from "../../lib/permissions";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -25,6 +26,7 @@ const INBOX_TONE: Record<string, { bg: string; fg: string; label: string }> = {
 
 export default function Parent() {
   const isDesktop = useIsDesktop();
+  const canRunPayout = useHasPermission("allowance.run_payout");
   const [children, setChildren] = useState<FamilyMember[]>([]);
   const [payoutRan, setPayoutRan] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState<string | null>(null);
@@ -81,24 +83,26 @@ export default function Parent() {
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <Text style={styles.h1}>Parent Dashboard</Text>
 
-      <View style={shared.card}>
-        <View style={shared.cardTitleRow}>
-          <Text style={shared.cardTitle}>Weekly payout</Text>
-          <Text style={shared.cardAction}> </Text>
+      {canRunPayout && (
+        <View style={shared.card}>
+          <View style={shared.cardTitleRow}>
+            <Text style={shared.cardTitle}>Weekly payout</Text>
+            <Text style={shared.cardAction}> </Text>
+          </View>
+          <Pressable
+            style={[styles.payoutBtn, (busy || payoutRan) && styles.payoutBtnDisabled]}
+            onPress={handleRunPayouts}
+            disabled={busy || payoutRan}
+            accessibilityRole="button"
+            accessibilityLabel="Run Weekly Payout"
+          >
+            <Text style={styles.payoutBtnText}>
+              {busy ? "Running…" : payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}
+            </Text>
+          </Pressable>
+          {payoutMsg && <Text style={styles.payoutMsg}>{payoutMsg}</Text>}
         </View>
-        <Pressable
-          style={[styles.payoutBtn, (busy || payoutRan) && styles.payoutBtnDisabled]}
-          onPress={handleRunPayouts}
-          disabled={busy || payoutRan}
-          accessibilityRole="button"
-          accessibilityLabel="Run Weekly Payout"
-        >
-          <Text style={styles.payoutBtnText}>
-            {busy ? "Running…" : payoutRan ? "Payout already run for this week" : "Run Weekly Payout"}
-          </Text>
-        </Pressable>
-        {payoutMsg && <Text style={styles.payoutMsg}>{payoutMsg}</Text>}
-      </View>
+      )}
 
       <View style={[styles.alert, styles.alertRed]}>
         <Text style={[styles.alertText, { color: colors.redText }]}>

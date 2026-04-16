@@ -48,6 +48,7 @@ def create_weekly_payout(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("allowance.run_payout")
     computation = payout_service.compute_payout(db, family_id, member_id, week_start, baseline_cents)
     return payout_service.create_weekly_payout(db, family_id, computation)
 

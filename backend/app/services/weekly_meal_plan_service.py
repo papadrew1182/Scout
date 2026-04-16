@@ -149,10 +149,13 @@ def validate_clarification_payload(payload: Any) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _require_adult(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> FamilyMember:
+def _require_adult(db: Session, family_id: uuid.UUID, member_id: uuid.UUID, permission_key: str = "meal.manage") -> FamilyMember:
+    """Preserved for Phase 2: now checks permission tier instead of role==adult."""
+    from app.services.permissions import resolve_effective_permissions
     member = require_member_in_family(db, family_id, member_id)
-    if member.role != "adult":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only adults can perform this action on meal plans")
+    perms = resolve_effective_permissions(db, member_id)
+    if not perms.get(permission_key, False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {permission_key}")
     return member
 
 
@@ -372,7 +375,7 @@ def generate_weekly_meal_plan(
     """Generate a weekly meal plan draft. Returns either a clarification response
     or a saved-plan response. Adults only."""
     from app.config import settings
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.generate")
     if week_start_date.isoweekday() != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="week_start_date must be a Monday")
     if not settings.enable_meal_generation:
@@ -436,7 +439,7 @@ def save_weekly_meal_plan_draft(
     source: str = "ai",
     title: str | None = None,
 ) -> WeeklyMealPlan:
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.generate")
     if week_start_date.isoweekday() != 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="week_start_date must be a Monday")
 
@@ -519,7 +522,7 @@ def update_weekly_meal_plan(
     plan_id: uuid.UUID,
     payload: WeeklyMealPlanUpdate,
 ) -> WeeklyMealPlan:
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.generate")
     plan = get_weekly_meal_plan(db, family_id, plan_id)
     if plan.status == "archived":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit archived plan")
@@ -534,7 +537,7 @@ def update_weekly_meal_plan(
 def approve_weekly_meal_plan(
     db: Session, family_id: uuid.UUID, member_id: uuid.UUID, plan_id: uuid.UUID
 ) -> WeeklyMealPlan:
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.approve")
     plan = get_weekly_meal_plan(db, family_id, plan_id)
     if plan.status == "archived":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot approve archived plan")
@@ -569,7 +572,7 @@ def approve_weekly_meal_plan(
 def archive_weekly_meal_plan(
     db: Session, family_id: uuid.UUID, member_id: uuid.UUID, plan_id: uuid.UUID
 ) -> WeeklyMealPlan:
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.approve")
     plan = get_weekly_meal_plan(db, family_id, plan_id)
     plan.status = "archived"
     plan.archived_at = datetime.now().astimezone()
@@ -590,7 +593,7 @@ def regenerate_day(
     provider: AnthropicProvider | None = None,
 ) -> WeeklyMealPlan:
     from app.config import settings as app_settings
-    _require_adult(db, family_id, member_id)
+    _require_adult(db, family_id, member_id, "meal_plan.generate")
     plan = get_weekly_meal_plan(db, family_id, plan_id)
     if day not in WEEKDAYS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid day: {day}")

@@ -183,7 +183,7 @@ def create_mcp_token(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("ai.manage")
     plaintext = f"scout_mcp_{secrets.token_urlsafe(32)}"
     token_hash = _hash_token(plaintext)
     row = ScoutMCPToken(
@@ -206,7 +206,7 @@ def list_mcp_tokens(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("ai.manage")
     rows = list(
         db.scalars(
             select(ScoutMCPToken)
@@ -223,7 +223,7 @@ def revoke_mcp_token(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("ai.manage")
     row = db.get(ScoutMCPToken, token_id)
     if row is None or row.family_id != actor.family_id:
         raise HTTPException(

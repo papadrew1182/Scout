@@ -6,6 +6,7 @@ import { useIsDesktop } from "../../lib/breakpoint";
 import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
 import { fetchMemberAccounts, updateMemberAccount } from "../../lib/api";
+import { useHasPermission } from "../../lib/permissions";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -30,7 +31,7 @@ export default function Settings() {
   const isDesktop = useIsDesktop();
   const [toggles, setToggles] = useState(SCOUT_AI_TOGGLES.map((t) => t.on));
   const { member } = useAuth();
-  const isAdult = member?.role === "adult";
+  const canManageAccounts = useHasPermission("family.manage_accounts");
   const andrew = FAMILY[0];
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -149,7 +150,7 @@ export default function Settings() {
             })}
           </View>
 
-          {isAdult && (
+          {canManageAccounts && (
             <View style={shared.card}>
               <Text style={shared.cardTitle}>Accounts & Access</Text>
               <Text style={styles.accountsBlurb}>

@@ -966,3 +966,16 @@ export async function deleteFamilyMemory(memoryId: string): Promise<void> {
   }
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
+
+// ---------------------------------------------------------------------------
+// Permissions (control plane)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current actor's effective permissions dict from the server.
+ * Returns {permission_key: boolean} for every key the actor holds.
+ * Requires authentication; every user may call this for themselves.
+ */
+export function fetchMyPermissions(): Promise<Record<string, boolean>> {
+  return get(`${API_BASE_URL}/admin/permissions/me`);
+}

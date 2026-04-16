@@ -51,6 +51,18 @@ class TierUpdatePayload(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@router.get("/me", response_model=dict[str, bool])
+def get_my_permissions(
+    actor: Actor = Depends(get_current_actor),
+):
+    """Return the current actor's effective permissions dict.
+
+    Requires only authentication — every user may query their own permissions.
+    Returns {permission_key: bool} for the full set of keys they hold.
+    """
+    return actor.effective_permissions
+
+
 @router.get("/registry", response_model=list[PermissionRegistryEntry])
 def get_permission_registry(
     actor: Actor = Depends(get_current_actor),

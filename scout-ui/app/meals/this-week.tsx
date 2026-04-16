@@ -6,6 +6,7 @@ import { useIsDesktop } from "../../lib/breakpoint";
 import { MEALS_THIS_WEEK, BATCH_COOK, FAMILY } from "../../lib/seedData";
 import { approveWeeklyPlan, fetchCurrentWeeklyPlan } from "../../lib/api";
 import type { WeeklyMealPlan } from "../../lib/types";
+import { useHasPermission } from "../../lib/permissions";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -22,6 +23,7 @@ const DIETARY_TONE: Record<string, "purple" | "green" | "amber"> = {
 
 export default function MealsThisWeek() {
   const isDesktop = useIsDesktop();
+  const canApprovePlan = useHasPermission("meal_plan.approve");
   const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export default function MealsThisWeek() {
     }
   };
 
-  const canApprove = plan && plan.status !== "approved";
+  const canApprove = canApprovePlan && plan && plan.status !== "approved";
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>

@@ -13,9 +13,12 @@ import {
 } from "../../lib/api";
 import type { GroceryItem, PurchaseRequest } from "../../lib/types";
 import { ReceiptCaptureButton } from "../../components/ReceiptCaptureButton";
+import { useHasPermission } from "../../lib/permissions";
 
 export default function Grocery() {
   const isDesktop = useIsDesktop();
+  const canApproveGrocery = useHasPermission("grocery.approve");
+  const canApprovePurchase = useHasPermission("purchase_request.approve");
   const [pending, setPending] = useState<GroceryItem[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -109,14 +112,16 @@ export default function Grocery() {
           pending.map((item) => (
             <View key={item.id} style={styles.reviewRow}>
               <Text style={styles.reviewName}>{item.title}</Text>
-              <Pressable
-                style={styles.btnPrimary}
-                onPress={() => handleApprove(item)}
-                accessibilityRole="button"
-                accessibilityLabel={`Approve ${item.title}`}
-              >
-                <Text style={styles.btnPrimaryText}>Approve</Text>
-              </Pressable>
+              {canApproveGrocery && (
+                <Pressable
+                  style={styles.btnPrimary}
+                  onPress={() => handleApprove(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Approve ${item.title}`}
+                >
+                  <Text style={styles.btnPrimaryText}>Approve</Text>
+                </Pressable>
+              )}
             </View>
           ))
         )}
@@ -133,14 +138,16 @@ export default function Grocery() {
           requests.map((req) => (
             <View key={req.id} style={styles.reviewRow}>
               <Text style={styles.reviewName}>{req.title}</Text>
-              <Pressable
-                style={styles.btnPrimary}
-                onPress={() => handleConvert(req)}
-                accessibilityRole="button"
-                accessibilityLabel={`Add ${req.title} to list`}
-              >
-                <Text style={styles.btnPrimaryText}>Add to List</Text>
-              </Pressable>
+              {canApprovePurchase && (
+                <Pressable
+                  style={styles.btnPrimary}
+                  onPress={() => handleConvert(req)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${req.title} to list`}
+                >
+                  <Text style={styles.btnPrimaryText}>Add to List</Text>
+                </Pressable>
+              )}
             </View>
           ))
         )}

@@ -474,7 +474,7 @@ def ai_usage_report(
     conversations over the last N days (default 7). Returns per-day,
     per-model, and per-member breakdowns plus a soft-cap warning
     flag. Adult-only — kids shouldn't see the family's AI bill."""
-    actor.require_adult()
+    actor.require_permission("ai.manage")
     return build_usage_report(
         db,
         family_id=actor.family_id,

@@ -59,7 +59,7 @@ def list_memories(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("notes.manage_any")
     rows = memory_module.list_family_memories(
         db,
         family_id=actor.family_id,
@@ -75,7 +75,7 @@ def create_memory(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("notes.manage_any")
     row = memory_module.record_parent_memory(
         db,
         family_id=actor.family_id,
@@ -97,7 +97,7 @@ def update_memory(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("notes.manage_any")
     row = memory_module.update_memory_content(
         db,
         memory_id,
@@ -128,7 +128,7 @@ def delete_memory(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_adult()
+    actor.require_permission("notes.manage_any")
     ok = memory_module.delete_memory(db, memory_id, actor.family_id)
     if not ok:
         raise HTTPException(
