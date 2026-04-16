@@ -1,6 +1,7 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../lib/styles";
+import { useIsDesktop } from "../lib/breakpoint";
 import {
   CHORES_TODAY, MEALS_THIS_WEEK, GROCERY, ACTIVITY, getMember,
 } from "../lib/seedData";
@@ -16,6 +17,7 @@ const ACTIVITY_TINT: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const isDesktop = useIsDesktop();
   // Costco grocery for the dashboard preview (limit to 6 items)
   const previewGrocery = GROCERY[0].items.slice(0, 6);
 
@@ -32,7 +34,7 @@ export default function Dashboard() {
         <Stat n="2" label="Alerts" tone="amber" />
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Kids · Today</Text>
@@ -81,7 +83,7 @@ export default function Dashboard() {
         </View>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Grocery · This week</Text>
@@ -162,6 +164,7 @@ const styles = StyleSheet.create({
   statL: { fontSize: 11, color: colors.muted, marginTop: 2, fontFamily: fonts.body },
 
   grid2: { flexDirection: "row", gap: 12 },
+  grid2Stack: { flexDirection: "column" },
 
   kidRow: {
     flexDirection: "row",

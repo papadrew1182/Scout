@@ -47,7 +47,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
-  tabs: { flexDirection: "row", gap: 4 },
+  tabs: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
   tab: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 8 },
   tabActive: { backgroundColor: colors.purple },
   tabText: { fontSize: 11, color: colors.muted, fontFamily: fonts.body, fontWeight: "600" },

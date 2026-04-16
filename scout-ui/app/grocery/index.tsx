@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { GROCERY } from "../../lib/seedData";
 import {
   fetchPendingReviewItems,
@@ -12,6 +13,7 @@ import {
 import type { GroceryItem, PurchaseRequest } from "../../lib/types";
 
 export default function Grocery() {
+  const isDesktop = useIsDesktop();
   const [pending, setPending] = useState<GroceryItem[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export default function Grocery() {
         </View>
       )}
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         {GROCERY.map((store) => {
           const sections: Record<string, typeof store.items> = {};
           store.items.forEach((i) => {
@@ -174,7 +176,7 @@ export default function Grocery() {
 
 const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", rowGap: 8 },
   h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
 
   btnPrimary: {
@@ -207,6 +209,7 @@ const styles = StyleSheet.create({
   alertText: { fontSize: 12, color: colors.amberText, fontFamily: fonts.body, lineHeight: 16 },
 
   grid2: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  grid2Stack: { flexDirection: "column" },
   itemCount: { fontSize: 11, color: colors.muted, fontFamily: fonts.body },
 
   itemRow: {

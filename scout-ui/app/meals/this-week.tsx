@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { MEALS_THIS_WEEK, BATCH_COOK, FAMILY } from "../../lib/seedData";
 import { approveWeeklyPlan, fetchCurrentWeeklyPlan } from "../../lib/api";
 import type { WeeklyMealPlan } from "../../lib/types";
@@ -20,6 +21,7 @@ const DIETARY_TONE: Record<string, "purple" | "green" | "amber"> = {
 };
 
 export default function MealsThisWeek() {
+  const isDesktop = useIsDesktop();
   const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -97,7 +99,7 @@ export default function MealsThisWeek() {
         </View>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Sunday batch cook</Text>
@@ -163,6 +165,7 @@ const styles = StyleSheet.create({
   cellNote: { fontSize: 10, color: colors.muted, fontFamily: fonts.body },
 
   grid2: { flexDirection: "row", gap: 12 },
+  grid2Stack: { flexDirection: "column" },
 
   batchRow: {
     flexDirection: "row",

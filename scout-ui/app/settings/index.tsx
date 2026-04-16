@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
 
@@ -25,6 +26,7 @@ const ROLE_TAG = {
 } as const;
 
 export default function Settings() {
+  const isDesktop = useIsDesktop();
   const [toggles, setToggles] = useState(SCOUT_AI_TOGGLES.map((t) => t.on));
   const { member } = useAuth();
   const isAdult = member?.role === "adult";
@@ -34,7 +36,7 @@ export default function Settings() {
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <Text style={styles.h1}>Settings</Text>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={styles.col}>
           <View style={shared.card}>
             <Text style={shared.cardTitle}>My account</Text>
@@ -136,6 +138,7 @@ const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
   h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
   grid2: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  grid2Stack: { flexDirection: "column" },
   col: { flex: 1, gap: 12 },
 
   accountRow: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 14 },
