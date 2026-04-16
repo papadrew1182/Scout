@@ -5,6 +5,7 @@ import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
 import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
+import { fetchMemberAccounts, updateMemberAccount } from "../../lib/api";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -31,6 +32,44 @@ export default function Settings() {
   const { member } = useAuth();
   const isAdult = member?.role === "adult";
   const andrew = FAMILY[0];
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ text: string; isError: boolean } | null>(null);
+
+  const handleUpdatePassword = async () => {
+    if (!member) {
+      setPwMsg({ text: "Not logged in", isError: true });
+      return;
+    }
+    if (!currentPw || currentPw.length === 0) {
+      setPwMsg({ text: "Current password required", isError: true });
+      return;
+    }
+    if (newPw.length < 6) {
+      setPwMsg({ text: "New password must be at least 6 characters", isError: true });
+      return;
+    }
+    setPwBusy(true);
+    try {
+      const accounts = await fetchMemberAccounts(member.member_id);
+      const primaryAccount = accounts.find((a) => a.is_primary);
+      if (!primaryAccount) {
+        setPwMsg({ text: "No primary account found", isError: true });
+        return;
+      }
+      await updateMemberAccount(member.member_id, primaryAccount.id, {
+        new_password: newPw,
+      });
+      setPwMsg({ text: "Password updated successfully", isError: false });
+      setCurrentPw("");
+      setNewPw("");
+    } catch (e: any) {
+      setPwMsg({ text: e?.message || "Update failed", isError: true });
+    } finally {
+      setPwBusy(false);
+    }
+  };
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
@@ -49,9 +88,38 @@ export default function Settings() {
                 <Text style={styles.accountEmail}>Admin · {andrew.email}</Text>
               </View>
             </View>
-            <TextInput style={styles.input} placeholder="Current password" placeholderTextColor={colors.muted} secureTextEntry />
-            <TextInput style={styles.input} placeholder="New password (min 6 chars)" placeholderTextColor={colors.muted} secureTextEntry />
-            <Pressable style={styles.btnPrimaryFull} accessibilityRole="button" accessibilityLabel="Update password"><Text style={styles.btnPrimaryText}>Update password</Text></Pressable>
+            <TextInput
+              style={styles.input}
+              placeholder="Current password"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              value={currentPw}
+              onChangeText={setCurrentPw}
+              editable={!pwBusy}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="New password (min 6 chars)"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              value={newPw}
+              onChangeText={setNewPw}
+              editable={!pwBusy}
+            />
+            <Pressable
+              style={styles.btnPrimaryFull}
+              onPress={handleUpdatePassword}
+              disabled={pwBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Update password"
+            >
+              <Text style={styles.btnPrimaryText}>{pwBusy ? "Updating…" : "Update password"}</Text>
+            </Pressable>
+            {pwMsg && (
+              <Text style={pwMsg.isError ? styles.pwMsgError : styles.pwMsgSuccess}>
+                {pwMsg.text}
+              </Text>
+            )}
             <Text style={styles.sessionsText}>
               18 active sessions · <Text style={{ color: colors.red }}>Sign out all others</Text>
             </Text>
@@ -167,6 +235,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnPrimaryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "500", fontFamily: fonts.body },
+  pwMsgSuccess: { fontSize: 12, color: colors.green, fontFamily: fonts.body, marginTop: 8 },
+  pwMsgError: { fontSize: 12, color: colors.red, fontFamily: fonts.body, marginTop: 8 },
   sessionsText: { fontSize: 11, color: colors.muted, marginTop: 12, fontFamily: fonts.body },
 
   memberRow: {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
@@ -9,14 +9,20 @@ import {
   fetchPurchaseRequests,
   updateGroceryItem,
   convertPurchaseRequestToGrocery,
+  createGroceryItem,
 } from "../../lib/api";
 import type { GroceryItem, PurchaseRequest } from "../../lib/types";
+import { ReceiptCaptureButton } from "../../components/ReceiptCaptureButton";
 
 export default function Grocery() {
   const isDesktop = useIsDesktop();
   const [pending, setPending] = useState<GroceryItem[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addTitle, setAddTitle] = useState("");
+  const [addStore, setAddStore] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -53,13 +59,36 @@ export default function Grocery() {
     }
   };
 
+  const handleAddItem = async () => {
+    if (addTitle.trim().length === 0) {
+      setError("Item title required");
+      return;
+    }
+    setAddBusy(true);
+    try {
+      await createGroceryItem({
+        title: addTitle.trim(),
+        preferred_store: addStore.trim() || undefined,
+      });
+      setAddOpen(false);
+      setAddTitle("");
+      setAddStore("");
+      setError(null);
+      load();
+    } catch (e: any) {
+      setError(e?.message ?? "Add failed");
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
         <Text style={styles.h1}>Grocery List</Text>
         <View style={{ flexDirection: "row", gap: 8 }}>
-          <Pressable style={styles.btnGhost} accessibilityRole="button" accessibilityLabel="Scan receipt"><Text style={styles.btnGhostText}>Scan receipt</Text></Pressable>
-          <Pressable style={styles.btnPrimary} accessibilityRole="button" accessibilityLabel="Add item"><Text style={styles.btnPrimaryText}>+ Add item</Text></Pressable>
+          <ReceiptCaptureButton onAdded={load} />
+          <Pressable style={styles.btnPrimary} onPress={() => setAddOpen(true)} accessibilityRole="button" accessibilityLabel="Add item"><Text style={styles.btnPrimaryText}>+ Add item</Text></Pressable>
         </View>
       </View>
 
@@ -123,13 +152,56 @@ export default function Grocery() {
         </View>
       )}
 
+      <Modal visible={addOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Add Item</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Item title"
+              placeholderTextColor={colors.muted}
+              value={addTitle}
+              onChangeText={setAddTitle}
+              editable={!addBusy}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Preferred store (optional)"
+              placeholderTextColor={colors.muted}
+              value={addStore}
+              onChangeText={setAddStore}
+              editable={!addBusy}
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.btnCancel}
+                onPress={() => {
+                  setAddOpen(false);
+                  setAddTitle("");
+                  setAddStore("");
+                }}
+                disabled={addBusy}
+              >
+                <Text style={styles.btnCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.btnConfirm}
+                onPress={handleAddItem}
+                disabled={addBusy}
+              >
+                <Text style={styles.btnConfirmText}>{addBusy ? "Adding…" : "Add"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         {GROCERY.map((store) => {
           const sections: Record<string, typeof store.items> = {};
           store.items.forEach((i) => {
             (sections[i.section] ||= []).push(i);
           });
-          const isTomThumb = store.name === "Tom Thumb";
           return (
             <View key={store.name} style={shared.card}>
               <View style={shared.cardTitleRow}>
@@ -156,16 +228,6 @@ export default function Grocery() {
                   ))}
                 </View>
               ))}
-              {isTomThumb && (
-                <View style={styles.approveRow}>
-                  <Pressable style={[styles.btnPrimary, { flex: 1 }]} accessibilityRole="button" accessibilityLabel="Approve request">
-                    <Text style={styles.btnPrimaryText}>Approve request</Text>
-                  </Pressable>
-                  <Pressable style={styles.btnGhost} accessibilityRole="button" accessibilityLabel="Reject request">
-                    <Text style={styles.btnGhostText}>Reject</Text>
-                  </Pressable>
-                </View>
-              )}
             </View>
           );
         })}
@@ -227,8 +289,6 @@ const styles = StyleSheet.create({
   reqTag: { backgroundColor: colors.amberBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   reqTagText: { fontSize: 9, color: colors.amberText, fontWeight: "700", fontFamily: fonts.body },
 
-  approveRow: { flexDirection: "row", gap: 8, marginTop: 10 },
-
   reviewRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -239,4 +299,45 @@ const styles = StyleSheet.create({
   },
   reviewName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
   emptyText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, paddingVertical: 6 },
+
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0, 0, 0, 0.5)", justifyContent: "flex-end" },
+  modalContent: {
+    backgroundColor: colors.bg,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    padding: 20,
+    gap: 12,
+  },
+  modalTitle: { fontSize: 16, fontWeight: "600", color: colors.text, fontFamily: fonts.body, marginBottom: 6 },
+  input: {
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.body,
+    outlineWidth: 0,
+  } as any,
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 8 },
+  btnCancel: {
+    flex: 1,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  btnCancelText: { color: colors.text, fontSize: 12, fontWeight: "600", fontFamily: fonts.body },
+  btnConfirm: {
+    flex: 1,
+    backgroundColor: colors.purple,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  btnConfirmText: { color: "#FFFFFF", fontSize: 12, fontWeight: "600", fontFamily: fonts.body },
 });
