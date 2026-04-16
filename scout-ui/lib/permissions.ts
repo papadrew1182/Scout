@@ -21,11 +21,14 @@ import { fetchMyPermissions } from "./api";
 // session share a single fetch. Invalidated on sign-out via clearPermissionsCache().
 let _cachedPermissions: Record<string, boolean> | null = null;
 let _fetchPromise: Promise<Record<string, boolean>> | null = null;
+let _permissionsReady = false;
+const _readySubscribers = new Set<() => void>();
 
 /** Call this on logout to force a re-fetch on the next session. */
 export function clearPermissionsCache() {
   _cachedPermissions = null;
   _fetchPromise = null;
+  _permissionsReady = false;
 }
 
 function loadPermissions(): Promise<Record<string, boolean>> {
@@ -38,6 +41,8 @@ function loadPermissions(): Promise<Record<string, boolean>> {
   _fetchPromise = fetchMyPermissions().then((perms) => {
     _cachedPermissions = perms;
     _fetchPromise = null;
+    _permissionsReady = true;
+    _readySubscribers.forEach((cb) => cb());
     return perms;
   }).catch((err) => {
     _fetchPromise = null;
@@ -83,4 +88,40 @@ export function useHasPermission(key: string): boolean {
   }, []);
 
   return hasPermission;
+}
+
+/**
+ * Returns true once the initial permission fetch has completed.
+ * Used to disambiguate "loading" vs "user doesn't have permission".
+ * Defers rendering until permissions are loaded.
+ */
+export function usePermissionsReady(): boolean {
+  const [ready, setReady] = useState(_permissionsReady);
+
+  useEffect(() => {
+    if (_permissionsReady) {
+      setReady(true);
+      return;
+    }
+    let cancelled = false;
+    const handleReady = () => {
+      if (!cancelled) {
+        setReady(true);
+      }
+    };
+    _readySubscribers.add(handleReady);
+    // Trigger a load if not already in progress
+    loadPermissions().catch(() => {
+      // Error is fine, we just care that the fetch completed
+      if (!cancelled) {
+        setReady(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      _readySubscribers.delete(handleReady);
+    };
+  }, []);
+
+  return ready;
 }

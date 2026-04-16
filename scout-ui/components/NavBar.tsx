@@ -5,8 +5,9 @@ import { useState } from "react";
 import { colors, fonts } from "../lib/styles";
 import { useIsDesktop } from "../lib/breakpoint";
 import { useAuth } from "../lib/auth";
+import { useHasPermission } from "../lib/permissions";
 
-const LINKS = [
+const BASE_LINKS = [
   { href: "/",         label: "Home" },
   { href: "/personal", label: "Personal" },
   { href: "/parent",   label: "Parent" },
@@ -15,6 +16,8 @@ const LINKS = [
   { href: "/child",    label: "Child" },
   { href: "/settings", label: "Settings" },
 ] as const;
+
+const ADMIN_LINK = { href: "/admin", label: "Admin" } as const;
 
 interface NavBarProps {
   onScoutPress?: () => void;
@@ -30,9 +33,19 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
   const { logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // Check for admin access
+  const canViewConfig = useHasPermission("admin.view_config");
+  const canViewPermissions = useHasPermission("admin.view_permissions");
+  const canManageMembers = useHasPermission("family.manage_members");
+  const hasAdminAccess = canViewConfig || canViewPermissions || canManageMembers;
+
+  // Build the links array dynamically
+  const LINKS = hasAdminAccess ? [...BASE_LINKS, ADMIN_LINK] : BASE_LINKS;
+
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
     if (href === "/child") return pathname === "/child" || pathname.startsWith("/child/");
+    if (href === "/admin") return pathname === "/admin" || pathname.startsWith("/admin/");
     return pathname === href || pathname.startsWith(href + "/");
   };
 
