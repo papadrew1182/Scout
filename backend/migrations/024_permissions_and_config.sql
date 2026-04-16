@@ -24,7 +24,7 @@ BEGIN;
 -- =============================================================================
 
 -- Drop the old CHECK constraint that restricted names to the legacy four-value set.
-ALTER TABLE role_tiers
+ALTER TABLE public.role_tiers
     DROP CONSTRAINT IF EXISTS chk_role_tiers_name;
 
 -- Widen the name column to VARCHAR(20) if it is still TEXT (idempotent — TEXT
@@ -32,7 +32,7 @@ ALTER TABLE role_tiers
 -- We leave it as-is since TEXT >= VARCHAR(20); no explicit ALTER needed.
 
 -- Add description column if not present.
-ALTER TABLE role_tiers
+ALTER TABLE public.role_tiers
     ADD COLUMN IF NOT EXISTS description TEXT;
 
 -- =============================================================================
@@ -40,13 +40,13 @@ ALTER TABLE role_tiers
 -- =============================================================================
 
 -- Add updated_at if missing.
-ALTER TABLE role_tier_overrides
+ALTER TABLE public.role_tier_overrides
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Drop the old composite UNIQUE (family_member_id, role_tier_id) and replace
 -- with a single-column UNIQUE (family_member_id) so each member has exactly
 -- one active tier assignment.
-ALTER TABLE role_tier_overrides
+ALTER TABLE public.role_tier_overrides
     DROP CONSTRAINT IF EXISTS uq_role_tier_overrides_member_tier;
 
 -- Also drop old unnamed unique constraint if it happens to exist with a
@@ -58,21 +58,21 @@ BEGIN
     FOR r IN
         SELECT conname
         FROM pg_constraint
-        WHERE conrelid = 'role_tier_overrides'::regclass
+        WHERE conrelid = 'public.role_tier_overrides'::regclass
           AND contype = 'u'
           AND conname != 'role_tier_overrides_pkey'
     LOOP
-        EXECUTE 'ALTER TABLE role_tier_overrides DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
+        EXECUTE 'ALTER TABLE public.role_tier_overrides DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
     END LOOP;
 END $$;
 
-ALTER TABLE role_tier_overrides
+ALTER TABLE public.role_tier_overrides
     ADD CONSTRAINT uq_role_tier_overrides_member UNIQUE (family_member_id);
 
 -- Add updated_at trigger (guard: drop if already exists, then recreate).
-DROP TRIGGER IF EXISTS trg_role_tier_overrides_updated_at ON role_tier_overrides;
+DROP TRIGGER IF EXISTS trg_role_tier_overrides_updated_at ON public.role_tier_overrides;
 CREATE TRIGGER trg_role_tier_overrides_updated_at
-    BEFORE UPDATE ON role_tier_overrides
+    BEFORE UPDATE ON public.role_tier_overrides
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- =============================================================================
@@ -127,7 +127,7 @@ CREATE TRIGGER trg_member_config_updated_at
 -- admin tier
 -- All *.manage, *.approve, family.*, members.*, admin.* permissions.
 
-INSERT INTO role_tiers (name, description, permissions, behavior_config)
+INSERT INTO public.role_tiers (name, description, permissions, behavior_config)
 VALUES (
     'admin',
     'Full household administrator. Manages members, accounts, permissions, budgets, and all family configuration.',
@@ -205,7 +205,7 @@ ON CONFLICT (name) DO UPDATE
 -- parent_peer tier
 -- Same as admin minus family member/account management.
 
-INSERT INTO role_tiers (name, description, permissions, behavior_config)
+INSERT INTO public.role_tiers (name, description, permissions, behavior_config)
 VALUES (
     'parent_peer',
     'Trusted adult co-parent with full operational access but cannot add/remove members or accounts.',
@@ -275,7 +275,7 @@ ON CONFLICT (name) DO UPDATE
 -- teen tier
 -- Older child with self-scoped writes + family read access.
 
-INSERT INTO role_tiers (name, description, permissions, behavior_config)
+INSERT INTO public.role_tiers (name, description, permissions, behavior_config)
 VALUES (
     'teen',
     'Older child / teenager with self-scoped write access and family read access.',
@@ -314,7 +314,7 @@ ON CONFLICT (name) DO UPDATE
 -- child tier
 -- School-age child with chore + request permissions and meal review.
 
-INSERT INTO role_tiers (name, description, permissions, behavior_config)
+INSERT INTO public.role_tiers (name, description, permissions, behavior_config)
 VALUES (
     'child',
     'School-age child with chore completion, grocery requests, and meal review for self.',
@@ -352,7 +352,7 @@ ON CONFLICT (name) DO UPDATE
 -- kid tier
 -- Young child with most restricted access.
 
-INSERT INTO role_tiers (name, description, permissions, behavior_config)
+INSERT INTO public.role_tiers (name, description, permissions, behavior_config)
 VALUES (
     'kid',
     'Young child with chore completion and supervised grocery requests only.',

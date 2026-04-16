@@ -19,7 +19,7 @@
 BEGIN;
 
 -- admin tier — grant all new keys
-UPDATE role_tiers
+UPDATE public.role_tiers
 SET permissions = permissions || '{
     "allowance.manage_config":  true,
     "chores.manage_config":     true,
@@ -33,7 +33,7 @@ WHERE name = 'admin';
 
 -- parent_peer tier — grant all new keys (same operational scope as admin
 -- except member/account management which is already excluded)
-UPDATE role_tiers
+UPDATE public.role_tiers
 SET permissions = permissions || '{
     "allowance.manage_config":  true,
     "chores.manage_config":     true,
