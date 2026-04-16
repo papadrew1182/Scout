@@ -3,15 +3,18 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
 
+// Viewport-agnostic login: does NOT rely on desktop NavBar text (the
+// "Personal" link is only rendered on desktop — on mobile the NavBar
+// collapses into a hamburger menu and that text isn't visible).
 async function login(page: Page, email: string, password: string) {
   await page.goto("/");
   await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
   await page.fill('input[placeholder="Email"]', email);
   await page.fill('input[placeholder="Password"]', password);
   await page.click("text=Sign In");
+  // Wait for the email input to disappear — this is the auth-complete
+  // signal and is viewport-independent.
   await expect(page.locator('input[placeholder="Email"]')).not.toBeVisible({ timeout: 15000 });
-  await page.goto("/personal");
-  await page.waitForSelector("text=Personal", { timeout: 10000 });
 }
 
 const SURFACES = [
