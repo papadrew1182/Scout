@@ -45,6 +45,8 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 6,
     backgroundColor: colors.bg,
+    flexWrap: "wrap",
+    rowGap: 8,
   },
   h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
   tabs: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
