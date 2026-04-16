@@ -20,6 +20,7 @@ from app.ai.context import (
 )
 from app.ai.moderation import check_user_message
 from app.models.foundation import Family, FamilyMember
+from app.services.permissions import set_family_config
 
 
 class TestContextLoading:
@@ -131,7 +132,13 @@ class TestChatModePrompt:
         self, db: Session, family, adults
     ):
         andrew = adults["robert"]
-        family.allow_general_chat = False
+        # Write to config store — this is now the source of truth.
+        set_family_config(db, family.id, "scout_ai.toggles", {
+            "allow_general_chat": False,
+            "allow_homework_help": True,
+            "proactive_suggestions": True,
+            "push_notifications": True,
+        })
         db.flush()
         ctx = load_member_context(db, family.id, andrew.id)
         prompt = build_system_prompt(ctx, "personal")
@@ -154,7 +161,13 @@ class TestChatModePrompt:
         self, db: Session, family, children
     ):
         sadie = children["sadie"]
-        family.allow_homework_help = False
+        # Write to config store — this is now the source of truth.
+        set_family_config(db, family.id, "scout_ai.toggles", {
+            "allow_general_chat": True,
+            "allow_homework_help": False,
+            "proactive_suggestions": True,
+            "push_notifications": True,
+        })
         db.flush()
         ctx = load_member_context(db, family.id, sadie.id)
         prompt = build_system_prompt(ctx, "child")

@@ -979,3 +979,57 @@ export async function deleteFamilyMemory(memoryId: string): Promise<void> {
 export function fetchMyPermissions(): Promise<Record<string, boolean>> {
   return get(`${API_BASE_URL}/admin/permissions/me`);
 }
+
+// ---------------------------------------------------------------------------
+// Family config (control plane)
+// ---------------------------------------------------------------------------
+
+export interface FamilyConfigRow {
+  key: string;
+  value: unknown;
+}
+
+/** Return all family_config rows for the current actor's family. */
+export function fetchFamilyConfig(): Promise<FamilyConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/family`);
+}
+
+/** Return the value of a single config key, or null if not set. */
+export async function fetchFamilyConfigValue<T = unknown>(key: string): Promise<T | null> {
+  const rows = await fetchFamilyConfig();
+  const row = rows.find((r) => r.key === key);
+  return row ? (row.value as T) : null;
+}
+
+/**
+ * Upsert a family_config key.
+ * The PUT endpoint expects `{ value: <any> }` as the request body.
+ */
+export async function putFamilyConfig(key: string, value: unknown): Promise<FamilyConfigRow> {
+  const res = await fetch(`${API_BASE_URL}/admin/config/family/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, key, text);
+    throw new Error(`putFamilyConfig failed (${res.status})`);
+  }
+  return (await res.json()) as FamilyConfigRow;
+}
+
+/** Delete a family_config key. Throws if not found (404). */
+export async function deleteFamilyConfig(key: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/admin/config/family/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, key, text);
+    throw new Error(`deleteFamilyConfig failed (${res.status})`);
+  }
+}

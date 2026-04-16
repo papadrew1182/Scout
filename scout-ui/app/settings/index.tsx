@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
@@ -7,6 +7,7 @@ import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
 import { fetchMemberAccounts, updateMemberAccount } from "../../lib/api";
 import { useHasPermission } from "../../lib/permissions";
+import { useFamilyConfig } from "../../lib/config";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -27,11 +28,36 @@ const ROLE_TAG = {
   child: { bg: colors.tealBg,      fg: colors.tealText,   label: "Child" },
 } as const;
 
+// Display labels for the Scout AI toggles. The on/off state comes from the
+// config store; these labels are UI copy and stay hardcoded here.
+const AI_TOGGLE_LABELS: Array<{ key: keyof ScoutAIToggles; label: string; sub: string }> = [
+  { key: "allow_general_chat",   label: "Allow general chat",    sub: "Q&A, creative writing, coding help" },
+  { key: "allow_homework_help",  label: "Homework help (kids)",  sub: "Socratic tutoring — guides, doesn't give answers" },
+  { key: "proactive_suggestions", label: "Proactive suggestions", sub: "Scout surfaces ideas without being asked" },
+  { key: "push_notifications",   label: "Push notifications",    sub: "Chore reminders, meal alerts, family updates" },
+];
+
+interface ScoutAIToggles {
+  allow_general_chat: boolean;
+  allow_homework_help: boolean;
+  proactive_suggestions: boolean;
+  push_notifications: boolean;
+}
+
+const DEFAULT_AI_TOGGLES: ScoutAIToggles = {
+  allow_general_chat: true,
+  allow_homework_help: true,
+  proactive_suggestions: true,
+  push_notifications: true,
+};
+
 export default function Settings() {
   const isDesktop = useIsDesktop();
-  const [toggles, setToggles] = useState(SCOUT_AI_TOGGLES.map((t) => t.on));
   const { member } = useAuth();
   const canManageAccounts = useHasPermission("family.manage_accounts");
+  const canManageAIToggles = useHasPermission("scout_ai.manage_toggles");
+  const { value: aiToggles, setValue: setAiToggles, loading: aiLoading } =
+    useFamilyConfig<ScoutAIToggles>("scout_ai.toggles", DEFAULT_AI_TOGGLES);
   const andrew = FAMILY[0];
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -161,26 +187,35 @@ export default function Settings() {
         </View>
 
         <View style={styles.col}>
-          <View style={shared.card}>
-            <Text style={shared.cardTitle}>Scout AI settings</Text>
-            {SCOUT_AI_TOGGLES.map((t, i) => (
-              <View key={t.label} style={styles.toggleRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.toggleLabel}>{t.label}</Text>
-                  <Text style={styles.toggleSub}>{t.sub}</Text>
-                </View>
-                <Pressable
-                  style={[styles.toggle, toggles[i] ? styles.toggleOn : styles.toggleOff]}
-                  onPress={() => setToggles((prev) => prev.map((v, j) => (j === i ? !v : v)))}
-                  accessibilityRole="switch"
-                  accessibilityState={{ checked: toggles[i] }}
-                  accessibilityLabel={t.label}
-                >
-                  <View style={[styles.toggleKnob, toggles[i] ? styles.toggleKnobOn : styles.toggleKnobOff]} />
-                </Pressable>
-              </View>
-            ))}
-          </View>
+          {canManageAIToggles && (
+            <View style={shared.card}>
+              <Text style={shared.cardTitle}>Scout AI settings</Text>
+              {aiLoading ? (
+                <ActivityIndicator size="small" color={colors.purple} style={{ marginVertical: 12 }} />
+              ) : (
+                AI_TOGGLE_LABELS.map((t) => {
+                  const on = Boolean(aiToggles[t.key]);
+                  return (
+                    <View key={t.key} style={styles.toggleRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.toggleLabel}>{t.label}</Text>
+                        <Text style={styles.toggleSub}>{t.sub}</Text>
+                      </View>
+                      <Pressable
+                        style={[styles.toggle, on ? styles.toggleOn : styles.toggleOff]}
+                        onPress={() => setAiToggles({ ...aiToggles, [t.key]: !on })}
+                        accessibilityRole="switch"
+                        accessibilityState={{ checked: on }}
+                        accessibilityLabel={t.label}
+                      >
+                        <View style={[styles.toggleKnob, on ? styles.toggleKnobOn : styles.toggleKnobOff]} />
+                      </Pressable>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          )}
 
           <View style={shared.card}>
             <Text style={shared.cardTitle}>Connected integrations</Text>
