@@ -1,4 +1,5 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
+import { useRouter } from "expo-router";
 
 import { colors, fonts, shared } from "../lib/styles";
 import { useIsDesktop } from "../lib/breakpoint";
@@ -17,6 +18,7 @@ const ACTIVITY_TINT: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const router = useRouter();
   const isDesktop = useIsDesktop();
   // Costco grocery for the dashboard preview (limit to 6 items)
   const previewGrocery = GROCERY[0].items.slice(0, 6);
@@ -38,7 +40,9 @@ export default function Dashboard() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Kids · Today</Text>
-            <Text style={shared.cardAction}>Manage chores</Text>
+            <Pressable onPress={() => router.push("/parent")} accessibilityRole="link">
+              <Text style={shared.cardAction}>Manage chores</Text>
+            </Pressable>
           </View>
           {CHORES_TODAY.map((c) => {
             const m = getMember(c.memberId)!;
@@ -63,7 +67,9 @@ export default function Dashboard() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Meals · This week</Text>
-            <Text style={shared.cardAction}>Full plan</Text>
+            <Pressable onPress={() => router.push("/meals/this-week")} accessibilityRole="link">
+              <Text style={shared.cardAction}>Full plan</Text>
+            </Pressable>
           </View>
           <View style={styles.mealGrid}>
             {MEALS_THIS_WEEK.map((m) => (
@@ -87,7 +93,9 @@ export default function Dashboard() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Grocery · This week</Text>
-            <Text style={shared.cardAction}>Full list</Text>
+            <Pressable onPress={() => router.push("/grocery")} accessibilityRole="link">
+              <Text style={shared.cardAction}>Full list</Text>
+            </Pressable>
           </View>
           <Text style={shared.sectionHead}>Produce</Text>
           {previewGrocery.filter((i) => i.section === "Produce").map((i) => (
@@ -102,7 +110,9 @@ export default function Dashboard() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Family activity</Text>
-            <Text style={shared.cardAction}>View all</Text>
+            <Pressable onPress={() => router.push("/parent")} accessibilityRole="link">
+              <Text style={shared.cardAction}>View all</Text>
+            </Pressable>
           </View>
           {ACTIVITY.map((a) => (
             <View key={a.id} style={shared.rowDivider}>

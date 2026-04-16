@@ -36,7 +36,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Calendar · This week</Text>
-            <Text style={shared.cardAction}>Add event</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           <View style={styles.calRow}>
             {DAYS.map((d) => (
@@ -61,7 +61,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Top 5 tasks</Text>
-            <Text style={shared.cardAction}>All tasks</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {PERSONAL_TASKS.map((t) => (
             <View key={t.title} style={styles.taskRow}>
@@ -79,7 +79,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Recent notes</Text>
-            <Text style={shared.cardAction}>New note</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {RECENT_NOTES.map((n) => (
             <View key={n.title} style={styles.noteRow}>
@@ -93,7 +93,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Bills</Text>
-            <Text style={shared.cardAction}>All bills</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {BILLS.map((b) => {
             const tone = BILL_TONE[b.status];

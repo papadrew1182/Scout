@@ -160,7 +160,7 @@ export default function Parent() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Allowance this week</Text>
-            <Text style={shared.cardAction}>Manage</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {ALLOWANCE.map((a) => {
             const m = getMember(a.memberId)!;

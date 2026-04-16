@@ -128,7 +128,7 @@ export default function Settings() {
           <View style={shared.card}>
             <View style={shared.cardTitleRow}>
               <Text style={shared.cardTitle}>Family members</Text>
-              <Text style={shared.cardAction}>+ Add member</Text>
+              <Text style={shared.cardAction}> </Text>
             </View>
             {FAMILY.map((m) => {
               const role = ROLE_TAG[m.role];
