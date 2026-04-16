@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
-import { FAMILY, INTEGRATIONS, SCOUT_AI_TOGGLES } from "../../lib/seedData";
+import { FAMILY } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
 import { fetchMemberAccounts, updateMemberAccount } from "../../lib/api";
 import { useHasPermission } from "../../lib/permissions";
-import { useFamilyConfig } from "../../lib/config";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -16,48 +16,32 @@ const TINT_TEXT: Record<string, string> = {
   purple: colors.avPurpleText, teal: colors.avTealText, amber: colors.avAmberText, coral: colors.avCoralText,
 };
 
-const INTEGRATION_STATUS = {
-  connected:     { dot: colors.green, label: "Connected",     bg: colors.greenBg, fg: colors.greenText },
-  needs_reauth:  { dot: colors.amber, label: "Needs reauth",  bg: colors.amberBg, fg: colors.amberText },
-  not_connected: { dot: colors.muted, label: "Not connected", bg: "#F3F4F6",      fg: "#6B7280" },
-} as const;
-
-const ROLE_TAG = {
-  admin: { bg: colors.purpleLight, fg: colors.purpleDeep, label: "Admin" },
-  full:  { bg: "#F3F4F6",          fg: "#374151",         label: "Full user" },
-  child: { bg: colors.tealBg,      fg: colors.tealText,   label: "Child" },
-} as const;
-
-// Display labels for the Scout AI toggles. The on/off state comes from the
-// config store; these labels are UI copy and stay hardcoded here.
-const AI_TOGGLE_LABELS: Array<{ key: keyof ScoutAIToggles; label: string; sub: string }> = [
-  { key: "allow_general_chat",   label: "Allow general chat",    sub: "Q&A, creative writing, coding help" },
-  { key: "allow_homework_help",  label: "Homework help (kids)",  sub: "Socratic tutoring — guides, doesn't give answers" },
-  { key: "proactive_suggestions", label: "Proactive suggestions", sub: "Scout surfaces ideas without being asked" },
-  { key: "push_notifications",   label: "Push notifications",    sub: "Chore reminders, meal alerts, family updates" },
-];
-
-interface ScoutAIToggles {
-  allow_general_chat: boolean;
-  allow_homework_help: boolean;
-  proactive_suggestions: boolean;
-  push_notifications: boolean;
-}
-
-const DEFAULT_AI_TOGGLES: ScoutAIToggles = {
-  allow_general_chat: true,
-  allow_homework_help: true,
-  proactive_suggestions: true,
-  push_notifications: true,
-};
-
 export default function Settings() {
   const isDesktop = useIsDesktop();
+  const router = useRouter();
   const { member } = useAuth();
   const canManageAccounts = useHasPermission("family.manage_accounts");
-  const canManageAIToggles = useHasPermission("scout_ai.manage_toggles");
-  const { value: aiToggles, setValue: setAiToggles, loading: aiLoading } =
-    useFamilyConfig<ScoutAIToggles>("scout_ai.toggles", DEFAULT_AI_TOGGLES);
+
+  // Check any admin permission for showing the admin link
+  const hasAdminAllowance   = useHasPermission("allowance.manage_config");
+  const hasAdminChores      = useHasPermission("chores.manage_config");
+  const hasAdminGrocery     = useHasPermission("grocery.manage_config");
+  const hasAdminMeals       = useHasPermission("meals.manage_config");
+  const hasAdminScoutAI     = useHasPermission("scout_ai.manage_toggles");
+  const hasAdminFamily      = useHasPermission("family.manage_members");
+  const hasAdminPermissions = useHasPermission("admin.manage_permissions");
+  const hasAdminConfig      = useHasPermission("admin.manage_config");
+
+  const hasAnyAdmin =
+    hasAdminAllowance ||
+    hasAdminChores ||
+    hasAdminGrocery ||
+    hasAdminMeals ||
+    hasAdminScoutAI ||
+    hasAdminFamily ||
+    hasAdminPermissions ||
+    hasAdminConfig;
+
   const andrew = FAMILY[0];
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -104,6 +88,7 @@ export default function Settings() {
 
       <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={styles.col}>
+          {/* My account — per-user, always shown */}
           <View style={shared.card}>
             <Text style={shared.cardTitle}>My account</Text>
             <View style={styles.accountRow}>
@@ -152,30 +137,7 @@ export default function Settings() {
             </Text>
           </View>
 
-          <View style={shared.card}>
-            <View style={shared.cardTitleRow}>
-              <Text style={shared.cardTitle}>Family members</Text>
-              <Text style={shared.cardAction}> </Text>
-            </View>
-            {FAMILY.map((m) => {
-              const role = ROLE_TAG[m.role];
-              return (
-                <View key={m.id} style={styles.memberRow}>
-                  <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
-                    <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
-                  </View>
-                  <Text style={styles.memberName}>
-                    {m.firstName} {m.lastName}
-                    {m.age !== undefined ? ` · ${m.age}` : ""}
-                  </Text>
-                  <View style={[styles.tag, { backgroundColor: role.bg }]}>
-                    <Text style={[styles.tagText, { color: role.fg }]}>{role.label}</Text>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-
+          {/* Accounts & Access — per-user, admin-only */}
           {canManageAccounts && (
             <View style={shared.card}>
               <Text style={shared.cardTitle}>Accounts & Access</Text>
@@ -186,53 +148,23 @@ export default function Settings() {
           )}
         </View>
 
-        <View style={styles.col}>
-          {canManageAIToggles && (
-            <View style={shared.card}>
-              <Text style={shared.cardTitle}>Scout AI settings</Text>
-              {aiLoading ? (
-                <ActivityIndicator size="small" color={colors.purple} style={{ marginVertical: 12 }} />
-              ) : (
-                AI_TOGGLE_LABELS.map((t) => {
-                  const on = Boolean(aiToggles[t.key]);
-                  return (
-                    <View key={t.key} style={styles.toggleRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.toggleLabel}>{t.label}</Text>
-                        <Text style={styles.toggleSub}>{t.sub}</Text>
-                      </View>
-                      <Pressable
-                        style={[styles.toggle, on ? styles.toggleOn : styles.toggleOff]}
-                        onPress={() => setAiToggles({ ...aiToggles, [t.key]: !on })}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: on }}
-                        accessibilityLabel={t.label}
-                      >
-                        <View style={[styles.toggleKnob, on ? styles.toggleKnobOn : styles.toggleKnobOff]} />
-                      </Pressable>
-                    </View>
-                  );
-                })
-              )}
-            </View>
-          )}
-
-          <View style={shared.card}>
-            <Text style={shared.cardTitle}>Connected integrations</Text>
-            {INTEGRATIONS.map((it) => {
-              const s = INTEGRATION_STATUS[it.status];
-              return (
-                <View key={it.name} style={styles.integrationRow}>
-                  <View style={[styles.statusDot, { backgroundColor: s.dot }]} />
-                  <Text style={styles.integrationName}>{it.name}</Text>
-                  <View style={[styles.tag, { backgroundColor: s.bg }]}>
-                    <Text style={[styles.tagText, { color: s.fg }]}>{s.label}</Text>
-                  </View>
-                </View>
-              );
-            })}
+        {/* Admin link — shown only if user holds any admin permission */}
+        {hasAnyAdmin && (
+          <View style={styles.col}>
+            <Pressable
+              style={[shared.card, styles.adminLinkCard]}
+              onPress={() => router.push("/admin" as any)}
+              accessibilityRole="link"
+              accessibilityLabel="Go to family and app config"
+            >
+              <Text style={styles.adminLinkTitle}>Family &amp; app config</Text>
+              <Text style={styles.adminLinkDesc}>
+                Manage allowance, chores, meals, grocery, Scout AI settings, family members, and integrations.
+              </Text>
+              <Text style={styles.adminLinkCta}>Open Admin &rarr;</Text>
+            </Pressable>
           </View>
-        </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -275,54 +207,36 @@ const styles = StyleSheet.create({
   pwMsgError: { fontSize: 12, color: colors.red, fontFamily: fonts.body, marginTop: 8 },
   sessionsText: { fontSize: 11, color: colors.muted, marginTop: 12, fontFamily: fonts.body },
 
-  memberRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  av: { width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  avText: { fontSize: 11, fontWeight: "600", fontFamily: fonts.body },
-  memberName: { flex: 1, fontSize: 13, color: colors.text, fontFamily: fonts.body },
-
-  tag: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2 },
-  tagText: { fontSize: 10, fontWeight: "700", fontFamily: fonts.body },
-
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  toggleLabel: { fontSize: 12, fontWeight: "500", color: colors.text, fontFamily: fonts.body },
-  toggleSub: { fontSize: 11, color: colors.muted, marginTop: 2, fontFamily: fonts.body },
-  toggle: { width: 36, height: 20, borderRadius: 10, padding: 2, justifyContent: "center" },
-  toggleOn: { backgroundColor: colors.green },
-  toggleOff: { backgroundColor: "#D1D5DB" },
-  toggleKnob: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#FFFFFF" },
-  toggleKnobOn: { alignSelf: "flex-end" },
-  toggleKnobOff: { alignSelf: "flex-start" },
-
-  integrationRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
-  integrationName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
-
   accountsBlurb: {
     fontSize: 12,
     color: colors.muted,
     fontFamily: fonts.body,
     lineHeight: 17,
     marginTop: 4,
+  },
+
+  adminLinkCard: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
+  adminLinkTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.text,
+    fontFamily: fonts.body,
+  },
+  adminLinkDesc: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    lineHeight: 17,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  adminLinkCta: {
+    fontSize: 13,
+    color: colors.purple,
+    fontWeight: "600",
+    fontFamily: fonts.body,
   },
 });
