@@ -45,6 +45,7 @@ function isScoutShell(pathname: string): boolean {
 function AppShell() {
   const { token, member, loading } = useAuth();
   const [scoutSheetOpen, setScoutSheetOpen] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const pathname = usePathname();
   const isDesktop = useIsDesktop();
 
@@ -77,7 +78,8 @@ function AppShell() {
 
   // Mocked send/chip handlers — when the shell-level ScoutBar is used,
   // we funnel into the Scout sheet so the user gets a visible response.
-  const handleScoutSubmit = (_text: string) => {
+  const handleScoutSubmit = (text: string) => {
+    setPendingPrompt(text);
     setScoutSheetOpen(true);
   };
 
@@ -100,7 +102,7 @@ function AppShell() {
         {isDesktop && <ScoutSidebar surface={surface as any} />}
       </View>
       {!isDesktop && <BottomTabBar onScoutPress={() => setScoutSheetOpen(true)} />}
-      <ScoutSheet visible={scoutSheetOpen} onClose={() => setScoutSheetOpen(false)} surface={surface as any} />
+      <ScoutSheet visible={scoutSheetOpen} onClose={() => { setScoutSheetOpen(false); setPendingPrompt(null); }} surface={surface as any} initialPrompt={pendingPrompt} />
     </View>
   );
 }
