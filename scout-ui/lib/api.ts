@@ -1033,3 +1033,73 @@ export async function deleteFamilyConfig(key: string): Promise<void> {
     throw new Error(`deleteFamilyConfig failed (${res.status})`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Member config (control plane)
+// ---------------------------------------------------------------------------
+
+export interface MemberConfigRow {
+  member_id: string;
+  key: string;
+  value: unknown;
+}
+
+/**
+ * Return all member_config rows for a single member.
+ * GET /admin/config/member/{memberId}
+ */
+export function fetchMemberConfig(memberId: string): Promise<FamilyConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}`);
+}
+
+/**
+ * Upsert a member_config key.
+ * PUT /admin/config/member/{memberId}/{key}  body: { value }
+ */
+export async function putMemberConfig(
+  memberId: string,
+  key: string,
+  value: unknown,
+): Promise<FamilyConfigRow> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}/${encodeURIComponent(key)}`,
+    {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    },
+  );
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, memberId, key, text);
+    throw new Error(`putMemberConfig failed (${res.status})`);
+  }
+  return (await res.json()) as FamilyConfigRow;
+}
+
+/**
+ * Delete a member_config key. Throws if not found (404).
+ * DELETE /admin/config/member/{memberId}/{key}
+ */
+export async function deleteMemberConfig(memberId: string, key: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}/${encodeURIComponent(key)}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, memberId, key, text);
+    throw new Error(`deleteMemberConfig failed (${res.status})`);
+  }
+}
+
+/**
+ * Return member_config rows for *all* active family members that have `key` set.
+ * GET /admin/config/members/{key}
+ * Returns [] if no members have the key set (never 404).
+ */
+export function fetchAllMemberConfigForKey(key: string): Promise<MemberConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/members/${encodeURIComponent(key)}`);
+}

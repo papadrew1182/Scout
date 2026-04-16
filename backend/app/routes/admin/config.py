@@ -7,6 +7,7 @@ Endpoints:
   GET    /admin/config/member/{member_id}       — all member config (requires admin.view_config)
   PUT    /admin/config/member/{member_id}/{key} — upsert member config (requires admin.manage_config)
   DELETE /admin/config/member/{member_id}/{key} — delete member config (requires admin.manage_config)
+  GET    /admin/config/members/{key}            — all member_config rows matching key (requires admin.view_config)
 """
 
 from __future__ import annotations
@@ -193,3 +194,45 @@ def delete_member_config_key(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Config key not found: {key}")
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Bulk member config — all members, single key
+# ---------------------------------------------------------------------------
+
+
+class MemberConfigRow(BaseModel):
+    member_id: str
+    key: str
+    value: Any
+
+
+@router.get("/members/{key}", response_model=list[MemberConfigRow])
+def get_all_member_config_for_key(
+    key: str,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Return member_config rows for *all* active family members that have `key` set.
+
+    Scoped to the actor's family. Requires admin.view_config.
+    Returns an empty list (not 404) if no members have the key set.
+    """
+    actor.require_permission("admin.view_config")
+
+    # Join through family_members to enforce family-scoping without a
+    # subquery — keeps the result set tight.
+    from app.models.foundation import FamilyMember as FM  # local import avoids circular
+    rows = db.scalars(
+        select(MemberConfig)
+        .join(FM, FM.id == MemberConfig.family_member_id)
+        .where(FM.family_id == actor.family_id)
+        .where(FM.is_active.is_(True))
+        .where(MemberConfig.key == key)
+        .order_by(FM.first_name)
+    ).all()
+
+    return [
+        MemberConfigRow(member_id=str(row.family_member_id), key=row.key, value=row.value)
+        for row in rows
+    ]

@@ -1,14 +1,15 @@
-import { ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
 import { useEffect, useState } from "react";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
-import { ACTION_INBOX, HOMEWORK, ALLOWANCE, LEADERBOARD, getMember } from "../../lib/seedData";
+import { ACTION_INBOX, HOMEWORK, LEADERBOARD, getMember } from "../../lib/seedData";
 import { createWeeklyPayout, fetchMembers, PayoutError } from "../../lib/api";
 import { calculatePayout } from "../../lib/constants";
 import { weekStartStr } from "../../lib/format";
 import type { FamilyMember } from "../../lib/types";
 import { useHasPermission } from "../../lib/permissions";
+import { useFamilyAllowanceTargets } from "../../lib/allowance";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -31,6 +32,10 @@ export default function Parent() {
   const [payoutRan, setPayoutRan] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Allowance config — de-hardcoded from seedData.ALLOWANCE.
+  // earned is 0 until the payout ledger is built (TODO).
+  const { rows: allowanceRows, loading: allowanceLoading } = useFamilyAllowanceTargets();
 
   useEffect(() => {
     fetchMembers()
@@ -166,23 +171,31 @@ export default function Parent() {
             <Text style={shared.cardTitle}>Allowance this week</Text>
             <Text style={shared.cardAction}> </Text>
           </View>
-          {ALLOWANCE.map((a) => {
-            const m = getMember(a.memberId)!;
-            const pct = a.max === 0 ? 0 : Math.round((a.earned / a.max) * 100);
-            const color = pct === 100 ? colors.green : pct >= 50 ? colors.amber : colors.red;
-            return (
-              <View key={a.memberId} style={styles.kidRow}>
-                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
-                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+          {allowanceLoading ? (
+            <ActivityIndicator size="small" color={colors.purple} />
+          ) : allowanceRows.length === 0 ? (
+            <Text style={styles.emptyText}>No allowance data yet.</Text>
+          ) : (
+            allowanceRows.map((a) => {
+              const pct = a.max === 0 ? 0 : Math.round((a.earned / a.max) * 100);
+              const barColor = pct === 100 ? colors.green : pct >= 50 ? colors.amber : colors.red;
+              const initials = a.member.first_name.slice(0, 2).toUpperCase();
+              return (
+                <View key={a.member.id} style={styles.kidRow}>
+                  <View style={[styles.av, { backgroundColor: colors.avPurpleBg }]}>
+                    <Text style={[styles.avText, { color: colors.avPurpleText }]}>{initials}</Text>
+                  </View>
+                  <Text style={styles.kidName}>{a.member.first_name}</Text>
+                  <View style={styles.bar}>
+                    <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: barColor }]} />
+                  </View>
+                  <Text style={[styles.allowanceAmount, { color: barColor }]}>
+                    ${a.earned} / ${a.max}
+                  </Text>
                 </View>
-                <Text style={styles.kidName}>{m.firstName}</Text>
-                <View style={styles.bar}><View style={[styles.barFill, { width: `${pct}%` }]} /></View>
-                <Text style={[styles.allowanceAmount, { color }]}>
-                  ${a.earned} / ${a.max}
-                </Text>
-              </View>
-            );
-          })}
+              );
+            })
+          )}
         </View>
 
         <View style={shared.card}>
@@ -272,6 +285,7 @@ const styles = StyleSheet.create({
   hwMeta: { flex: 1, fontSize: 11, color: colors.muted, fontFamily: fonts.body },
   bar: { flex: 1, height: 5, backgroundColor: colors.border, borderRadius: 3, overflow: "hidden" },
   barFill: { height: "100%", backgroundColor: colors.green, borderRadius: 3 },
+  emptyText: { fontSize: 13, color: colors.muted, fontFamily: fonts.body },
   allowanceAmount: { fontSize: 12, fontFamily: fonts.mono, fontWeight: "500" },
   rank: { width: 18, textAlign: "center", fontSize: 11, color: colors.muted, fontFamily: fonts.body },
   pointsText: { fontSize: 11, color: colors.text, fontFamily: fonts.mono },
