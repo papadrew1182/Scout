@@ -149,7 +149,7 @@ export default function MealsThisWeek() {
 const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
   weekGrid: { flexDirection: "row", gap: 6, marginTop: 4 },
-  dayCol: { flex: 1, alignItems: "center", gap: 4 },
+  dayCol: { flex: 1, minWidth: 0, alignItems: "center", gap: 4 },
   dayLabel: { fontSize: 10, color: colors.muted, fontWeight: "500", fontFamily: fonts.body },
   cell: {
     width: "100%",
