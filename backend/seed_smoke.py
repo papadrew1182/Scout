@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
+from app.models.access import RoleTier, RoleTierOverride
 from app.models.foundation import Family, FamilyMember, UserAccount, Session
 from app.models.grocery import GroceryItem, PurchaseRequest
 from app.models.life_management import ChoreTemplate, TaskInstance
@@ -93,6 +94,52 @@ def seed_smoke():
 
     ensure_account(andrew, ADULT_EMAIL)
     ensure_account(sadie, CHILD_EMAIL)
+    db.commit()
+
+    # --- Role tier assignments ---
+    # Ensure tier rows exist (migration 024 seeds them, but seed_smoke may run
+    # on a fresh DB that skips migrations). We upsert the tiers defensively.
+    def ensure_tier(name: str, description: str) -> RoleTier:
+        t = db.scalars(select(RoleTier).where(RoleTier.name == name)).first()
+        if not t:
+            t = RoleTier(name=name, description=description, permissions={}, behavior_config={})
+            db.add(t)
+            db.flush()
+        return t
+
+    admin_tier    = ensure_tier("admin",    "Full household administrator")
+    teen_tier     = ensure_tier("teen",     "Older child with self-scoped write access")
+    child_tier    = ensure_tier("child",    "School-age child with chore + request permissions")
+    kid_tier      = ensure_tier("kid",      "Young child with chore completion and grocery requests only")
+    db.commit()
+
+    tier_map = {
+        andrew.id: admin_tier,
+        sally.id:  admin_tier,
+        tyler.id:  teen_tier,
+        sadie.id:  teen_tier,
+        townes.id: child_tier,
+    }
+
+    def ensure_tier_override(member: FamilyMember, tier: RoleTier):
+        existing = db.scalars(
+            select(RoleTierOverride).where(RoleTierOverride.family_member_id == member.id)
+        ).first()
+        if not existing:
+            db.add(RoleTierOverride(
+                family_member_id=member.id,
+                role_tier_id=tier.id,
+                override_permissions={},
+                override_behavior={},
+            ))
+            db.flush()
+            print(f"  Assigned tier '{tier.name}' to {member.first_name}")
+
+    for member, tier in tier_map.items():
+        ensure_tier_override(
+            db.scalars(select(FamilyMember).where(FamilyMember.id == member)).first(),
+            tier,
+        )
     db.commit()
 
     # --- Current-week meal plan (kept in DRAFT state for smoke tests) ---
