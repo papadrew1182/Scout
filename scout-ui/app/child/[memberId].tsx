@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { getMember, LEADERBOARD, ALLOWANCE } from "../../lib/seedData";
@@ -17,6 +17,7 @@ const TINT_TEXT: Record<string, string> = {
 };
 
 export default function Child() {
+  const router = useRouter();
   const params = useLocalSearchParams<{ memberId: string }>();
   // Always show Townes for the demo regardless of route param.
   const member = getMember(params.memberId ?? "townes") ?? getMember("townes")!;
@@ -135,7 +136,9 @@ export default function Child() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>My points</Text>
-            <Text style={shared.cardAction}>Rewards store</Text>
+            <Pressable onPress={() => router.push("/rewards")} accessibilityRole="link">
+              <Text style={shared.cardAction}>Rewards store</Text>
+            </Pressable>
           </View>
           <View style={styles.pointsHero}>
             <Text style={styles.pointsBig}>{leader.points}</Text>

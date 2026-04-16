@@ -1,5 +1,6 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
+import { useState } from "react";
 
 import { colors, fonts } from "../lib/styles";
 import { useIsDesktop } from "../lib/breakpoint";
@@ -27,6 +28,7 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
   const pathname = usePathname();
   const isDesktop = useIsDesktop();
   const { logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -54,7 +56,7 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
           })}
         </View>
       ) : (
-        <Pressable style={styles.menuBtn} onPress={onMenuPress} accessibilityRole="button" accessibilityLabel="Open menu">
+        <Pressable style={styles.menuBtn} onPress={() => { setMenuOpen(true); onMenuPress?.(); }} accessibilityRole="button" accessibilityLabel="Open menu">
           <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
       )}
@@ -74,6 +76,43 @@ export function NavBar({ onScoutPress, onMenuPress, pillLabel = "Scout AI" }: Na
         <View style={styles.pillDot} />
         <Text style={styles.pillText}>{pillLabel}</Text>
       </Pressable>
+
+      {!isDesktop && (
+        <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+          <Pressable
+            style={styles.menuBackdrop}
+            onPress={() => setMenuOpen(false)}
+            accessibilityLabel="Close menu"
+            accessibilityRole="button"
+          >
+            <View style={styles.menuSheet} onStartShouldSetResponder={() => true}>
+              {LINKS.map((l) => {
+                const active = isActive(l.href);
+                return (
+                  <Pressable
+                    key={l.href}
+                    style={[styles.menuItem, active && styles.menuItemActive]}
+                    onPress={() => { setMenuOpen(false); router.push(l.href as any); }}
+                    accessibilityRole="link"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={[styles.menuItemText, active && styles.menuItemTextActive]}>{l.label}</Text>
+                  </Pressable>
+                );
+              })}
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => { setMenuOpen(false); logout(); }}
+                accessibilityRole="button"
+                accessibilityLabel="Sign out"
+              >
+                <Text style={[styles.menuItemText, { color: colors.red }]}>Sign out</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -133,5 +172,41 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "rgba(255,255,255,0.55)",
     fontFamily: fonts.body,
+  },
+
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "flex-start",
+  },
+  menuSheet: {
+    backgroundColor: colors.sidebar,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+  },
+  menuItem: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+  },
+  menuItemActive: {
+    backgroundColor: "rgba(108,99,255,0.25)",
+  },
+  menuItemText: {
+    fontSize: 14,
+    color: "rgba(255,255,255,0.85)",
+    fontFamily: fonts.body,
+    fontWeight: "500",
+  },
+  menuItemTextActive: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    marginVertical: 6,
+    marginHorizontal: 20,
   },
 });

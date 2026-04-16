@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
@@ -11,9 +11,10 @@ interface Props {
   visible: boolean;
   onClose: () => void;
   surface: ScoutSurface;
+  initialPrompt?: string | null;
 }
 
-export function ScoutSheet({ visible, onClose, surface }: Props) {
+export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) {
   const [thread, setThread] = useState<Turn[]>(() =>
     SAMPLE_THREAD.flatMap((t) => [
       { role: "user", content: t.user } as Turn,
@@ -22,6 +23,7 @@ export function ScoutSheet({ visible, onClose, surface }: Props) {
   );
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
+  const lastSentRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -38,6 +40,14 @@ export function ScoutSheet({ visible, onClose, surface }: Props) {
       });
     return () => { cancelled = true; };
   }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !initialPrompt || readyState !== "ok") return;
+    // Send the prompt once — track with a ref to avoid double-fire
+    if (lastSentRef.current === initialPrompt) return;
+    lastSentRef.current = initialPrompt;
+    send(initialPrompt);
+  }, [visible, initialPrompt, readyState]);
 
   const send = async (text: string) => {
     const trimmed = text.trim();

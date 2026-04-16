@@ -2,6 +2,7 @@ import { ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
 import { useEffect, useState } from "react";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { ACTION_INBOX, HOMEWORK, ALLOWANCE, LEADERBOARD, getMember } from "../../lib/seedData";
 import { createWeeklyPayout, fetchMembers, PayoutError } from "../../lib/api";
 import { calculatePayout } from "../../lib/constants";
@@ -23,6 +24,7 @@ const INBOX_TONE: Record<string, { bg: string; fg: string; label: string }> = {
 };
 
 export default function Parent() {
+  const isDesktop = useIsDesktop();
   const [children, setChildren] = useState<FamilyMember[]>([]);
   const [payoutRan, setPayoutRan] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState<string | null>(null);
@@ -109,7 +111,7 @@ export default function Parent() {
         </Text>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Action inbox</Text>
@@ -154,11 +156,11 @@ export default function Parent() {
         </View>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Allowance this week</Text>
-            <Text style={shared.cardAction}>Manage</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {ALLOWANCE.map((a) => {
             const m = getMember(a.memberId)!;
@@ -234,6 +236,7 @@ const styles = StyleSheet.create({
   alertText:  { fontSize: 12, lineHeight: 16, fontFamily: fonts.body },
 
   grid2: { flexDirection: "row", gap: 12 },
+  grid2Stack: { flexDirection: "column" },
 
   countBadge: { backgroundColor: colors.red, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
   countBadgeText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700", fontFamily: fonts.body },

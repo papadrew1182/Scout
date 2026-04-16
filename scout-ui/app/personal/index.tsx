@@ -1,6 +1,7 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { PERSONAL_TASKS, RECENT_NOTES, BILLS, CALENDAR_EVENTS } from "../../lib/seedData";
 
 const DAYS = [
@@ -24,17 +25,18 @@ const BILL_TONE = {
 } as const;
 
 export default function Personal() {
+  const isDesktop = useIsDesktop();
   const totalDue = BILLS.filter((b) => b.status !== "paid").reduce((s, b) => s + b.amount, 0);
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <Text style={styles.h1}>Andrew's Dashboard</Text>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Calendar · This week</Text>
-            <Text style={shared.cardAction}>Add event</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           <View style={styles.calRow}>
             {DAYS.map((d) => (
@@ -59,7 +61,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Top 5 tasks</Text>
-            <Text style={shared.cardAction}>All tasks</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {PERSONAL_TASKS.map((t) => (
             <View key={t.title} style={styles.taskRow}>
@@ -73,11 +75,11 @@ export default function Personal() {
         </View>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Recent notes</Text>
-            <Text style={shared.cardAction}>New note</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {RECENT_NOTES.map((n) => (
             <View key={n.title} style={styles.noteRow}>
@@ -91,7 +93,7 @@ export default function Personal() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Bills</Text>
-            <Text style={shared.cardAction}>All bills</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {BILLS.map((b) => {
             const tone = BILL_TONE[b.status];
@@ -133,6 +135,7 @@ const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
   h1: { fontSize: 22, fontWeight: "600", color: colors.text, fontFamily: fonts.body },
   grid2: { flexDirection: "row", gap: 12 },
+  grid2Stack: { flexDirection: "column" },
 
   calRow: { flexDirection: "row", marginBottom: 10 },
   calDay: { flex: 1, alignItems: "center", gap: 4 },

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, fonts, shared } from "../../lib/styles";
+import { useIsDesktop } from "../../lib/breakpoint";
 import { MEALS_THIS_WEEK, BATCH_COOK, FAMILY } from "../../lib/seedData";
 import { approveWeeklyPlan, fetchCurrentWeeklyPlan } from "../../lib/api";
 import type { WeeklyMealPlan } from "../../lib/types";
@@ -20,6 +21,7 @@ const DIETARY_TONE: Record<string, "purple" | "green" | "amber"> = {
 };
 
 export default function MealsThisWeek() {
+  const isDesktop = useIsDesktop();
   const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -82,7 +84,7 @@ export default function MealsThisWeek() {
       <View style={shared.card}>
         <View style={shared.cardTitleRow}>
           <Text style={shared.cardTitle}>Week of Apr 13–19</Text>
-          <Text style={shared.cardAction}>Edit plan</Text>
+          <Text style={shared.cardAction}> </Text>
         </View>
         <View style={styles.weekGrid}>
           {MEALS_THIS_WEEK.map((m) => (
@@ -97,11 +99,11 @@ export default function MealsThisWeek() {
         </View>
       </View>
 
-      <View style={styles.grid2}>
+      <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Sunday batch cook</Text>
-            <Text style={shared.cardAction}>Edit</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {BATCH_COOK.map((b) => (
             <View key={b.name} style={styles.batchRow}>
@@ -117,7 +119,7 @@ export default function MealsThisWeek() {
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Dietary notes</Text>
-            <Text style={shared.cardAction}>Edit</Text>
+            <Text style={shared.cardAction}> </Text>
           </View>
           {FAMILY.slice(0, 5).map((m) => {
             const tone = DIETARY_TONE[m.dietary ?? "No restrictions"] ?? "purple";
@@ -147,7 +149,7 @@ export default function MealsThisWeek() {
 const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
   weekGrid: { flexDirection: "row", gap: 6, marginTop: 4 },
-  dayCol: { flex: 1, alignItems: "center", gap: 4 },
+  dayCol: { flex: 1, minWidth: 0, alignItems: "center", gap: 4 },
   dayLabel: { fontSize: 10, color: colors.muted, fontWeight: "500", fontFamily: fonts.body },
   cell: {
     width: "100%",
@@ -163,6 +165,7 @@ const styles = StyleSheet.create({
   cellNote: { fontSize: 10, color: colors.muted, fontFamily: fonts.body },
 
   grid2: { flexDirection: "row", gap: 12 },
+  grid2Stack: { flexDirection: "column" },
 
   batchRow: {
     flexDirection: "row",
