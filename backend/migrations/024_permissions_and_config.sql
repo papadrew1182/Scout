@@ -35,6 +35,12 @@ ALTER TABLE public.role_tiers
 ALTER TABLE public.role_tiers
     ADD COLUMN IF NOT EXISTS description TEXT;
 
+-- Re-create the scout.role_tiers view so it picks up the new description
+-- column. Postgres expands SELECT * at view-creation time, so adding a
+-- column to public.role_tiers after the view exists does NOT update the
+-- view's column list. Re-creating the view is the explicit refresh.
+CREATE OR REPLACE VIEW scout.role_tiers AS SELECT * FROM public.role_tiers;
+
 -- =============================================================================
 -- 2. Extend role_tier_overrides
 -- =============================================================================
@@ -74,6 +80,11 @@ DROP TRIGGER IF EXISTS trg_role_tier_overrides_updated_at ON public.role_tier_ov
 CREATE TRIGGER trg_role_tier_overrides_updated_at
     BEFORE UPDATE ON public.role_tier_overrides
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Re-create the scout.role_tier_overrides view so it picks up the new
+-- updated_at column (same reason as above — SELECT * is expanded at
+-- view-creation time).
+CREATE OR REPLACE VIEW scout.role_tier_overrides AS SELECT * FROM public.role_tier_overrides;
 
 -- =============================================================================
 -- 3. family_config — per-family key/value config store (new table)
