@@ -1,4 +1,4 @@
-from app.models.access import RoleTier, RoleTierOverride
+from app.models.access import FamilyConfig, MemberConfig, RoleTier, RoleTierOverride
 from app.models.action_items import ParentActionItem
 from app.models.ai import AIConversation, AIMessage, AIToolAudit
 from app.models.calendar import Event, EventAttendee
@@ -33,6 +33,8 @@ __all__ = [
     "Session",
     "RoleTier",
     "RoleTierOverride",
+    "FamilyConfig",
+    "MemberConfig",
     "ConnectorConfig",
     "ConnectorMapping",
     "Routine",

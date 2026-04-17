@@ -3,8 +3,11 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
-import { GROCERY } from "../../lib/seedData";
+import { useFamilyConfig } from "../../lib/config";
+import type { GroceryStoreConfig } from "../../lib/grocery";
+import { DEFAULT_STORE_CONFIG } from "../../lib/grocery";
 import {
+  fetchGroceryItems,
   fetchPendingReviewItems,
   fetchPurchaseRequests,
   updateGroceryItem,
@@ -13,9 +16,13 @@ import {
 } from "../../lib/api";
 import type { GroceryItem, PurchaseRequest } from "../../lib/types";
 import { ReceiptCaptureButton } from "../../components/ReceiptCaptureButton";
+import { useHasPermission } from "../../lib/permissions";
 
 export default function Grocery() {
   const isDesktop = useIsDesktop();
+  const canApproveGrocery = useHasPermission("grocery.approve");
+  const canApprovePurchase = useHasPermission("purchase_request.approve");
+  const [items, setItems] = useState<GroceryItem[]>([]);
   const [pending, setPending] = useState<GroceryItem[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -24,12 +31,20 @@ export default function Grocery() {
   const [addStore, setAddStore] = useState("");
   const [addBusy, setAddBusy] = useState(false);
 
+  // Configured store list — replaces the hardcoded GROCERY from seedData
+  const { value: storeConfig } = useFamilyConfig<GroceryStoreConfig>(
+    "grocery.stores",
+    DEFAULT_STORE_CONFIG,
+  );
+
   const load = async () => {
     try {
-      const [p, r] = await Promise.all([
+      const [allItems, p, r] = await Promise.all([
+        fetchGroceryItems(),
         fetchPendingReviewItems(),
         fetchPurchaseRequests("pending"),
       ]);
+      setItems(allItems);
       setPending(p);
       setRequests(r);
     } catch (e: any) {
@@ -82,6 +97,52 @@ export default function Grocery() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Build per-store cards from configured stores + backend items
+  // ---------------------------------------------------------------------------
+
+  // Group items by preferred_store (case-insensitive match against store name)
+  const buildStoreCards = () => {
+    const configuredStores = storeConfig.stores;
+
+    // Fallback: if no stores configured, render a single catch-all card
+    if (configuredStores.length === 0) {
+      return [{ storeId: "all", storeName: "Grocery", storeItems: items }];
+    }
+
+    // Build a lookup: normalized store name → items
+    const byStore = new Map<string, GroceryItem[]>();
+    for (const store of configuredStores) {
+      byStore.set(store.name.toLowerCase(), []);
+    }
+
+    // Assign each item to a store card; unmatched items go to a catch-all bucket
+    const unmatched: GroceryItem[] = [];
+    for (const item of items) {
+      const key = (item.preferred_store ?? "").toLowerCase().trim();
+      if (key && byStore.has(key)) {
+        byStore.get(key)!.push(item);
+      } else {
+        unmatched.push(item);
+      }
+    }
+
+    const cards = configuredStores.map((store) => ({
+      storeId: store.id,
+      storeName: store.name,
+      storeItems: byStore.get(store.name.toLowerCase()) ?? [],
+    }));
+
+    // If there are unmatched items append an "Other" card
+    if (unmatched.length > 0) {
+      cards.push({ storeId: "other", storeName: "Other", storeItems: unmatched });
+    }
+
+    return cards;
+  };
+
+  const storeCards = buildStoreCards();
+
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
@@ -109,14 +170,16 @@ export default function Grocery() {
           pending.map((item) => (
             <View key={item.id} style={styles.reviewRow}>
               <Text style={styles.reviewName}>{item.title}</Text>
-              <Pressable
-                style={styles.btnPrimary}
-                onPress={() => handleApprove(item)}
-                accessibilityRole="button"
-                accessibilityLabel={`Approve ${item.title}`}
-              >
-                <Text style={styles.btnPrimaryText}>Approve</Text>
-              </Pressable>
+              {canApproveGrocery && (
+                <Pressable
+                  style={styles.btnPrimary}
+                  onPress={() => handleApprove(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Approve ${item.title}`}
+                >
+                  <Text style={styles.btnPrimaryText}>Approve</Text>
+                </Pressable>
+              )}
             </View>
           ))
         )}
@@ -133,14 +196,16 @@ export default function Grocery() {
           requests.map((req) => (
             <View key={req.id} style={styles.reviewRow}>
               <Text style={styles.reviewName}>{req.title}</Text>
-              <Pressable
-                style={styles.btnPrimary}
-                onPress={() => handleConvert(req)}
-                accessibilityRole="button"
-                accessibilityLabel={`Add ${req.title} to list`}
-              >
-                <Text style={styles.btnPrimaryText}>Add to List</Text>
-              </Pressable>
+              {canApprovePurchase && (
+                <Pressable
+                  style={styles.btnPrimary}
+                  onPress={() => handleConvert(req)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add ${req.title} to list`}
+                >
+                  <Text style={styles.btnPrimaryText}>Add to List</Text>
+                </Pressable>
+              )}
             </View>
           ))
         )}
@@ -196,41 +261,33 @@ export default function Grocery() {
         </View>
       </Modal>
 
+      {/* Per-store cards — driven by grocery.stores config */}
       <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
-        {GROCERY.map((store) => {
-          const sections: Record<string, typeof store.items> = {};
-          store.items.forEach((i) => {
-            (sections[i.section] ||= []).push(i);
-          });
-          return (
-            <View key={store.name} style={shared.card}>
-              <View style={shared.cardTitleRow}>
-                <Text style={shared.cardTitle}>{store.name}</Text>
-                <Text style={styles.itemCount}>{store.items.length} items</Text>
-              </View>
-              {Object.entries(sections).map(([section, items]) => (
-                <View key={section}>
-                  <Text style={shared.sectionHead}>{section}</Text>
-                  {items.map((i) => (
-                    <View key={i.name} style={styles.itemRow}>
-                      <View style={[styles.check, i.done && styles.checkDone]}>
-                        {i.done && <Text style={styles.checkMark}>✓</Text>}
-                      </View>
-                      <Text style={[styles.itemName, i.done && { color: colors.muted, textDecorationLine: "line-through" }]}>
-                        {i.name}
-                      </Text>
-                      {i.requestedBy && (
-                        <View style={styles.reqTag}>
-                          <Text style={styles.reqTagText}>{i.requestedBy}'s request</Text>
-                        </View>
-                      )}
-                    </View>
-                  ))}
-                </View>
-              ))}
+        {storeCards.map((card) => (
+          <View key={card.storeId} style={shared.card}>
+            <View style={shared.cardTitleRow}>
+              <Text style={shared.cardTitle}>{card.storeName}</Text>
+              <Text style={styles.itemCount}>{card.storeItems.length} items</Text>
             </View>
-          );
-        })}
+            {card.storeItems.length === 0 ? (
+              <Text style={styles.emptyText}>No items for this store yet.</Text>
+            ) : (
+              card.storeItems.map((item) => (
+                <View key={item.id} style={styles.itemRow}>
+                  <View style={styles.check}>
+                    {/* approval_status "purchased" could show checkmark in future */}
+                  </View>
+                  <Text style={styles.itemName}>{item.title}</Text>
+                  {item.category && (
+                    <View style={styles.catTag}>
+                      <Text style={styles.catTagText}>{item.category}</Text>
+                    </View>
+                  )}
+                </View>
+              ))
+            )}
+          </View>
+        ))}
       </View>
     </ScrollView>
   );
@@ -250,14 +307,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   btnPrimaryText: { color: "#FFFFFF", fontSize: 12, fontWeight: "500", fontFamily: fonts.body },
-  btnGhost: {
-    borderWidth: 1,
-    borderColor: colors.purpleMid,
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  btnGhostText: { color: colors.purple, fontSize: 12, fontWeight: "500", fontFamily: fonts.body },
 
   alert: {
     backgroundColor: colors.amberBg,
@@ -283,11 +332,9 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   check: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
-  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
-  checkMark: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
   itemName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
-  reqTag: { backgroundColor: colors.amberBg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  reqTagText: { fontSize: 9, color: colors.amberText, fontWeight: "700", fontFamily: fonts.body },
+  catTag: { backgroundColor: colors.purpleLight, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  catTagText: { fontSize: 9, color: colors.purpleDeep, fontWeight: "700", fontFamily: fonts.body },
 
   reviewRow: {
     flexDirection: "row",

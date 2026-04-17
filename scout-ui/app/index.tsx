@@ -1,11 +1,31 @@
+import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 
 import { colors, fonts, shared } from "../lib/styles";
 import { useIsDesktop } from "../lib/breakpoint";
 import {
-  CHORES_TODAY, MEALS_THIS_WEEK, GROCERY, ACTIVITY, getMember,
+  fetchCurrentWeeklyPlan,
+  fetchGroceryItems,
+} from "../lib/api";
+import {
+  CHORES_TODAY,
+  ACTIVITY,
+  getMember,
 } from "../lib/seedData";
+import type { WeeklyMealPlan, GroceryItem } from "../lib/types";
+
+// ---------------------------------------------------------------------------
+// TODO: Kids · Today — done-counts are still sourced from seedData (CHORES_TODAY).
+//   compute done from task_instances API — e.g. fetchTaskInstances(today)
+//   filtered per kid and counted. Left as seed data for now to preserve visual
+//   demo while flagging the debt.
+//   The TOTAL count could also be read from useFamilyChoreRoutines() once
+//   member IDs are aligned between seed and live backend.
+//
+// TODO: Family activity — still sourced from seedData (ACTIVITY).
+//   source activity from action_items API + task_instance completion events.
+// ---------------------------------------------------------------------------
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -17,11 +37,63 @@ const ACTIVITY_TINT: Record<string, string> = {
   green: colors.green, purple: colors.purple, amber: colors.amber, teal: colors.teal, red: colors.red,
 };
 
+// ---------------------------------------------------------------------------
+// Build the 7-day meals grid from a real WeeklyMealPlan
+// ---------------------------------------------------------------------------
+
+const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+const DAY_LABELS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
+
+function buildMealsWeek(plan: WeeklyMealPlan | null) {
+  const today = new Date();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+
+  return DAY_KEYS.map((key, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const isToday = d.toDateString() === today.toDateString();
+    const title = plan?.week_plan?.dinners?.[key]?.title ?? null;
+    return { day: DAY_LABELS[i], name: title ?? "—", isToday };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
 export default function Dashboard() {
   const router = useRouter();
   const isDesktop = useIsDesktop();
-  // Costco grocery for the dashboard preview (limit to 6 items)
-  const previewGrocery = GROCERY[0].items.slice(0, 6);
+
+  // ---- Meals · This week — real data via fetchCurrentWeeklyPlan ----
+  const [mealPlan, setMealPlan] = useState<WeeklyMealPlan | null>(null);
+  const [mealPlanMissing, setMealPlanMissing] = useState(false);
+
+  useEffect(() => {
+    fetchCurrentWeeklyPlan()
+      .then((plan) => setMealPlan(plan))
+      .catch(() => setMealPlanMissing(true));
+  }, []);
+
+  const mealsWeek = buildMealsWeek(mealPlan);
+
+  // ---- Grocery preview — real data via fetchGroceryItems ----
+  const [groceryItems, setGroceryItems] = useState<GroceryItem[]>([]);
+  const [groceryLoaded, setGroceryLoaded] = useState(false);
+
+  useEffect(() => {
+    fetchGroceryItems()
+      .then((items) => {
+        // Top 6 unpurchased items
+        setGroceryItems(items.filter((i) => !i.is_purchased).slice(0, 6));
+        setGroceryLoaded(true);
+      })
+      .catch(() => {
+        setGroceryItems([]);
+        setGroceryLoaded(true);
+      });
+  }, []);
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
@@ -37,6 +109,7 @@ export default function Dashboard() {
       </View>
 
       <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
+        {/* ---- Kids · Today (done counts from seed; total from seed; TODO: task_instances API) ---- */}
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Kids · Today</Text>
@@ -64,6 +137,7 @@ export default function Dashboard() {
           })}
         </View>
 
+        {/* ---- Meals · This week (real data from fetchCurrentWeeklyPlan) ---- */}
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Meals · This week</Text>
@@ -71,25 +145,32 @@ export default function Dashboard() {
               <Text style={shared.cardAction}>Full plan</Text>
             </Pressable>
           </View>
-          <View style={styles.mealGrid}>
-            {MEALS_THIS_WEEK.map((m) => (
-              <View key={m.day} style={styles.mealCol}>
-                <Text style={[styles.mealDay, m.isToday && { color: colors.purple, fontWeight: "700" }]}>{m.day}</Text>
-                <View style={[styles.mealCell, m.isToday && styles.mealCellToday]}>
-                  <Text style={[styles.mealName, m.isToday && { color: colors.purpleDeep, fontWeight: "500" }]}>{m.name}</Text>
-                </View>
+          {mealPlanMissing ? (
+            <Text style={styles.emptyText}>No plan yet — generate one on Meals.</Text>
+          ) : (
+            <>
+              <View style={styles.mealGrid}>
+                {mealsWeek.map((m) => (
+                  <View key={m.day} style={styles.mealCol}>
+                    <Text style={[styles.mealDay, m.isToday && { color: colors.purple, fontWeight: "700" }]}>{m.day}</Text>
+                    <View style={[styles.mealCell, m.isToday && styles.mealCellToday]}>
+                      <Text style={[styles.mealName, m.isToday && { color: colors.purpleDeep, fontWeight: "500" }]}>{m.name}</Text>
+                    </View>
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-          <View style={styles.statRow}>
-            <Stat n="7" label="Dinners" />
-            <Stat n="4" label="Batch items" />
-            <Stat n="2" label="Costco runs" />
-          </View>
+              <View style={styles.statRow}>
+                <Stat n="7" label="Dinners" />
+                <Stat n="4" label="Batch items" />
+                <Stat n="2" label="Costco runs" />
+              </View>
+            </>
+          )}
         </View>
       </View>
 
       <View style={[styles.grid2, !isDesktop && styles.grid2Stack]}>
+        {/* ---- Grocery preview (real data from fetchGroceryItems, top 6 unpurchased) ---- */}
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Grocery · This week</Text>
@@ -97,16 +178,26 @@ export default function Dashboard() {
               <Text style={shared.cardAction}>Full list</Text>
             </Pressable>
           </View>
-          <Text style={shared.sectionHead}>Produce</Text>
-          {previewGrocery.filter((i) => i.section === "Produce").map((i) => (
-            <CheckRow key={i.name} done={i.done}>{i.name}</CheckRow>
-          ))}
-          <Text style={shared.sectionHead}>Protein</Text>
-          {previewGrocery.filter((i) => i.section === "Protein").map((i) => (
-            <CheckRow key={i.name} done={i.done}>{i.name}</CheckRow>
-          ))}
+          {groceryLoaded && groceryItems.length === 0 ? (
+            <Text style={styles.emptyText}>No grocery items — add some on the Grocery page.</Text>
+          ) : (
+            <>
+              {/* Group top-6 unpurchased items by category */}
+              {Array.from(new Set(groceryItems.map((i) => i.category ?? "Other"))).map((section) => (
+                <View key={section}>
+                  <Text style={shared.sectionHead}>{section}</Text>
+                  {groceryItems
+                    .filter((i) => (i.category ?? "Other") === section)
+                    .map((i) => (
+                      <CheckRow key={i.id} done={i.is_purchased}>{i.title}</CheckRow>
+                    ))}
+                </View>
+              ))}
+            </>
+          )}
         </View>
 
+        {/* ---- Family activity (seed data — TODO: source from action_items API) ---- */}
         <View style={shared.card}>
           <View style={shared.cardTitleRow}>
             <Text style={shared.cardTitle}>Family activity</Text>
@@ -126,6 +217,10 @@ export default function Dashboard() {
     </ScrollView>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
 
 function Stat({ n, label, tone }: { n: string; label: string; tone?: "amber" }) {
   return (
@@ -162,6 +257,10 @@ function CheckRow({ done, children }: { done: boolean; children: string }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
 const styles = StyleSheet.create({
   content: { padding: 20, gap: 14, paddingBottom: 48 },
   greetRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
@@ -175,6 +274,8 @@ const styles = StyleSheet.create({
 
   grid2: { flexDirection: "row", gap: 12 },
   grid2Stack: { flexDirection: "column" },
+
+  emptyText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body, paddingVertical: 8 },
 
   kidRow: {
     flexDirection: "row",

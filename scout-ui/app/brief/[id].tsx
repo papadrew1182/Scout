@@ -18,6 +18,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { fetchActionItem, resolveActionItem } from "../../lib/api";
+import { useHasPermission } from "../../lib/permissions";
 import { shared, colors } from "../../lib/styles";
 
 interface ActionItemDetail {
@@ -39,6 +40,7 @@ export default function BriefDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const canResolve = useHasPermission("action_items.resolve");
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -119,7 +121,7 @@ export default function BriefDetailPage() {
         </Text>
       </View>
 
-      {item.status === "pending" && (
+      {item.status === "pending" && canResolve && (
         <Pressable
           style={[shared.button, { marginTop: 16 }]}
           onPress={markDone}

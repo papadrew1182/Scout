@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import Base
+from app.models.access import RoleTier, RoleTierOverride
 from app.models.foundation import Family, FamilyMember
 
 
@@ -46,19 +47,47 @@ def seed():
     print(f"Created family: {family.name} (id={family.id})")
 
     # Create members
-    members = [
+    members_data = [
         FamilyMember(family_id=family.id, first_name="Andrew", last_name="Roberts", role="adult", birthdate=date(1985, 6, 14)),
         FamilyMember(family_id=family.id, first_name="Sally", last_name="Roberts", role="adult", birthdate=date(1987, 3, 22)),
         FamilyMember(family_id=family.id, first_name="Sadie", last_name="Roberts", role="child", birthdate=date(2012, 9, 10)),
         FamilyMember(family_id=family.id, first_name="Townes", last_name="Roberts", role="child", birthdate=date(2015, 11, 28)),
         FamilyMember(family_id=family.id, first_name="Tyler", last_name="Roberts", role="child", birthdate=date(2017, 7, 4)),
     ]
-    db.add_all(members)
+    db.add_all(members_data)
     db.commit()
 
-    for m in members:
+    for m in members_data:
         db.refresh(m)
         print(f"  Created member: {m.first_name} ({m.role}, id={m.id})")
+
+    # Assign role tiers (migration 024 seeds the tier rows; if running seed.py
+    # outside of migrations context the tiers may not exist yet — skip silently).
+    tier_name_map = {
+        "Andrew": "admin",
+        "Sally":  "admin",
+        "Tyler":  "teen",
+        "Sadie":  "teen",
+        "Townes": "child",
+    }
+    for m in members_data:
+        tier_name = tier_name_map.get(m.first_name)
+        if not tier_name:
+            continue
+        tier = db.scalars(select(RoleTier).where(RoleTier.name == tier_name)).first()
+        if not tier:
+            print(f"  Skipping tier assignment for {m.first_name}: tier '{tier_name}' not found (run migration 024 first)")
+            continue
+        existing = db.scalars(select(RoleTierOverride).where(RoleTierOverride.family_member_id == m.id)).first()
+        if not existing:
+            db.add(RoleTierOverride(
+                family_member_id=m.id,
+                role_tier_id=tier.id,
+                override_permissions={},
+                override_behavior={},
+            ))
+            print(f"  Assigned tier '{tier_name}' to {m.first_name}")
+    db.commit()
 
     db.close()
     print("\nSeed complete. Run bootstrap to create the first login account:")

@@ -42,17 +42,10 @@ def parent_dashboard_insight(
     Cached per day. Fallback to a rule-based sentence if AI fails.
     Called as a parallel request by the frontend so the main dashboard
     render is not blocked on a Claude round-trip."""
-    from fastapi import HTTPException, status as http_status
     from app.ai.insights import get_off_track_insight
-    from app.models.foundation import FamilyMember
 
     actor.require_family(family_id)
-    member = db.get(FamilyMember, actor.member_id)
-    if not member or member.role != "adult":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Parent insight requires adult role",
-        )
+    actor.require_permission("dashboard.view_parent")
 
     # Recompute the rule engine data inline using the existing service
     # so insights can never drift from the source-of-truth banner.
@@ -128,17 +121,10 @@ def homework_summary_route(
 ):
     """Parent-facing homework rollup. Adult-only — kids don't see
     their own activity aggregated this way."""
-    from fastapi import HTTPException, status as http_status
     from app.ai.homework import homework_summary
-    from app.models.foundation import FamilyMember as _FM
 
     actor.require_family(family_id)
-    member = db.get(_FM, actor.member_id)
-    if not member or member.role != "adult":
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Homework summary is adult-only",
-        )
+    actor.require_permission("dashboard.view_parent")
     return homework_summary(db, family_id=family_id, days=days)
 
 
@@ -153,6 +139,7 @@ def resolve_action_item(
     from app.models.action_items import ParentActionItem
 
     actor.require_family(family_id)
+    actor.require_permission("action_items.resolve")
     item = db.get(ParentActionItem, item_id)
     if not item or item.family_id != family_id:
         raise HTTPException(status_code=404, detail="Action item not found")

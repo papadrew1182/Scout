@@ -966,3 +966,140 @@ export async function deleteFamilyMemory(memoryId: string): Promise<void> {
   }
   if (!res.ok) throw new Error(`Delete failed (${res.status})`);
 }
+
+// ---------------------------------------------------------------------------
+// Permissions (control plane)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the current actor's effective permissions dict from the server.
+ * Returns {permission_key: boolean} for every key the actor holds.
+ * Requires authentication; every user may call this for themselves.
+ */
+export function fetchMyPermissions(): Promise<Record<string, boolean>> {
+  return get(`${API_BASE_URL}/admin/permissions/me`);
+}
+
+// ---------------------------------------------------------------------------
+// Family config (control plane)
+// ---------------------------------------------------------------------------
+
+export interface FamilyConfigRow {
+  key: string;
+  value: unknown;
+}
+
+/** Return all family_config rows for the current actor's family. */
+export function fetchFamilyConfig(): Promise<FamilyConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/family`);
+}
+
+/** Return the value of a single config key, or null if not set. */
+export async function fetchFamilyConfigValue<T = unknown>(key: string): Promise<T | null> {
+  const rows = await fetchFamilyConfig();
+  const row = rows.find((r) => r.key === key);
+  return row ? (row.value as T) : null;
+}
+
+/**
+ * Upsert a family_config key.
+ * The PUT endpoint expects `{ value: <any> }` as the request body.
+ */
+export async function putFamilyConfig(key: string, value: unknown): Promise<FamilyConfigRow> {
+  const res = await fetch(`${API_BASE_URL}/admin/config/family/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, key, text);
+    throw new Error(`putFamilyConfig failed (${res.status})`);
+  }
+  return (await res.json()) as FamilyConfigRow;
+}
+
+/** Delete a family_config key. Throws if not found (404). */
+export async function deleteFamilyConfig(key: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/admin/config/family/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, key, text);
+    throw new Error(`deleteFamilyConfig failed (${res.status})`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Member config (control plane)
+// ---------------------------------------------------------------------------
+
+export interface MemberConfigRow {
+  member_id: string;
+  key: string;
+  value: unknown;
+}
+
+/**
+ * Return all member_config rows for a single member.
+ * GET /admin/config/member/{memberId}
+ */
+export function fetchMemberConfig(memberId: string): Promise<FamilyConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}`);
+}
+
+/**
+ * Upsert a member_config key.
+ * PUT /admin/config/member/{memberId}/{key}  body: { value }
+ */
+export async function putMemberConfig(
+  memberId: string,
+  key: string,
+  value: unknown,
+): Promise<FamilyConfigRow> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}/${encodeURIComponent(key)}`,
+    {
+      method: "PUT",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    },
+  );
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, memberId, key, text);
+    throw new Error(`putMemberConfig failed (${res.status})`);
+  }
+  return (await res.json()) as FamilyConfigRow;
+}
+
+/**
+ * Delete a member_config key. Throws if not found (404).
+ * DELETE /admin/config/member/{memberId}/{key}
+ */
+export async function deleteMemberConfig(memberId: string, key: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/config/member/${encodeURIComponent(memberId)}/${encodeURIComponent(key)}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, memberId, key, text);
+    throw new Error(`deleteMemberConfig failed (${res.status})`);
+  }
+}
+
+/**
+ * Return member_config rows for *all* active family members that have `key` set.
+ * GET /admin/config/members/{key}
+ * Returns [] if no members have the key set (never 404).
+ */
+export function fetchAllMemberConfigForKey(key: string): Promise<MemberConfigRow[]> {
+  return get(`${API_BASE_URL}/admin/config/members/${encodeURIComponent(key)}`);
+}

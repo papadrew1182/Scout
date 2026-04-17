@@ -208,7 +208,7 @@ def list_pending_review_items(
 def approve_grocery_item(
     db: Session, family_id: uuid.UUID, reviewer_id: uuid.UUID, item_id: uuid.UUID
 ) -> GroceryItem:
-    _require_adult(db, family_id, reviewer_id)
+    _require_adult(db, family_id, reviewer_id, "grocery.approve")
     item = get_grocery_item(db, family_id, item_id)
     item.approval_status = "active"
     _resolve_parent_action(db, family_id, "grocery_item", item_id, reviewer_id)
@@ -220,7 +220,7 @@ def approve_grocery_item(
 def reject_grocery_item(
     db: Session, family_id: uuid.UUID, reviewer_id: uuid.UUID, item_id: uuid.UUID
 ) -> GroceryItem:
-    _require_adult(db, family_id, reviewer_id)
+    _require_adult(db, family_id, reviewer_id, "grocery.approve")
     item = get_grocery_item(db, family_id, item_id)
     item.approval_status = "rejected"
     _resolve_parent_action(db, family_id, "grocery_item", item_id, reviewer_id)
@@ -306,7 +306,7 @@ def approve_purchase_request(
     request_id: uuid.UUID,
     action: ReviewAction,
 ) -> PurchaseRequest:
-    _require_adult(db, family_id, reviewer_id)
+    _require_adult(db, family_id, reviewer_id, "purchase_request.approve")
     req = get_purchase_request(db, family_id, request_id)
     if req.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot approve request with status '{req.status}'")
@@ -328,7 +328,7 @@ def reject_purchase_request(
     request_id: uuid.UUID,
     action: ReviewAction,
 ) -> PurchaseRequest:
-    _require_adult(db, family_id, reviewer_id)
+    _require_adult(db, family_id, reviewer_id, "purchase_request.approve")
     req = get_purchase_request(db, family_id, request_id)
     if req.status != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot reject request with status '{req.status}'")
@@ -349,7 +349,7 @@ def convert_purchase_request_to_grocery(
     reviewer_id: uuid.UUID,
     request_id: uuid.UUID,
 ) -> tuple[PurchaseRequest, GroceryItem]:
-    _require_adult(db, family_id, reviewer_id)
+    _require_adult(db, family_id, reviewer_id, "purchase_request.approve")
     req = get_purchase_request(db, family_id, request_id)
     if req.status not in ("pending", "approved"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot convert request with status '{req.status}'")
@@ -401,8 +401,11 @@ def list_parent_action_items(
 # Helpers
 # ============================================================================
 
-def _require_adult(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> FamilyMember:
+def _require_adult(db: Session, family_id: uuid.UUID, member_id: uuid.UUID, permission_key: str = "grocery.approve") -> FamilyMember:
+    """Preserved for Phase 2: now checks the permission tier instead of role==adult."""
+    from app.services.permissions import resolve_effective_permissions
     member = require_member_in_family(db, family_id, member_id)
-    if member.role != "adult":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only adults can perform this action")
+    perms = resolve_effective_permissions(db, member_id)
+    if not perms.get(permission_key, False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {permission_key}")
     return member

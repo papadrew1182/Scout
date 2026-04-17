@@ -10,7 +10,7 @@ Usage in routes:
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -27,6 +27,8 @@ class Actor:
     account: UserAccount
     member: FamilyMember
     family: Family
+    db: Session = field(repr=False, compare=False, default=None)  # type: ignore[assignment]
+    _permission_cache: dict[str, bool] | None = field(repr=False, compare=False, default=None)
 
     @property
     def member_id(self) -> uuid.UUID:
@@ -45,6 +47,7 @@ class Actor:
         return self.member.role == "adult"
 
     def require_adult(self) -> None:
+        """Raise 403 if actor is not an adult. Preserved for Phase 2 migration."""
         if not self.is_adult:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -57,6 +60,39 @@ class Actor:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this family",
+            )
+
+    @property
+    def effective_permissions(self) -> dict[str, bool]:
+        """Resolve effective permissions: tier permissions + overrides.
+
+        Cached per-request — Actor is constructed fresh per request so
+        caching is safe without invalidation concerns.
+
+        Requires self.db to be set (populated by get_current_actor).
+        Returns empty dict if no DB session is available (defensive fallback).
+        """
+        if self._permission_cache is not None:
+            return self._permission_cache
+
+        if self.db is None:
+            self._permission_cache = {}
+            return self._permission_cache
+
+        from app.services.permissions import resolve_effective_permissions
+        self._permission_cache = resolve_effective_permissions(self.db, self.member_id)
+        return self._permission_cache
+
+    def has_permission(self, key: str) -> bool:
+        """True iff the actor's resolved permissions grant `key`."""
+        return bool(self.effective_permissions.get(key, False))
+
+    def require_permission(self, key: str) -> None:
+        """Raise 403 if the actor does not hold `key`."""
+        if not self.has_permission(key):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {key}",
             )
 
 
@@ -81,7 +117,7 @@ def get_current_actor(
 
     if token:
         account, member, family = resolve_session(db, token)
-        return Actor(account=account, member=member, family=family)
+        return Actor(account=account, member=member, family=family, db=db)
 
     # Legacy fallback for dev/test — will be removed
     if not settings.auth_required:
@@ -107,6 +143,7 @@ def get_current_actor(
             account=UserAccount(id=uuid.uuid4(), family_member_id=member.id, auth_provider="dev", is_active=True),
             member=member,
             family=family,
+            db=db,
         )
 
     raise HTTPException(

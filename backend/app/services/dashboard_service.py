@@ -104,11 +104,13 @@ def personal_dashboard(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) 
 
 def parent_dashboard(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> dict:
     """Compact parent household dashboard."""
+    from app.services.permissions import resolve_effective_permissions
     require_family(db, family_id)
-    member = require_member_in_family(db, family_id, member_id)
-    if member.role != "adult":
+    require_member_in_family(db, family_id, member_id)
+    perms = resolve_effective_permissions(db, member_id)
+    if not perms.get("dashboard.view_parent", False):
         from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Parent dashboard requires adult role")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission required: dashboard.view_parent")
 
     today = date.today()
     week_start = today - timedelta(days=today.weekday())
@@ -274,11 +276,13 @@ def list_action_items(
     status_filter: str = "pending",
     limit: int = 20,
 ) -> list[dict]:
-    """List parent action items. Adults only."""
-    member = require_member_in_family(db, family_id, actor_member_id)
-    if member.role != "adult":
+    """List parent action items. Requires dashboard.view_parent permission."""
+    from app.services.permissions import resolve_effective_permissions
+    require_member_in_family(db, family_id, actor_member_id)
+    perms = resolve_effective_permissions(db, actor_member_id)
+    if not perms.get("dashboard.view_parent", False):
         from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only parents can view action items")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission required: dashboard.view_parent")
 
     stmt = (
         select(ParentActionItem)

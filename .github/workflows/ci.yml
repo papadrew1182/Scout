@@ -46,6 +46,25 @@ jobs:
       - run: cd scout-ui && npm install
       - run: cd scout-ui && npx tsc --noEmit
 
+  arch-check:
+    runs-on: ubuntu-latest
+    # Non-blocking for now — promotes to blocking once baseline signal is clean.
+    # Remove continue-on-error in a follow-up PR after all warnings are resolved.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run architecture check
+        run: node scripts/architecture-check.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arch-check-report
+          path: arch-check-report.json
+          retention-days: 30
+
   smoke-web:
     runs-on: ubuntu-latest
     needs: [backend-tests, frontend-types]

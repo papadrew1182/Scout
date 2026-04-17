@@ -68,6 +68,7 @@ class BootstrapRequest(BaseModel):
 
 @router.post("/login", response_model=LoginResponse)
 def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    # noqa: public-route — unauthenticated login endpoint; credentials are the auth mechanism
     client_ip = request.client.host if request.client else "unknown"
     result = auth_service.login(db, body.email, body.password, client_ip=client_ip)
     return LoginResponse(**result)
@@ -77,6 +78,7 @@ def login(body: LoginRequest, request: Request, db: Session = Depends(get_db)):
 def bootstrap(body: BootstrapRequest, db: Session = Depends(get_db)):
     """Create the first account when no accounts exist.
     Only available when SCOUT_ENABLE_BOOTSTRAP=true and zero accounts exist."""
+    # noqa: public-route — setup-time only; guarded by SCOUT_ENABLE_BOOTSTRAP flag and zero-accounts check
     from app.config import settings
     if not settings.enable_bootstrap:
         from fastapi import HTTPException, status
@@ -91,6 +93,7 @@ def bootstrap(body: BootstrapRequest, db: Session = Depends(get_db)):
 
 @router.post("/logout")
 def logout(request: Request, db: Session = Depends(get_db)):
+    # noqa: public-route — session teardown; token is the credential, no actor required
     auth = request.headers.get("Authorization")
     if auth and auth.startswith("Bearer "):
         auth_service.logout(db, auth[7:])
@@ -116,6 +119,7 @@ def change_password(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — self-service; actor can only change their own password (enforced by account_id scoping)
     auth_service.change_password(db, actor.account.id, body.current_password, body.new_password)
     return {"status": "ok"}
 
@@ -134,6 +138,7 @@ def revoke_session(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — self-service session management; account_id scoping prevents cross-account revoke
     auth_service.revoke_session(db, actor.account.id, session_id)
     return {"status": "ok"}
 
@@ -144,6 +149,7 @@ def revoke_other_sessions(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — self-service session management; account_id scoping prevents cross-account revoke
     token = ""
     auth = request.headers.get("Authorization")
     if auth and auth.startswith("Bearer "):
@@ -163,7 +169,7 @@ def list_accounts(
     db: Session = Depends(get_db),
 ):
     """List family members with account status. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     return auth_service.list_family_accounts(db, actor.family_id)
 
 
@@ -174,7 +180,7 @@ def create_account(
     db: Session = Depends(get_db),
 ):
     """Create a user account for a family member. Adults only, same family."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     target = db.get(FamilyMember, body.family_member_id)
     if target:
         actor.require_family(target.family_id)
@@ -190,7 +196,7 @@ def admin_reset_password(
     db: Session = Depends(get_db),
 ):
     """Reset a family member's password. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     from app.models.foundation import UserAccount
     target_account = db.get(UserAccount, account_id)
     if target_account:
@@ -208,7 +214,7 @@ def deactivate_account(
     db: Session = Depends(get_db),
 ):
     """Deactivate an account and revoke all sessions. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     auth_service.deactivate_account(db, account_id)
     return {"status": "ok"}
 
@@ -220,7 +226,7 @@ def activate_account(
     db: Session = Depends(get_db),
 ):
     """Reactivate a deactivated account. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     auth_service.activate_account(db, account_id)
     return {"status": "ok"}
 
@@ -232,6 +238,6 @@ def revoke_account_sessions(
     db: Session = Depends(get_db),
 ):
     """Revoke all sessions for a family member's account. Adults only."""
-    actor.require_adult()
+    actor.require_permission("family.manage_accounts")
     count = auth_service.revoke_account_sessions(db, account_id)
     return {"status": "ok", "revoked": count}

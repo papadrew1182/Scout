@@ -14,6 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.models.access import RoleTier, RoleTierOverride
 from app.models.foundation import Family, FamilyMember
+from app.services.permissions import get_family_config
+
+# Default toggles used when no family_config row exists yet.
+_DEFAULT_AI_TOGGLES = {
+    "allow_general_chat": True,
+    "allow_homework_help": True,
+    "proactive_suggestions": True,
+    "push_notifications": True,
+}
 
 
 def load_member_context(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> dict:
@@ -59,13 +68,28 @@ def load_member_context(db: Session, family_id: uuid.UUID, member_id: uuid.UUID)
             for k in kids
         ]
 
+    # Read AI toggles from config store. Falls back to legacy family columns
+    # if no config row exists yet (e.g. families created before migration 026).
+    # Once migration 026 runs, the config row is the source of truth; the
+    # family columns are legacy mirrors and are no longer read here.
+    ai_toggles = get_family_config(db, family_id, "scout_ai.toggles", default=None)
+    if ai_toggles is None:
+        # Pre-migration fallback: mirror the legacy boolean columns so behaviour
+        # is identical to before Phase 3.
+        ai_toggles = {
+            "allow_general_chat": bool(family.allow_general_chat),
+            "allow_homework_help": bool(family.allow_homework_help),
+            "proactive_suggestions": True,
+            "push_notifications": True,
+        }
+
     return {
         "family": {
             "id": str(family.id),
             "name": family.name,
             "timezone": family.timezone,
-            "allow_general_chat": bool(family.allow_general_chat),
-            "allow_homework_help": bool(family.allow_homework_help),
+            "allow_general_chat": bool(ai_toggles.get("allow_general_chat", True)),
+            "allow_homework_help": bool(ai_toggles.get("allow_homework_help", True)),
             "home_location": family.home_location,
         },
         "member": {

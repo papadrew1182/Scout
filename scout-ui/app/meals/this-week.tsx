@@ -4,8 +4,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { colors, fonts, shared } from "../../lib/styles";
 import { useIsDesktop } from "../../lib/breakpoint";
 import { MEALS_THIS_WEEK, BATCH_COOK, FAMILY } from "../../lib/seedData";
-import { approveWeeklyPlan, fetchCurrentWeeklyPlan } from "../../lib/api";
-import type { WeeklyMealPlan } from "../../lib/types";
+import { approveWeeklyPlan, fetchCurrentWeeklyPlan, fetchMembers, fetchAllMemberConfigForKey } from "../../lib/api";
+import type { WeeklyMealPlan, FamilyMember } from "../../lib/types";
+import { useHasPermission } from "../../lib/permissions";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -20,11 +21,62 @@ const DIETARY_TONE: Record<string, "purple" | "green" | "amber"> = {
   "No onions":       "amber",
 };
 
+// ---------------------------------------------------------------------------
+// Per-member dietary row (combines real member + dietary.notes config + seedData fallback)
+// ---------------------------------------------------------------------------
+
+interface DietaryRow {
+  id: string;
+  firstName: string;
+  initials: string;
+  tint: string;
+  dietary: string;
+}
+
+/**
+ * Builds the dietary display rows by joining:
+ *   1. Real family members from the API (for UUIDs and canonical names)
+ *   2. Per-member dietary.notes config (keyed by UUID)
+ *   3. seedData FAMILY (fallback for dietary label, tint, initials — until
+ *      per-member config is fully seeded in a later phase)
+ *
+ * Match between real members and seedData is by first_name (case-insensitive).
+ */
+function buildDietaryRows(
+  realMembers: FamilyMember[],
+  dietaryConfigMap: Map<string, string>,
+): DietaryRow[] {
+  return realMembers.slice(0, 5).map((m) => {
+    // Look up seedData entry by first_name for display properties
+    const seed = FAMILY.find(
+      (f) => f.firstName.toLowerCase() === m.first_name.toLowerCase(),
+    );
+    // Prefer config value; fall back to seedData; final fallback "No restrictions"
+    const dietary =
+      dietaryConfigMap.get(m.id) ??
+      seed?.dietary ??
+      "No restrictions";
+    return {
+      id: m.id,
+      firstName: m.first_name,
+      initials: seed?.initials ?? m.first_name.slice(0, 2).toUpperCase(),
+      tint: seed?.tint ?? "purple",
+      dietary,
+    };
+  });
+}
+
 export default function MealsThisWeek() {
   const isDesktop = useIsDesktop();
+  const canApprovePlan = useHasPermission("meal_plan.approve");
   const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // Dietary rows: sourced from real members + dietary.notes config, with
+  // seedData fallback for display props (tint, initials) and dietary label.
+  const [dietaryRows, setDietaryRows] = useState<DietaryRow[]>([]);
+  const [dietaryLoading, setDietaryLoading] = useState(true);
 
   const load = async () => {
     try {
@@ -37,6 +89,54 @@ export default function MealsThisWeek() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  // Load per-member dietary notes from config, with seedData fallback
+  useEffect(() => {
+    let cancelled = false;
+    setDietaryLoading(true);
+
+    Promise.all([
+      fetchMembers(),
+      fetchAllMemberConfigForKey("dietary.notes"),
+    ])
+      .then(([members, configRows]) => {
+        if (cancelled) return;
+        // Build a map: member UUID → dietary label string
+        const dietaryConfigMap = new Map<string, string>();
+        for (const row of configRows) {
+          if (typeof row.value === "string") {
+            dietaryConfigMap.set(row.member_id, row.value);
+          } else if (
+            row.value &&
+            typeof row.value === "object" &&
+            "label" in (row.value as object)
+          ) {
+            dietaryConfigMap.set(
+              row.member_id,
+              (row.value as { label: string }).label,
+            );
+          }
+        }
+        setDietaryRows(buildDietaryRows(members, dietaryConfigMap));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // On any error, fall back entirely to seedData
+        const fallback: DietaryRow[] = FAMILY.slice(0, 5).map((f) => ({
+          id: f.id,
+          firstName: f.firstName,
+          initials: f.initials,
+          tint: f.tint,
+          dietary: f.dietary ?? "No restrictions",
+        }));
+        setDietaryRows(fallback);
+      })
+      .finally(() => {
+        if (!cancelled) setDietaryLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, []);
 
   const handleApprove = async () => {
@@ -54,7 +154,7 @@ export default function MealsThisWeek() {
     }
   };
 
-  const canApprove = plan && plan.status !== "approved";
+  const canApprove = canApprovePlan && plan && plan.status !== "approved";
 
   return (
     <ScrollView style={shared.pageContainer} contentContainerStyle={styles.content}>
@@ -105,6 +205,7 @@ export default function MealsThisWeek() {
             <Text style={shared.cardTitle}>Sunday batch cook</Text>
             <Text style={shared.cardAction}> </Text>
           </View>
+          {/* TODO: batch cook template will move to family_config in a follow-up; placeholder data for now. */}
           {BATCH_COOK.map((b) => (
             <View key={b.name} style={styles.batchRow}>
               <View style={[styles.check, b.done && styles.checkDone]}>
@@ -121,25 +222,29 @@ export default function MealsThisWeek() {
             <Text style={shared.cardTitle}>Dietary notes</Text>
             <Text style={shared.cardAction}> </Text>
           </View>
-          {FAMILY.slice(0, 5).map((m) => {
-            const tone = DIETARY_TONE[m.dietary ?? "No restrictions"] ?? "purple";
-            const palette = {
-              purple: { bg: colors.purpleLight, fg: colors.purpleDeep },
-              green:  { bg: colors.greenBg,     fg: colors.greenText },
-              amber:  { bg: colors.amberBg,     fg: colors.amberText },
-            }[tone];
-            return (
-              <View key={m.id} style={styles.dietRow}>
-                <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
-                  <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+          {dietaryLoading ? (
+            <ActivityIndicator size="small" color={colors.purple} />
+          ) : (
+            dietaryRows.map((m) => {
+              const tone = DIETARY_TONE[m.dietary ?? "No restrictions"] ?? "purple";
+              const palette = {
+                purple: { bg: colors.purpleLight, fg: colors.purpleDeep },
+                green:  { bg: colors.greenBg,     fg: colors.greenText },
+                amber:  { bg: colors.amberBg,     fg: colors.amberText },
+              }[tone];
+              return (
+                <View key={m.id} style={styles.dietRow}>
+                  <View style={[styles.av, { backgroundColor: TINT_BG[m.tint] }]}>
+                    <Text style={[styles.avText, { color: TINT_TEXT[m.tint] }]}>{m.initials}</Text>
+                  </View>
+                  <Text style={styles.dietName}>{m.firstName}</Text>
+                  <View style={[styles.tag, { backgroundColor: palette.bg }]}>
+                    <Text style={[styles.tagText, { color: palette.fg }]}>{m.dietary}</Text>
+                  </View>
                 </View>
-                <Text style={styles.dietName}>{m.firstName}</Text>
-                <View style={[styles.tag, { backgroundColor: palette.bg }]}>
-                  <Text style={[styles.tagText, { color: palette.fg }]}>{m.dietary}</Text>
-                </View>
-              </View>
-            );
-          })}
+              );
+            })
+          )}
         </View>
       </View>
     </ScrollView>

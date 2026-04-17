@@ -52,7 +52,7 @@ def list_members(family_id: uuid.UUID, actor: Actor = Depends(get_current_actor)
 @router.post("/{family_id}/members", response_model=FamilyMemberRead, status_code=201)
 def create_member(family_id: uuid.UUID, payload: FamilyMemberCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_members")
     return family_service.create_member(db, family_id, payload)
 
 
@@ -98,7 +98,7 @@ def update_ai_settings(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("scout_ai.manage_toggles")
     fam = db.get(Family, family_id)
     if not fam:
         raise HTTPException(status_code=404, detail="Family not found")
@@ -125,7 +125,7 @@ def update_member_learning(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_learning_notes")
     member = db.get(FamilyMember, member_id)
     if not member or member.family_id != family_id:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -205,7 +205,7 @@ def update_member_core(
     rolls back cleanly without leaving the session half-flushed.
     """
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_members")
     member = db.get(FamilyMember, member_id)
     if not member or member.family_id != family_id:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -246,7 +246,7 @@ def list_member_accounts(
     Adult-only: accounts are sensitive credentials, children don't
     need to see the list."""
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_accounts")
     member = db.get(FamilyMember, member_id)
     if not member or member.family_id != family_id:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -277,7 +277,7 @@ def create_member_account(
     the auth flow uses. Email uniqueness is enforced at the DB layer;
     a duplicate surfaces as 409 here."""
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_accounts")
     member = db.get(FamilyMember, member_id)
     if not member or member.family_id != family_id:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -320,7 +320,7 @@ def update_member_account(
     existing account. Adult-only. Refuses any change that would leave
     the family with no signed-in adults (invariant)."""
     actor.require_family(family_id)
-    _require_adult(actor, db)
+    actor.require_permission("family.manage_accounts")
     member = db.get(FamilyMember, member_id)
     if not member or member.family_id != family_id:
         raise HTTPException(status_code=404, detail="Member not found")
