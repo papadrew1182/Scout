@@ -21,9 +21,8 @@ import { Redirect } from "expo-router";
 
 import { shared, colors, fonts, radii } from "../../../lib/styles";
 import { useHasPermission } from "../../../lib/permissions";
-import { useMemberConfig } from "../../../lib/config";
 import { useFamilyConfig } from "../../../lib/config";
-import { fetchMembers } from "../../../lib/api";
+import { fetchAllowancePolicies, fetchMembers, putAllowancePolicy } from "../../../lib/api";
 import type { FamilyMember } from "../../../lib/types";
 import type { AllowanceTarget } from "../../../lib/allowance";
 import { DEFAULT_ALLOWANCE_TARGET } from "../../../lib/allowance";
@@ -52,39 +51,42 @@ const DEFAULT_RULES: AllowanceRules = {
 
 interface KidRowProps {
   kid: FamilyMember;
+  /** Initial allowance target from the canonical API (null if none yet). */
+  initialTarget: AllowanceTarget | null;
 }
 
-function KidAllowanceRow({ kid }: KidRowProps) {
-  const { value, setValue, loading } = useMemberConfig<AllowanceTarget>(
-    kid.id,
-    "allowance.target",
-    DEFAULT_ALLOWANCE_TARGET,
-  );
+function KidAllowanceRow({ kid, initialTarget }: KidRowProps) {
+  const target = initialTarget ?? DEFAULT_ALLOWANCE_TARGET;
 
   // Local draft state — dollars as strings for text input
-  const [weeklyDollars, setWeeklyDollars] = useState("");
-  const [baselineDollars, setBaselineDollars] = useState("");
-  const [schedule, setSchedule] = useState<"weekly" | "biweekly" | "monthly">("weekly");
+  const [weeklyDollars, setWeeklyDollars] = useState(
+    String(target.weekly_target_cents / 100)
+  );
+  const [baselineDollars, setBaselineDollars] = useState(
+    String(target.baseline_cents / 100)
+  );
+  const [schedule, setSchedule] = useState<"weekly" | "biweekly" | "monthly">(
+    target.payout_schedule
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Sync draft when config loads
+  // Sync draft if parent refreshes canonical data
   useEffect(() => {
-    if (!loading) {
-      setWeeklyDollars(String(value.weekly_target_cents / 100));
-      setBaselineDollars(String(value.baseline_cents / 100));
-      setSchedule(value.payout_schedule);
-    }
-  }, [loading, value.weekly_target_cents, value.baseline_cents, value.payout_schedule]);
+    const t = initialTarget ?? DEFAULT_ALLOWANCE_TARGET;
+    setWeeklyDollars(String(t.weekly_target_cents / 100));
+    setBaselineDollars(String(t.baseline_cents / 100));
+    setSchedule(t.payout_schedule);
+  }, [initialTarget]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await setValue({
-        weekly_target_cents: Math.round(parseFloat(weeklyDollars || "0") * 100),
+      await putAllowancePolicy(kid.id, {
         baseline_cents: Math.round(parseFloat(baselineDollars || "0") * 100),
+        weekly_target_cents: Math.round(parseFloat(weeklyDollars || "0") * 100),
         payout_schedule: schedule,
       });
       setSaved(true);
@@ -94,7 +96,7 @@ function KidAllowanceRow({ kid }: KidRowProps) {
     } finally {
       setSaving(false);
     }
-  }, [setValue, weeklyDollars, baselineDollars, schedule]);
+  }, [kid.id, weeklyDollars, baselineDollars, schedule]);
 
   // Avatar tint helpers — reuse the same tint logic from the parent page
   const initials = kid.first_name.slice(0, 2).toUpperCase();
@@ -110,74 +112,70 @@ function KidAllowanceRow({ kid }: KidRowProps) {
         {saveError && <Text style={kidStyles.errBadge}>{saveError}</Text>}
       </View>
 
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.purple} style={{ marginTop: 8 }} />
-      ) : (
-        <View style={kidStyles.fields}>
-          <View style={kidStyles.fieldGroup}>
-            <Text style={kidStyles.label}>Weekly target ($)</Text>
-            <TextInput
-              style={kidStyles.input as any}
-              value={weeklyDollars}
-              onChangeText={setWeeklyDollars}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={colors.muted}
-            />
-          </View>
-
-          <View style={kidStyles.fieldGroup}>
-            <Text style={kidStyles.label}>Baseline ($)</Text>
-            <TextInput
-              style={kidStyles.input as any}
-              value={baselineDollars}
-              onChangeText={setBaselineDollars}
-              keyboardType="decimal-pad"
-              placeholder="0.00"
-              placeholderTextColor={colors.muted}
-            />
-          </View>
-
-          <View style={kidStyles.fieldGroup}>
-            <Text style={kidStyles.label}>Schedule</Text>
-            <View style={kidStyles.scheduleRow}>
-              {(["weekly", "biweekly", "monthly"] as const).map((opt) => (
-                <Pressable
-                  key={opt}
-                  style={[
-                    kidStyles.scheduleChip,
-                    schedule === opt && kidStyles.scheduleChipActive,
-                  ]}
-                  onPress={() => setSchedule(opt)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: schedule === opt }}
-                >
-                  <Text
-                    style={[
-                      kidStyles.scheduleChipText,
-                      schedule === opt && kidStyles.scheduleChipTextActive,
-                    ]}
-                  >
-                    {opt.charAt(0).toUpperCase() + opt.slice(1)}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          <Pressable
-            style={[kidStyles.saveBtn, saving && kidStyles.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={saving}
-            accessibilityRole="button"
-            accessibilityLabel={`Save allowance for ${kid.first_name}`}
-          >
-            <Text style={kidStyles.saveBtnText}>
-              {saving ? "Saving…" : "Save"}
-            </Text>
-          </Pressable>
+      <View style={kidStyles.fields}>
+        <View style={kidStyles.fieldGroup}>
+          <Text style={kidStyles.label}>Weekly target ($)</Text>
+          <TextInput
+            style={kidStyles.input as any}
+            value={weeklyDollars}
+            onChangeText={setWeeklyDollars}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            placeholderTextColor={colors.muted}
+          />
         </View>
-      )}
+
+        <View style={kidStyles.fieldGroup}>
+          <Text style={kidStyles.label}>Baseline ($)</Text>
+          <TextInput
+            style={kidStyles.input as any}
+            value={baselineDollars}
+            onChangeText={setBaselineDollars}
+            keyboardType="decimal-pad"
+            placeholder="0.00"
+            placeholderTextColor={colors.muted}
+          />
+        </View>
+
+        <View style={kidStyles.fieldGroup}>
+          <Text style={kidStyles.label}>Schedule</Text>
+          <View style={kidStyles.scheduleRow}>
+            {(["weekly", "biweekly", "monthly"] as const).map((opt) => (
+              <Pressable
+                key={opt}
+                style={[
+                  kidStyles.scheduleChip,
+                  schedule === opt && kidStyles.scheduleChipActive,
+                ]}
+                onPress={() => setSchedule(opt)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: schedule === opt }}
+              >
+                <Text
+                  style={[
+                    kidStyles.scheduleChipText,
+                    schedule === opt && kidStyles.scheduleChipTextActive,
+                  ]}
+                >
+                  {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <Pressable
+          style={[kidStyles.saveBtn, saving && kidStyles.saveBtnDisabled]}
+          onPress={handleSave}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityLabel={`Save allowance for ${kid.first_name}`}
+        >
+          <Text style={kidStyles.saveBtnText}>
+            {saving ? "Saving…" : "Save"}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -191,6 +189,8 @@ export default function AllowanceAdmin() {
 
   const [kids, setKids] = useState<FamilyMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(true);
+  /** Canonical policies keyed by family_member_id. */
+  const [targetsByMember, setTargetsByMember] = useState<Record<string, AllowanceTarget>>({});
 
   const {
     value: rules,
@@ -208,8 +208,22 @@ export default function AllowanceAdmin() {
   const [rulesError, setRulesError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchMembers()
-      .then((all) => setKids(all.filter((m) => m.role === "child" && m.is_active)))
+    Promise.all([fetchMembers(), fetchAllowancePolicies()])
+      .then(([all, policies]) => {
+        setKids(all.filter((m) => m.role === "child" && m.is_active));
+        const byMember: Record<string, AllowanceTarget> = {};
+        for (const p of policies) {
+          if (p.family_member_id && !byMember[p.family_member_id]) {
+            const sched = p.payout_schedule ?? {};
+            byMember[p.family_member_id] = {
+              baseline_cents: p.baseline_amount_cents,
+              weekly_target_cents: (sched as any).weekly_target_cents ?? 0,
+              payout_schedule: ((sched as any).schedule ?? "weekly") as AllowanceTarget["payout_schedule"],
+            };
+          }
+        }
+        setTargetsByMember(byMember);
+      })
       .catch(() => {})
       .finally(() => setMembersLoading(false));
   }, []);
@@ -269,7 +283,10 @@ export default function AllowanceAdmin() {
           kids.map((kid, idx) => (
             <View key={kid.id}>
               {idx > 0 && <View style={styles.divider} />}
-              <KidAllowanceRow kid={kid} />
+              <KidAllowanceRow
+                kid={kid}
+                initialTarget={targetsByMember[kid.id] ?? null}
+              />
             </View>
           ))
         )}

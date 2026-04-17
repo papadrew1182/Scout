@@ -2,6 +2,7 @@ from app.models.access import HouseholdRule, MemberConfig, RoleTier, RoleTierOve
 from app.models.action_items import ParentActionItem
 from app.models.ai import AIConversation, AIMessage, AIToolAudit
 from app.models.calendar import Event, EventAttendee
+from app.models.canonical import Connector, ConnectorAccount, RewardPolicy, RoutineTemplate
 from app.models.connectors import ConnectorConfig, ConnectorMapping
 from app.models.foundation import Family, FamilyMember, Session, UserAccount
 from app.models.life_management import (
@@ -66,4 +67,8 @@ __all__ = [
     "FamilyMemory",
     "PlannerBundleApply",
     "ScoutMCPToken",
+    "RoutineTemplate",
+    "RewardPolicy",
+    "Connector",
+    "ConnectorAccount",
 ]

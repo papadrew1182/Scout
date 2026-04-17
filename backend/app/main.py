@@ -31,6 +31,9 @@ from app.routes import (
 )
 from app.routes.admin import config as admin_config
 from app.routes.admin import permissions as admin_permissions
+from app.routes.admin import chores as admin_chores
+from app.routes.admin import allowance as admin_allowance
+from app.routes.admin import integrations as admin_integrations
 
 logging.basicConfig(
     level=logging.INFO,
@@ -102,6 +105,9 @@ app.include_router(mcp_http.router)
 app.include_router(canonical.router)
 app.include_router(admin_permissions.router)
 app.include_router(admin_config.router)
+app.include_router(admin_chores.router)
+app.include_router(admin_allowance.router)
+app.include_router(admin_integrations.router)
 
 
 @app.get("/health")

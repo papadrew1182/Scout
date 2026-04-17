@@ -7,7 +7,7 @@
  * Permission: admin.manage_config
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -21,7 +21,8 @@ import { Redirect } from "expo-router";
 
 import { shared, colors, fonts, radii } from "../../../lib/styles";
 import { useHasPermission } from "../../../lib/permissions";
-import { useFamilyConfig } from "../../../lib/config";
+import { fetchConnectorAccounts, patchConnectorStatus } from "../../../lib/api";
+import type { ConnectorAccountItem } from "../../../lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,14 +37,6 @@ interface Connection {
   status: ConnectionStatus;
   category: ConnectionCategory;
 }
-
-interface IntegrationsConfig {
-  connections: Connection[];
-}
-
-const DEFAULT_INTEGRATIONS: IntegrationsConfig = {
-  connections: [],
-};
 
 const STATUS_META: Record<
   ConnectionStatus,
@@ -226,47 +219,87 @@ function AddIntegrationForm({
 // Main screen
 // ---------------------------------------------------------------------------
 
+/** Map a canonical ConnectorAccountItem to the local Connection view shape. */
+function accountToConnection(account: ConnectorAccountItem): Connection {
+  // Map canonical status vocabulary to ConnectionStatus for the UI
+  const statusMap: Record<string, ConnectionStatus> = {
+    connected: "connected",
+    error: "needs_reauth",
+    disconnected: "not_connected",
+    stale: "needs_reauth",
+    syncing: "connected",
+    configured: "not_connected",
+    disabled: "not_connected",
+    decision_gated: "not_connected",
+  };
+  return {
+    id: account.id,                         // use UUID as id for patch calls
+    name: account.account_label ?? account.label,
+    status: statusMap[account.status] ?? "not_connected",
+    category: _categoryFromKey(account.connector_key),
+  };
+}
+
+function _categoryFromKey(key: string): string {
+  if (key === "google_calendar") return "calendar";
+  if (key === "ynab" || key === "greenlight") return "finance";
+  if (key === "apple_health" || key === "nike_run_club") return "health";
+  if (key === "hearth_display") return "device";
+  return "other";
+}
+
+/** Map ConnectionStatus used by the UI action to the canonical status string. */
+function uiStatusToCanonical(status: ConnectionStatus): string {
+  if (status === "connected") return "connected";
+  if (status === "needs_reauth") return "error";
+  return "disconnected";
+}
+
 export default function IntegrationsAdmin() {
   const canManage = useHasPermission("admin.manage_config");
 
-  const {
-    value: config,
-    setValue: setConfig,
-    loading,
-    error,
-  } = useFamilyConfig<IntegrationsConfig>("integrations.connections", DEFAULT_INTEGRATIONS);
-
+  const [accounts, setAccounts] = useState<ConnectorAccountItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchConnectorAccounts()
+      .then(setAccounts)
+      .catch((e: any) => setError(e?.message ?? "Failed to load connections"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const connections: Connection[] = accounts.map(accountToConnection);
 
   const handleAction = useCallback(
     (id: string, newStatus: ConnectionStatus) => {
       setActionBusy(id);
       setActionError(null);
-      const updated: IntegrationsConfig = {
-        connections: config.connections.map((c) =>
-          c.id === id ? { ...c, status: newStatus } : c,
-        ),
-      };
-      setConfig(updated)
-        .then(() => setActionBusy(null))
+      patchConnectorStatus(id, uiStatusToCanonical(newStatus))
+        .then((updated) => {
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === id ? updated : a))
+          );
+          setActionBusy(null);
+        })
         .catch((e: any) => {
           setActionBusy(null);
           setActionError(e?.message ?? "Update failed");
         });
     },
-    [config, setConfig],
+    [],
   );
 
-  const handleAdd = useCallback(
-    (connection: Connection) => {
-      const updated: IntegrationsConfig = {
-        connections: [...config.connections, connection],
-      };
-      setConfig(updated).catch(() => {});
-    },
-    [config, setConfig],
-  );
+  // "Add integration" now points at the canonical connector registry.
+  // For demo-readiness we keep the form but note that unknown connector_keys
+  // are not in the registry and will be silently skipped by migration 038.
+  const handleAdd = useCallback((_connection: Connection) => {
+    // No-op in canonical mode: the connector registry is seeded by migration 022.
+    // Future: could open an OAuth flow or a decision-gated request.
+  }, []);
 
   if (!canManage) {
     return <Redirect href="/admin" />;
@@ -291,10 +324,10 @@ export default function IntegrationsAdmin() {
           <ActivityIndicator size="small" color={colors.purple} style={{ marginVertical: 12 }} />
         ) : error ? (
           <Text style={styles.errorText}>{error}</Text>
-        ) : config.connections.length === 0 ? (
+        ) : connections.length === 0 ? (
           <Text style={styles.empty}>No integrations configured yet.</Text>
         ) : (
-          config.connections.map((conn, idx) => (
+          connections.map((conn, idx) => (
             <View key={conn.id}>
               {idx > 0 && <View style={styles.divider} />}
               <ConnectionRow
