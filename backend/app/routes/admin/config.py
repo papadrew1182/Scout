@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import Actor, get_current_actor
 from app.database import get_db
-from app.models.access import FamilyConfig, MemberConfig
+from app.models.access import HouseholdRule, MemberConfig
 from app.models.foundation import FamilyMember
 from app.services.permissions import (
     delete_family_config,
@@ -56,19 +56,20 @@ def get_family_config_all(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    """Return all family_config rows for the actor's family.
+    """Return all household_rules rows for the actor's family.
 
+    Reads from scout.household_rules (canonical home since migration 035).
     Requires admin.view_config.
     """
     actor.require_permission("admin.view_config")
 
     rows = db.scalars(
-        select(FamilyConfig)
-        .where(FamilyConfig.family_id == actor.family_id)
-        .order_by(FamilyConfig.key)
+        select(HouseholdRule)
+        .where(HouseholdRule.family_id == actor.family_id)
+        .order_by(HouseholdRule.rule_key)
     ).all()
 
-    return [ConfigRow(key=row.key, value=row.value) for row in rows]
+    return [ConfigRow(key=row.rule_key, value=row.rule_value) for row in rows]
 
 
 @router.put("/family/{key}", response_model=ConfigRow)
@@ -92,7 +93,7 @@ def upsert_family_config(
         updated_by=actor.member_id,
     )
     db.commit()
-    return ConfigRow(key=row.key, value=row.value)
+    return ConfigRow(key=row.rule_key, value=row.rule_value)
 
 
 @router.delete("/family/{key}", status_code=status.HTTP_204_NO_CONTENT)

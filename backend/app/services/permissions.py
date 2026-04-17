@@ -22,7 +22,7 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.models.access import FamilyConfig, MemberConfig, RoleTier, RoleTierOverride
+from app.models.access import HouseholdRule, MemberConfig, RoleTier, RoleTierOverride
 from app.models.foundation import FamilyMember
 
 # Legacy role → canonical tier name mapping used when no explicit tier override
@@ -108,15 +108,18 @@ def get_family_config(
     key: str,
     default=None,
 ):
-    """Return the value for a family config key, or default if not set."""
+    """Return the value for a family config key, or default if not set.
+
+    Reads from scout.household_rules (canonical home since migration 035).
+    """
     row = db.scalars(
-        select(FamilyConfig)
-        .where(FamilyConfig.family_id == family_id)
-        .where(FamilyConfig.key == key)
+        select(HouseholdRule)
+        .where(HouseholdRule.family_id == family_id)
+        .where(HouseholdRule.rule_key == key)
     ).first()
     if row is None:
         return default
-    return row.value
+    return row.rule_value
 
 
 def set_family_config(
@@ -125,29 +128,30 @@ def set_family_config(
     key: str,
     value,
     updated_by: uuid.UUID | None = None,
-) -> FamilyConfig:
-    """Upsert a family config key/value pair.
+) -> HouseholdRule:
+    """Upsert a family config key/value pair into scout.household_rules.
 
-    Creates the row if it doesn't exist; updates value + updated_by if it does.
+    Creates the row if it doesn't exist; updates rule_value if it does.
+    The updated_by argument is accepted for API compatibility but not stored
+    (household_rules has no updated_by column; the column was retired with
+    public.family_config in migration 035).
     Caller is responsible for db.commit().
     """
     row = db.scalars(
-        select(FamilyConfig)
-        .where(FamilyConfig.family_id == family_id)
-        .where(FamilyConfig.key == key)
+        select(HouseholdRule)
+        .where(HouseholdRule.family_id == family_id)
+        .where(HouseholdRule.rule_key == key)
     ).first()
 
     if row is None:
-        row = FamilyConfig(
+        row = HouseholdRule(
             family_id=family_id,
-            key=key,
-            value=value,
-            updated_by=updated_by,
+            rule_key=key,
+            rule_value=value,
         )
         db.add(row)
     else:
-        row.value = value
-        row.updated_by = updated_by
+        row.rule_value = value
 
     db.flush()
     return row
@@ -158,11 +162,14 @@ def delete_family_config(
     family_id: uuid.UUID,
     key: str,
 ) -> bool:
-    """Delete a family config row. Returns True if deleted, False if not found."""
+    """Delete a family config row from scout.household_rules.
+
+    Returns True if deleted, False if not found.
+    """
     row = db.scalars(
-        select(FamilyConfig)
-        .where(FamilyConfig.family_id == family_id)
-        .where(FamilyConfig.key == key)
+        select(HouseholdRule)
+        .where(HouseholdRule.family_id == family_id)
+        .where(HouseholdRule.rule_key == key)
     ).first()
 
     if row is None:
