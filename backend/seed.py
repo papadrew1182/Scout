@@ -61,14 +61,16 @@ def seed():
         db.refresh(m)
         print(f"  Created member: {m.first_name} ({m.role}, id={m.id})")
 
-    # Assign role tiers (migration 024 seeds the tier rows; if running seed.py
-    # outside of migrations context the tiers may not exist yet — skip silently).
+    # Assign role tiers (migration 022 seeds the canonical tier rows; if running
+    # seed.py outside of migrations context the tiers may not exist yet —
+    # skip silently).  Canonical UPPERCASE names as established by migration 022
+    # and unified by migration 034.
     tier_name_map = {
-        "Andrew": "admin",
-        "Sally":  "admin",
-        "Tyler":  "teen",
-        "Sadie":  "teen",
-        "Townes": "child",
+        "Andrew": "PRIMARY_PARENT",
+        "Sally":  "PRIMARY_PARENT",
+        "Tyler":  "TEEN",
+        "Sadie":  "TEEN",
+        "Townes": "CHILD",
     }
     for m in members_data:
         tier_name = tier_name_map.get(m.first_name)

@@ -21,12 +21,11 @@ import { Redirect } from "expo-router";
 
 import { shared, colors, fonts, radii } from "../../../lib/styles";
 import { useHasPermission } from "../../../lib/permissions";
-import { useMemberConfig } from "../../../lib/config";
 import { useFamilyConfig } from "../../../lib/config";
-import { fetchMembers } from "../../../lib/api";
+import { fetchChoreRoutines, fetchMembers, putChoreRoutines } from "../../../lib/api";
 import type { FamilyMember } from "../../../lib/types";
 import type { ChoreRoutine, ChoresRoutinesConfig, ChoresRules } from "../../../lib/chores";
-import { DEFAULT_CHORES_ROUTINES_CONFIG, DEFAULT_CHORES_RULES } from "../../../lib/chores";
+import { DEFAULT_CHORES_RULES } from "../../../lib/chores";
 
 // ---------------------------------------------------------------------------
 // Per-kid routines editor component
@@ -34,33 +33,36 @@ import { DEFAULT_CHORES_ROUTINES_CONFIG, DEFAULT_CHORES_RULES } from "../../../l
 
 interface KidRoutinesRowProps {
   kid: FamilyMember;
+  /** Initial routines from the canonical API (may be empty on first render). */
+  initialRoutines: ChoreRoutine[];
 }
 
-function KidRoutinesRow({ kid }: KidRoutinesRowProps) {
-  const { value, setValue, loading } = useMemberConfig<ChoresRoutinesConfig>(
-    kid.id,
-    "chores.routines",
-    DEFAULT_CHORES_ROUTINES_CONFIG,
-  );
-
-  // Local draft state
-  const [routines, setRoutines] = useState<ChoreRoutine[]>([]);
+function KidRoutinesRow({ kid, initialRoutines }: KidRoutinesRowProps) {
+  // Local draft state — seeded from the canonical routines passed in by parent
+  const [routines, setRoutines] = useState<ChoreRoutine[]>(initialRoutines);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Sync draft when config loads
+  // Keep draft in sync if parent refreshes canonical data
   useEffect(() => {
-    if (!loading) {
-      setRoutines(Array.isArray(value.routines) ? value.routines : []);
-    }
-  }, [loading, value]);
+    setRoutines(initialRoutines);
+  }, [initialRoutines]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await setValue({ routines });
+      // Build the upsert payload — use routine_key + label from each item.
+      // For new routines created locally (no db id yet), routine_key is the
+      // temp id string set in handleAddRoutine.
+      const payload = routines.map((r) => ({
+        routine_key: ("routine_key" in r ? (r as any).routine_key : null) ?? r.id,
+        label: ("label" in r ? (r as any).label : null) ?? (r as any).name ?? "",
+        recurrence: ("recurrence" in r ? (r as any).recurrence : null) ?? "daily",
+        block_label: ("block_label" in r ? (r as any).block_label : null) ?? "Chores",
+      }));
+      await putChoreRoutines(kid.id, payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {
@@ -68,24 +70,45 @@ function KidRoutinesRow({ kid }: KidRoutinesRowProps) {
     } finally {
       setSaving(false);
     }
-  }, [setValue, routines]);
+  }, [kid.id, routines]);
 
   const handleAddRoutine = useCallback(() => {
-    const newId = `routine_${Date.now()}`;
-    setRoutines((prev) => [...prev, { id: newId, name: "", pts: 10 }]);
+    const newKey = `routine_${Date.now()}`;
+    // Create a new entry using the canonical ChoreRoutine (RoutineItem) shape
+    setRoutines((prev) => [
+      ...prev,
+      {
+        id: "",
+        routine_key: newKey,
+        label: "",
+        block_label: "Chores",
+        recurrence: "daily",
+        owner_family_member_id: kid.id,
+      } as ChoreRoutine,
+    ]);
+  }, [kid.id]);
+
+  const handleRemoveRoutine = useCallback((key: string) => {
+    setRoutines((prev) => prev.filter((r) => {
+      const rKey = ("routine_key" in r ? (r as any).routine_key : null) ?? r.id;
+      return rKey !== key;
+    }));
   }, []);
 
-  const handleRemoveRoutine = useCallback((id: string) => {
-    setRoutines((prev) => prev.filter((r) => r.id !== id));
+  const handleUpdateName = useCallback((key: string, newLabel: string) => {
+    setRoutines((prev) =>
+      prev.map((r) => {
+        const rKey = ("routine_key" in r ? (r as any).routine_key : null) ?? r.id;
+        if (rKey !== key) return r;
+        return { ...r, label: newLabel } as ChoreRoutine;
+      })
+    );
   }, []);
 
-  const handleUpdateName = useCallback((id: string, name: string) => {
-    setRoutines((prev) => prev.map((r) => (r.id === id ? { ...r, name } : r)));
-  }, []);
-
-  const handleUpdatePts = useCallback((id: string, ptsStr: string) => {
-    const pts = parseInt(ptsStr || "0", 10);
-    setRoutines((prev) => prev.map((r) => (r.id === id ? { ...r, pts: isNaN(pts) ? 0 : pts } : r)));
+  // pts field is kept for UI parity but stored in block_label slot for now
+  const handleUpdatePts = useCallback((_key: string, _ptsStr: string) => {
+    // pts were a member_config artefact; canonical table stores label/recurrence.
+    // No-op: pts are not persisted in the canonical schema.
   }, []);
 
   const initials = kid.first_name.slice(0, 2).toUpperCase();
@@ -101,75 +124,66 @@ function KidRoutinesRow({ kid }: KidRoutinesRowProps) {
         {saveError && <Text style={kidStyles.errBadge}>{saveError}</Text>}
       </View>
 
-      {loading ? (
-        <ActivityIndicator size="small" color={colors.purple} style={{ marginTop: 8 }} />
-      ) : (
-        <View style={kidStyles.body}>
-          {/* Column headers */}
-          {routines.length > 0 && (
-            <View style={kidStyles.columnHeaders}>
-              <Text style={[kidStyles.colHeader, { flex: 1 }]}>Routine</Text>
-              <Text style={[kidStyles.colHeader, kidStyles.colPts]}>Pts</Text>
-              <View style={kidStyles.colRemove} />
-            </View>
-          )}
+      <View style={kidStyles.body}>
+        {/* Column headers */}
+        {routines.length > 0 && (
+          <View style={kidStyles.columnHeaders}>
+            <Text style={[kidStyles.colHeader, { flex: 1 }]}>Routine</Text>
+            <View style={kidStyles.colRemove} />
+          </View>
+        )}
 
-          {/* Routine rows */}
-          {routines.map((routine) => (
-            <View key={routine.id} style={kidStyles.routineRow}>
+        {/* Routine rows — canonical shape uses `label` and `routine_key` */}
+        {routines.map((routine) => {
+          const rKey = ("routine_key" in routine ? (routine as any).routine_key : null) ?? routine.id;
+          const rLabel = ("label" in routine ? (routine as any).label : null) ?? (routine as any).name ?? "";
+          return (
+            <View key={rKey} style={kidStyles.routineRow}>
               <TextInput
                 style={[kidStyles.input, { flex: 1 }] as any}
-                value={routine.name}
-                onChangeText={(text) => handleUpdateName(routine.id, text)}
+                value={rLabel}
+                onChangeText={(text) => handleUpdateName(rKey, text)}
                 placeholder="Routine name"
-                placeholderTextColor={colors.muted}
-              />
-              <TextInput
-                style={[kidStyles.input, kidStyles.ptsInput] as any}
-                value={String(routine.pts)}
-                onChangeText={(text) => handleUpdatePts(routine.id, text)}
-                keyboardType="number-pad"
-                placeholder="10"
                 placeholderTextColor={colors.muted}
               />
               <Pressable
                 style={kidStyles.removeBtn}
-                onPress={() => handleRemoveRoutine(routine.id)}
+                onPress={() => handleRemoveRoutine(rKey)}
                 accessibilityRole="button"
-                accessibilityLabel={`Remove routine ${routine.name}`}
+                accessibilityLabel={`Remove routine ${rLabel}`}
               >
                 <Text style={kidStyles.removeBtnText}>✕</Text>
               </Pressable>
             </View>
-          ))}
+          );
+        })}
 
-          {routines.length === 0 && (
-            <Text style={kidStyles.emptyText}>No routines yet. Add one below.</Text>
-          )}
+        {routines.length === 0 && (
+          <Text style={kidStyles.emptyText}>No routines yet. Add one below.</Text>
+        )}
 
-          {/* Add + Save row */}
-          <View style={kidStyles.actionRow}>
-            <Pressable
-              style={kidStyles.addBtn}
-              onPress={handleAddRoutine}
-              accessibilityRole="button"
-              accessibilityLabel={`Add routine for ${kid.first_name}`}
-            >
-              <Text style={kidStyles.addBtnText}>+ Add Routine</Text>
-            </Pressable>
+        {/* Add + Save row */}
+        <View style={kidStyles.actionRow}>
+          <Pressable
+            style={kidStyles.addBtn}
+            onPress={handleAddRoutine}
+            accessibilityRole="button"
+            accessibilityLabel={`Add routine for ${kid.first_name}`}
+          >
+            <Text style={kidStyles.addBtnText}>+ Add Routine</Text>
+          </Pressable>
 
-            <Pressable
-              style={[kidStyles.saveBtn, saving && kidStyles.saveBtnDisabled]}
-              onPress={handleSave}
-              disabled={saving}
-              accessibilityRole="button"
-              accessibilityLabel={`Save routines for ${kid.first_name}`}
-            >
-              <Text style={kidStyles.saveBtnText}>{saving ? "Saving…" : "Save"}</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            style={[kidStyles.saveBtn, saving && kidStyles.saveBtnDisabled]}
+            onPress={handleSave}
+            disabled={saving}
+            accessibilityRole="button"
+            accessibilityLabel={`Save routines for ${kid.first_name}`}
+          >
+            <Text style={kidStyles.saveBtnText}>{saving ? "Saving…" : "Save"}</Text>
+          </Pressable>
         </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -183,6 +197,8 @@ export default function ChoresAdmin() {
 
   const [kids, setKids] = useState<FamilyMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(true);
+  /** Canonical routines keyed by member_id, loaded once at mount. */
+  const [routinesByMember, setRoutinesByMember] = useState<Record<string, ChoreRoutine[]>>({});
 
   const {
     value: rules,
@@ -200,8 +216,16 @@ export default function ChoresAdmin() {
   const [rulesError, setRulesError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchMembers()
-      .then((all) => setKids(all.filter((m) => m.role === "child" && m.is_active)))
+    // Fetch members and canonical routines in parallel
+    Promise.all([fetchMembers(), fetchChoreRoutines()])
+      .then(([all, groups]) => {
+        setKids(all.filter((m) => m.role === "child" && m.is_active));
+        const byMember: Record<string, ChoreRoutine[]> = {};
+        for (const g of groups) {
+          if (g.member_id) byMember[g.member_id] = g.routines;
+        }
+        setRoutinesByMember(byMember);
+      })
       .catch(() => {})
       .finally(() => setMembersLoading(false));
   }, []);
@@ -261,7 +285,10 @@ export default function ChoresAdmin() {
           kids.map((kid, idx) => (
             <View key={kid.id}>
               {idx > 0 && <View style={styles.divider} />}
-              <KidRoutinesRow kid={kid} />
+              <KidRoutinesRow
+                kid={kid}
+                initialRoutines={routinesByMember[kid.id] ?? []}
+              />
             </View>
           ))
         )}

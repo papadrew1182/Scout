@@ -1103,3 +1103,137 @@ export async function deleteMemberConfig(memberId: string, key: string): Promise
 export function fetchAllMemberConfigForKey(key: string): Promise<MemberConfigRow[]> {
   return get(`${API_BASE_URL}/admin/config/members/${encodeURIComponent(key)}`);
 }
+
+// ---------------------------------------------------------------------------
+// Internal PUT helper (used by the canonical admin endpoints below)
+// ---------------------------------------------------------------------------
+
+async function put<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, url, text);
+    throw new Error(`Request failed (${res.status})`);
+  }
+  return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Chore routines (canonical admin endpoints — Migration 036)
+// ---------------------------------------------------------------------------
+
+export interface RoutineItem {
+  id: string;
+  routine_key: string;
+  label: string;
+  block_label: string;
+  recurrence: string;
+  owner_family_member_id: string | null;
+}
+
+export interface MemberRoutinesGroup {
+  member_id: string;
+  member_name: string;
+  routines: RoutineItem[];
+}
+
+export interface RoutineUpsertItem {
+  routine_key: string;
+  label: string;
+  recurrence?: string;
+  block_label?: string;
+}
+
+/** GET /admin/chores/routines — all routine templates for the family, grouped by member. */
+export function fetchChoreRoutines(): Promise<MemberRoutinesGroup[]> {
+  return get(`${API_BASE_URL}/admin/chores/routines`);
+}
+
+/** PUT /admin/chores/routines/{memberId} — upsert a member's routine set. */
+export function putChoreRoutines(
+  memberId: string,
+  routines: RoutineUpsertItem[],
+): Promise<MemberRoutinesGroup> {
+  return put(`${API_BASE_URL}/admin/chores/routines/${encodeURIComponent(memberId)}`, { routines });
+}
+
+/** DELETE /admin/chores/routines/{routineId} — delete a single routine template. */
+export async function deleteChoreRoutine(routineId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/admin/chores/routines/${encodeURIComponent(routineId)}`,
+    { method: "DELETE", headers: authHeaders() },
+  );
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) throw new Error(`deleteChoreRoutine failed (${res.status})`);
+}
+
+// ---------------------------------------------------------------------------
+// Allowance policies (canonical admin endpoints — Migration 037)
+// ---------------------------------------------------------------------------
+
+export interface RewardPolicyItem {
+  id: string;
+  family_member_id: string | null;
+  policy_key: string;
+  baseline_amount_cents: number;
+  payout_schedule: {
+    schedule: string;
+    weekly_target_cents: number;
+  };
+  effective_from: string;
+}
+
+export interface AllowancePolicyUpsertPayload {
+  baseline_cents: number;
+  payout_schedule?: string;
+  weekly_target_cents?: number;
+  effective_from?: string | null;
+}
+
+/** GET /admin/allowance/policies — list all active reward policies for the family. */
+export function fetchAllowancePolicies(): Promise<RewardPolicyItem[]> {
+  return get(`${API_BASE_URL}/admin/allowance/policies`);
+}
+
+/** PUT /admin/allowance/policies/{memberId} — upsert a member's reward policy. */
+export function putAllowancePolicy(
+  memberId: string,
+  payload: AllowancePolicyUpsertPayload,
+): Promise<RewardPolicyItem> {
+  return put(`${API_BASE_URL}/admin/allowance/policies/${encodeURIComponent(memberId)}`, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Connector accounts (canonical admin endpoints — Migration 038)
+// ---------------------------------------------------------------------------
+
+export interface ConnectorAccountItem {
+  id: string;
+  connector_id: string;
+  connector_key: string;
+  label: string;
+  family_id: string;
+  status: string;
+  last_success_at: string | null;
+  last_error_at: string | null;
+  last_error_message: string | null;
+  account_label: string | null;
+}
+
+/** GET /admin/integrations/connections — list all connector_accounts for the family. */
+export function fetchConnectorAccounts(): Promise<ConnectorAccountItem[]> {
+  return get(`${API_BASE_URL}/admin/integrations/connections`);
+}
+
+/** PATCH /admin/integrations/connections/{accountId} — update connector status. */
+export function patchConnectorStatus(
+  accountId: string,
+  status: string,
+): Promise<ConnectorAccountItem> {
+  return patch(`${API_BASE_URL}/admin/integrations/connections/${encodeURIComponent(accountId)}`, { status });
+}

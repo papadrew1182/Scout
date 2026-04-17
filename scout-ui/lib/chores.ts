@@ -2,31 +2,35 @@
  * Chores helpers for Scout.
  *
  * useFamilyChoreRoutines — fetches all active children's per-member
- * chores.routines config plus the family-level chores.rules config in a
- * single composite hook.
+ * chore routines from the canonical 022 tables via
+ * GET /admin/chores/routines (Migration 036).
  *
- * Design: one GET /members + one GET /admin/config/members/chores.routines
- * + one GET /admin/config/family pick of chores.rules.
- * Three requests (not N+1) regardless of family size.  Results are joined
- * client-side by member_id.
+ * Design: one GET /admin/chores/routines (returns all members grouped) +
+ * one GET /admin/config/family pick of chores.rules.
+ * Two requests regardless of family size.  Results are keyed by member_id.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchAllMemberConfigForKey, fetchFamilyConfigValue, fetchMembers } from "./api";
+import { fetchChoreRoutines, fetchFamilyConfigValue, fetchMembers } from "./api";
+import type { MemberRoutinesGroup, RoutineItem } from "./api";
 import type { FamilyMember } from "./types";
 
 // ---------------------------------------------------------------------------
 // Shapes
 // ---------------------------------------------------------------------------
 
-/** A single chore routine stored in member_config under "chores.routines" */
-export interface ChoreRoutine {
-  id: string;
-  name: string;
-  pts: number;
-}
+/**
+ * A single chore routine as returned by the canonical API.
+ * Re-exported from api.ts for consumer convenience; the `id` field is the
+ * database UUID, and `routine_key` is the stable programmatic key.
+ */
+export type ChoreRoutine = RoutineItem;
 
-/** The config value stored under member_config key "chores.routines" */
+/**
+ * Legacy config-shape alias kept for any existing consumers that still
+ * reference ChoresRoutinesConfig.  The `routines` array now holds
+ * RoutineItem objects from the canonical API.
+ */
 export interface ChoresRoutinesConfig {
   routines: ChoreRoutine[];
 }
@@ -70,8 +74,11 @@ export interface UseFamilyChoreRoutinesResult {
 }
 
 /**
- * Fetches all active child members + their chores.routines config + the
- * family chores.rules and assembles them into a unified result.
+ * Fetches chore routines from the canonical 022 tables via
+ * GET /admin/chores/routines (Migration 036) plus the family chores.rules.
+ *
+ * Returns routines keyed by owner_family_member_id so callers don't need
+ * to change their rendering logic.
  */
 export function useFamilyChoreRoutines(): UseFamilyChoreRoutinesResult {
   const [routinesByMember, setRoutinesByMember] = useState<Record<string, ChoreRoutine[]>>({});
@@ -87,19 +94,20 @@ export function useFamilyChoreRoutines(): UseFamilyChoreRoutinesResult {
 
     Promise.all([
       fetchMembers(),
-      fetchAllMemberConfigForKey("chores.routines"),
+      fetchChoreRoutines(),
       fetchFamilyConfigValue<ChoresRules>("chores.rules"),
     ])
-      .then(([allMembers, configRows, familyRules]) => {
+      .then(([allMembers, groups, familyRules]) => {
         const kids = allMembers.filter((m) => m.role === "child" && m.is_active);
 
-        // Build lookup: member_id → routines[]
+        // Build lookup: member_id → routines[] from canonical API groups
         const byMember: Record<string, ChoreRoutine[]> = {};
-        for (const row of configRows) {
-          const cfg = row.value as ChoresRoutinesConfig;
-          byMember[row.member_id] = Array.isArray(cfg?.routines) ? cfg.routines : [];
+        for (const group of groups) {
+          if (group.member_id) {
+            byMember[group.member_id] = group.routines;
+          }
         }
-        // Ensure every kid has an entry even if config is absent
+        // Ensure every kid has an entry even if no routines have been migrated yet
         for (const kid of kids) {
           if (!(kid.id in byMember)) {
             byMember[kid.id] = [];
