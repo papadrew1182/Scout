@@ -1,4 +1,4 @@
--- Migration 036: Migrate chores.routines from public.member_config
+-- Migration 036: Migrate chores.routines from member_config
 --                into scout.routine_templates (normalized rows).
 --
 -- Each member_config row with key = 'chores.routines' holds a JSONB
@@ -15,7 +15,7 @@
 -- Idempotent: ON CONFLICT DO NOTHING on the unique constraint
 -- (family_id, routine_key, owner_family_member_id).
 --
--- After migration the source rows are deleted from public.member_config.
+-- After migration the source rows are deleted from member_config.
 
 DO $$
 DECLARE
@@ -25,7 +25,7 @@ DECLARE
 BEGIN
     FOR mc IN
         SELECT cfg.family_member_id, cfg.value
-        FROM   public.member_config cfg
+        FROM   member_config cfg
         WHERE  cfg.key = 'chores.routines'
     LOOP
         SELECT fm.family_id INTO v_family_id
@@ -66,4 +66,4 @@ BEGIN
 END $$;
 
 -- Clean up source rows once migrated.
-DELETE FROM public.member_config WHERE key = 'chores.routines';
+DELETE FROM member_config WHERE key = 'chores.routines';

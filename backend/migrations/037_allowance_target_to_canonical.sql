@@ -1,4 +1,4 @@
--- Migration 037: Migrate allowance.target from public.member_config
+-- Migration 037: Migrate allowance.target from member_config
 --                into scout.reward_policies (normalized rows).
 --
 -- Each member_config row with key = 'allowance.target' holds a JSONB
@@ -15,7 +15,7 @@
 -- Idempotent: ON CONFLICT DO NOTHING on the unique constraint
 -- (family_id, family_member_id, policy_key, effective_from).
 --
--- After migration the source rows are deleted from public.member_config.
+-- After migration the source rows are deleted from member_config.
 
 DO $$
 DECLARE
@@ -27,7 +27,7 @@ DECLARE
 BEGIN
     FOR mc IN
         SELECT cfg.family_member_id, cfg.value
-        FROM   public.member_config cfg
+        FROM   member_config cfg
         WHERE  cfg.key = 'allowance.target'
     LOOP
         SELECT fm.family_id INTO v_family_id
@@ -66,4 +66,4 @@ BEGIN
 END $$;
 
 -- Clean up source rows once migrated.
-DELETE FROM public.member_config WHERE key = 'allowance.target';
+DELETE FROM member_config WHERE key = 'allowance.target';
