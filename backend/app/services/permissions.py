@@ -6,24 +6,33 @@ and get/set helpers for family_config and member_config.
 These are the canonical sources of truth for the permission model —
 Actor.effective_permissions delegates to resolve_effective_permissions()
 so the same logic is reusable from admin API routes.
+
+Permission architecture (post-034 reconciliation):
+  - Canonical permissions live in scout.permissions (keyed by permission_key).
+  - Tier → permission mapping lives in scout.role_tier_permissions (join table).
+  - public.role_tiers.permissions (JSONB) is retired and always empty.
+  - Per-member overrides remain in public.role_tier_overrides.override_permissions
+    (JSONB, can add or revoke individual keys on top of the tier grant).
 """
 
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models.access import FamilyConfig, MemberConfig, RoleTier, RoleTierOverride
 from app.models.foundation import FamilyMember
 
-# Legacy role → tier name mapping used when no explicit tier override exists.
-# Ensures backward compatibility: members created before the tier-assignment
-# migration still get sensible permissions based on their legacy role field.
+# Legacy role → canonical tier name mapping used when no explicit tier override
+# exists.  Ensures backward compatibility: members created before the
+# tier-assignment migration still get sensible permissions based on their
+# legacy role field.  Lowercase tier names from PR #15 have been deleted by
+# migration 034; the fallback now targets the 022 UPPERCASE canonical names.
 _ROLE_TIER_FALLBACK: dict[str, str] = {
-    "adult": "admin",
-    "child": "child",
+    "adult": "PRIMARY_PARENT",
+    "child": "CHILD",
 }
 
 
@@ -32,26 +41,29 @@ def resolve_effective_permissions(db: Session, member_id: uuid.UUID) -> dict[str
 
     Algorithm:
       1. Look up the member's RoleTierOverride row (may not exist).
-      2. If found, load the referenced RoleTier and get its permissions dict.
-      3. Merge: start with tier permissions, then apply override_permissions
-         on top (override wins on collision — can add OR revoke).
+      2. If found, use the referenced role_tier_id to query
+         scout.role_tier_permissions JOIN scout.permissions — the normalized
+         join table is now the sole source of truth for tier grants.
+         (The JSONB permissions column on role_tiers is retired and empty.)
+      3. Merge: start with normalized tier permissions, then apply
+         override_permissions JSONB on top (overrides win on collision —
+         can add OR revoke individual keys).
       4. If no override row exists, fall back to the member's legacy `role`
-         field and load the matching tier by name (adult → admin, child → child).
-         This ensures members without explicit tier assignments still get
-         correct permissions during the Phase 2 migration period.
+         field, look up the canonical tier by name (adult → PRIMARY_PARENT,
+         child → CHILD), and query the same normalized join table.
 
-    Returns a flat dict {str: bool}. Only keys with True values grant access;
+    Returns a flat dict {str: bool}.  Only keys present in the dict matter;
     callers should treat missing keys as False.
     """
-    stmt = (
-        select(RoleTierOverride, RoleTier)
-        .join(RoleTier, RoleTierOverride.role_tier_id == RoleTier.id)
-        .where(RoleTierOverride.family_member_id == member_id)
-    )
-    row = db.execute(stmt).first()
+    # --- Resolve override row (if any) ---
+    override = db.scalars(
+        select(RoleTierOverride).where(RoleTierOverride.family_member_id == member_id)
+    ).first()
 
-    if row is None:
-        # No explicit tier assignment — fall back to role-based tier lookup.
+    if override is not None:
+        tier_id = override.role_tier_id
+    else:
+        # Fall back to role-based canonical tier lookup.
         member = db.get(FamilyMember, member_id)
         if member is None:
             return {}
@@ -61,21 +73,25 @@ def resolve_effective_permissions(db: Session, member_id: uuid.UUID) -> dict[str
         tier = db.scalars(select(RoleTier).where(RoleTier.name == tier_name)).first()
         if tier is None:
             return {}
-        merged: dict[str, bool] = {}
-        if isinstance(tier.permissions, dict):
-            for k, v in tier.permissions.items():
-                merged[k] = bool(v)
-        return merged
+        tier_id = tier.id
 
-    override, tier = row
+    # --- Query normalized permissions for the resolved tier ---
+    rows = db.execute(
+        text(
+            """
+            SELECT p.permission_key
+            FROM scout.role_tier_permissions rtp
+            JOIN scout.permissions p ON p.id = rtp.permission_id
+            WHERE rtp.role_tier_id = :tier_id
+            """
+        ),
+        {"tier_id": tier_id},
+    ).all()
 
-    # Merge: tier base permissions, then layer per-member overrides on top.
-    merged = {}
-    if isinstance(tier.permissions, dict):
-        for k, v in tier.permissions.items():
-            merged[k] = bool(v)
+    merged: dict[str, bool] = {row.permission_key: True for row in rows}
 
-    if isinstance(override.override_permissions, dict):
+    # --- Layer per-member overrides on top ---
+    if override is not None and isinstance(override.override_permissions, dict):
         for k, v in override.override_permissions.items():
             merged[k] = bool(v)
 

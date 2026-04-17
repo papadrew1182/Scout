@@ -97,8 +97,10 @@ def seed_smoke():
     db.commit()
 
     # --- Role tier assignments ---
-    # Ensure tier rows exist (migration 024 seeds them, but seed_smoke may run
-    # on a fresh DB that skips migrations). We upsert the tiers defensively.
+    # Ensure canonical tier rows exist (migration 022 seeds them; migration 034
+    # deletes the old PR #15 lowercase duplicates). We look up existing rows
+    # rather than upserting, because the CHECK constraint on role_tiers.name
+    # only allows the six UPPERCASE canonical names post-034.
     def ensure_tier(name: str, description: str) -> RoleTier:
         t = db.scalars(select(RoleTier).where(RoleTier.name == name)).first()
         if not t:
@@ -107,15 +109,14 @@ def seed_smoke():
             db.flush()
         return t
 
-    admin_tier    = ensure_tier("admin",    "Full household administrator")
-    teen_tier     = ensure_tier("teen",     "Older child with self-scoped write access")
-    child_tier    = ensure_tier("child",    "School-age child with chore + request permissions")
-    kid_tier      = ensure_tier("kid",      "Young child with chore completion and grocery requests only")
+    primary_parent_tier = ensure_tier("PRIMARY_PARENT", "Full household administrator")
+    teen_tier           = ensure_tier("TEEN",           "Older child with self-scoped write access")
+    child_tier          = ensure_tier("CHILD",          "School-age child with chore + request permissions")
     db.commit()
 
     tier_map = {
-        andrew.id: admin_tier,
-        sally.id:  admin_tier,
+        andrew.id: primary_parent_tier,
+        sally.id:  primary_parent_tier,
         tyler.id:  teen_tier,
         sadie.id:  teen_tier,
         townes.id: child_tier,
