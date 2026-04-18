@@ -17,6 +17,7 @@ const ADMIN_SECTIONS: AdminLink[] = [
   { label: "Grocery", description: "Stores, categories, approval workflow", href: "/admin/grocery", permission: "grocery.manage_config" },
   { label: "Meals", description: "Plan rules, rating scale, batch cook templates", href: "/admin/meals", permission: "meals.manage_config" },
   { label: "Rewards", description: "Reward tiers, redemption rules, approval workflow", href: "/admin/rewards", permission: "rewards.manage_config" },
+  { label: "Affirmations", description: "Library, rotation rules, targeting, engagement analytics", href: "/admin/affirmations", permission: "affirmations.manage_config" },
   { label: "Scout AI", description: "Capability toggles, moderation tiers, usage caps", href: "/admin/scout-ai", permission: "scout_ai.manage_toggles" },
   { label: "Family Members", description: "Add/remove/edit family members and their accounts", href: "/admin/family", permission: "family.manage_members" },
   { label: "Permissions", description: "Role tiers and per-member permission overrides", href: "/admin/permissions", permission: "admin.manage_permissions" },
@@ -35,6 +36,7 @@ export default function AdminHome() {
     "scout_ai.manage_toggles": useHasPermission("scout_ai.manage_toggles"),
     "family.manage_members": useHasPermission("family.manage_members"),
     "admin.manage_permissions": useHasPermission("admin.manage_permissions"),
+    "affirmations.manage_config": useHasPermission("affirmations.manage_config"),
   };
 
   const visible = ADMIN_SECTIONS.filter((section) => perms[section.permission as keyof typeof perms]);
