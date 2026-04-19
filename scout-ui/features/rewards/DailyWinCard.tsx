@@ -7,7 +7,8 @@
  * daily_wins. Day-by-day mapping lands when the backend exposes it.
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { RewardsMember } from "../lib/contracts";
 import { colors } from "../../lib/styles";
@@ -17,14 +18,17 @@ interface Props {
 }
 
 export function DailyWinCard({ member }: Props) {
+  const router = useRouter();
   const total = 5;
   const dots = Array.from({ length: total }, (_, i) => i < member.daily_wins);
   const allFive = member.daily_wins >= 5;
 
   return (
-    <View
+    <Pressable
       style={[styles.card, allFive && styles.cardHero]}
+      onPress={() => router.push(`/members/${member.family_member_id}?tab=wins`)}
       accessible
+      accessibilityRole="link"
       accessibilityLabel={`${member.name} ${member.daily_wins} of 5 daily wins`}
     >
       <Text style={[styles.name, allFive && styles.nameHero]}>{member.name}</Text>
@@ -36,7 +40,7 @@ export function DailyWinCard({ member }: Props) {
       <Text style={[styles.count, allFive && styles.countHero]}>
         {member.daily_wins} / {total}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
