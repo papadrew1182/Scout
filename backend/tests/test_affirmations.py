@@ -13,6 +13,19 @@ from app.models.foundation import Family, FamilyMember
 
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def clean_affirmation_tables(db):
+    """Remove seed affirmations from migration 039 so tests start clean."""
+    db.execute(text("DELETE FROM scout.affirmation_delivery_log"))
+    db.execute(text("DELETE FROM scout.affirmation_feedback"))
+    db.execute(text("DELETE FROM scout.affirmations"))
+    db.flush()
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
