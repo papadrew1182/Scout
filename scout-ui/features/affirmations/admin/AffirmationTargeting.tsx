@@ -23,7 +23,7 @@ export function AffirmationTargeting() {
       const result: MemberRow[] = [];
       for (const m of members) {
         try {
-          const configs = await fetchMemberConfig(m.family_member_id);
+          const configs = await fetchMemberConfig(m.id);
           const affPref = configs.find((c) => c.key === "affirmations.preferences");
           const val = affPref?.value as Record<string, unknown> | undefined;
           result.push({
@@ -62,11 +62,11 @@ export function AffirmationTargeting() {
         <Text style={styles.headerCell}>Prefs</Text>
       </View>
       {rows.map((r) => (
-        <View key={r.member.family_member_id} style={styles.row}>
-          <Text style={[styles.cell, { flex: 2 }]}>{r.member.name}</Text>
+        <View key={r.member.id} style={styles.row}>
+          <Text style={[styles.cell, { flex: 2 }]}>{r.member.first_name}</Text>
           <Text style={styles.cell}>{r.member.role}</Text>
           <Pressable
-            onPress={() => toggle(r.member.family_member_id, r.enabled)}
+            onPress={() => toggle(r.member.id, r.enabled)}
             accessibilityRole="switch"
             accessibilityState={{ checked: r.enabled }}
             style={[styles.toggleBtn, r.enabled && styles.toggleBtnActive]}
