@@ -70,7 +70,11 @@ export function CompletionSheet({ occurrenceId, onClose, source }: Props) {
   const occ = findOccurrence(source, occurrenceId);
   if (!occ) {
     return (
-      <View style={styles.sheet}>
+      <View
+        style={styles.sheet}
+        onStartShouldSetResponder={() => true}
+        onResponderTerminationRequest={() => false}
+      >
         <Text style={styles.title}>Task not found</Text>
         <Text style={styles.subtle}>It may have been removed or already completed.</Text>
         <Pressable
@@ -113,7 +117,11 @@ export function CompletionSheet({ occurrenceId, onClose, source }: Props) {
   };
 
   return (
-    <View style={styles.sheet}>
+    <View
+      style={styles.sheet}
+      onStartShouldSetResponder={() => true}
+      onResponderTerminationRequest={() => false}
+    >
       <View style={styles.headerRow}>
         <Text style={styles.eyebrow}>{ownerName}</Text>
         <StatusPill done={done} late={isLate && !done} />
