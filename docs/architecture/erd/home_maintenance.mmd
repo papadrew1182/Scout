@@ -1,0 +1,62 @@
+erDiagram
+    families ||--o{ home_zones : "has"
+    families ||--o{ home_assets : "has"
+    families ||--o{ maintenance_templates : "has"
+    families ||--o{ maintenance_instances : "has"
+
+    home_zones ||--o{ home_assets : "contains"
+    home_zones ||--o{ maintenance_templates : "scoped to"
+
+    home_assets ||--o{ maintenance_templates : "maintains"
+
+    maintenance_templates ||--o{ maintenance_instances : "generates"
+
+    family_members ||--o{ maintenance_instances : "owns"
+    family_members ||--o{ maintenance_instances : "completes"
+    family_members ||--o{ maintenance_templates : "default owner"
+
+    home_zones {
+        uuid id PK
+        uuid family_id FK
+        text name
+        text zone_type
+        text notes
+        int sort_order
+        bool is_active
+    }
+
+    home_assets {
+        uuid id PK
+        uuid family_id FK
+        uuid zone_id FK
+        text name
+        text asset_type
+        text model
+        text serial
+        date purchase_date
+        timestamptz warranty_expires_at
+    }
+
+    maintenance_templates {
+        uuid id PK
+        uuid family_id FK
+        uuid zone_id FK
+        uuid asset_id FK
+        text name
+        text cadence_type
+        int rotation_month_mod
+        jsonb included
+        jsonb not_included
+        text done_means_done
+        jsonb supplies
+    }
+
+    maintenance_instances {
+        uuid id PK
+        uuid family_id FK
+        uuid template_id FK
+        uuid owner_member_id FK
+        timestamptz scheduled_for
+        timestamptz completed_at
+        uuid completed_by_member_id FK
+    }
