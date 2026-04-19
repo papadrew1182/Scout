@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS scout.affirmations (
     length_class    TEXT NOT NULL DEFAULT 'short',
     active          BOOLEAN NOT NULL DEFAULT true,
     source_type     TEXT NOT NULL DEFAULT 'curated',
-    created_by      UUID REFERENCES family_members(id) ON DELETE SET NULL,
-    updated_by      UUID REFERENCES family_members(id) ON DELETE SET NULL,
+    created_by      UUID REFERENCES public.family_members(id) ON DELETE SET NULL,
+    updated_by      UUID REFERENCES public.family_members(id) ON DELETE SET NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS scout.affirmations (
 -- 2. Feedback (reactions)
 CREATE TABLE IF NOT EXISTS scout.affirmation_feedback (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_member_id    UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+    family_member_id    UUID NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
     affirmation_id      UUID NOT NULL REFERENCES scout.affirmations(id) ON DELETE CASCADE,
     reaction_type       TEXT NOT NULL CHECK (reaction_type IN ('heart', 'thumbs_down', 'skip', 'reshow')),
     context             TEXT,
@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_affirmation_feedback_member
 -- 3. Delivery log
 CREATE TABLE IF NOT EXISTS scout.affirmation_delivery_log (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_member_id    UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
+    family_member_id    UUID NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
     affirmation_id      UUID NOT NULL REFERENCES scout.affirmations(id) ON DELETE CASCADE,
     surfaced_at         TIMESTAMPTZ NOT NULL,
     surfaced_in         TEXT NOT NULL,
