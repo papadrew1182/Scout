@@ -104,3 +104,71 @@ a phase complete.
 - [ ] expand-inline tests verify inline expansion
 - [ ] no-op-documented tests verify no navigation
 - [ ] CompletionSheet regression test passes
+
+---
+
+## Phase 2 - Manual Data Entry Restoration
+
+### Pre-flight
+
+- [ ] Migration 040_phase2_permissions.sql applied to database
+- [ ] `npx tsc --noEmit` passes
+- [ ] Backend pytest suite passes (349+ tests)
+
+### Backend permission gates
+
+- [ ] `POST /api/families/{id}/personal-tasks` returns 403 for DISPLAY_ONLY tier
+- [ ] `POST /api/families/{id}/personal-tasks` returns 201 for CHILD tier
+- [ ] `POST /api/families/{id}/events` returns 403 for CHILD tier
+- [ ] `POST /api/families/{id}/events` returns 201 for TEEN tier
+- [ ] `POST /api/families/{id}/chore-templates` returns 403 for TEEN tier
+- [ ] `POST /api/families/{id}/chore-templates` returns 201 for PRIMARY_PARENT
+- [ ] `POST /api/families/{id}/meals` returns 403 for TEEN tier
+- [ ] `POST /api/families/{id}/meals` returns 201 for PARENT tier
+
+### Personal tasks - /today
+
+- [ ] "Add task" button visible on /today
+- [ ] Tapping opens AddTaskSheet inline
+- [ ] Title field is required (shows error if empty)
+- [ ] Due date field is optional
+- [ ] Submitting creates the task via API
+- [ ] Sheet closes after successful creation
+- [ ] Board refreshes to show new task
+
+### Calendar events - /calendar
+
+- [ ] "Add event" button visible on /calendar
+- [ ] Tapping opens AddEventSheet inline
+- [ ] Title, start, and end fields are required
+- [ ] Validates end > start
+- [ ] All-day and Hearth toggles work
+- [ ] Submit is disabled when user lacks calendar.manage_self
+- [ ] Creates event via API and closes sheet
+
+### Chore templates - /admin/chores/new
+
+- [ ] Form renders with name, description, cadence, due time fields
+- [ ] Cadence chip selector works (daily/weekly/monthly/odd-even)
+- [ ] Submit creates template via API
+- [ ] Success message appears after creation
+- [ ] Child user sees permission denial message
+
+### Meal staples - /admin/meals/staples/new
+
+- [ ] Form renders with name, protein, pattern, prep time fields
+- [ ] Pattern chip selector works
+- [ ] Submit creates meal via API
+- [ ] Success message appears after creation
+- [ ] Child user sees permission denial message
+
+### Architecture check
+
+- [ ] `node scripts/architecture-check.js` shows reduced Check 1 WARN count
+- [ ] Known Gaps table updated for resolved routes
+
+### Smoke tests
+
+- [ ] `npx playwright test tests/data-entry.spec.ts` passes
+- [ ] Happy-path tests for all four domains
+- [ ] Permission-denial tests for admin forms
