@@ -105,6 +105,7 @@ Every new Scout feature MUST satisfy all eight points before merge. This checkli
 | Feature aggregation hooks | `scout-ui/lib/{feature}.ts` |
 | Admin route group | `scout-ui/app/admin/*` |
 | Migrations | `backend/migrations/NNN_*.sql` (mirrored to `database/migrations/`) |
+| Interaction contract | `docs/architecture/interaction_contract.md` |
 
 ---
 

@@ -272,19 +272,36 @@ export default function Grocery() {
             {card.storeItems.length === 0 ? (
               <Text style={styles.emptyText}>No items for this store yet.</Text>
             ) : (
-              card.storeItems.map((item) => (
-                <View key={item.id} style={styles.itemRow}>
-                  <View style={styles.check}>
-                    {/* approval_status "purchased" could show checkmark in future */}
+              card.storeItems.map((item) => {
+                const isPurchased = item.approval_status === "purchased";
+                return (
+                  <View key={item.id} style={styles.itemRow}>
+                    <Pressable
+                      style={[styles.check, isPurchased && styles.checkDone]}
+                      onPress={isPurchased ? undefined : async () => {
+                        try {
+                          await updateGroceryItem(item.id, { approval_status: "purchased" });
+                          load();
+                        } catch (e: any) {
+                          setError(e?.message ?? "Check-off failed");
+                        }
+                      }}
+                      disabled={isPurchased}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel={`Mark ${item.title} purchased`}
+                      accessibilityState={{ checked: isPurchased }}
+                    >
+                      {isPurchased && <Text style={styles.checkMark}>✓</Text>}
+                    </Pressable>
+                    <Text style={[styles.itemName, isPurchased && styles.itemNameDone]}>{item.title}</Text>
+                    {item.category && (
+                      <View style={styles.catTag}>
+                        <Text style={styles.catTagText}>{item.category}</Text>
+                      </View>
+                    )}
                   </View>
-                  <Text style={styles.itemName}>{item.title}</Text>
-                  {item.category && (
-                    <View style={styles.catTag}>
-                      <Text style={styles.catTagText}>{item.category}</Text>
-                    </View>
-                  )}
-                </View>
-              ))
+                );
+              }))
             )}
           </View>
         ))}
@@ -332,7 +349,10 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   check: { width: 16, height: 16, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  checkDone: { backgroundColor: colors.green, borderColor: colors.green },
+  checkMark: { color: "#FFFFFF", fontSize: 10, fontWeight: "700" },
   itemName: { flex: 1, fontSize: 12, color: colors.text, fontFamily: fonts.body },
+  itemNameDone: { color: colors.muted, textDecorationLine: "line-through" },
   catTag: { backgroundColor: colors.purpleLight, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
   catTagText: { fontSize: 9, color: colors.purpleDeep, fontWeight: "700", fontFamily: fonts.body },
 

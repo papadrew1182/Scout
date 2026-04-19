@@ -20,6 +20,7 @@
  */
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { CalendarExport, ConnectorHealthItem } from "../lib/contracts";
 import { useCalendarExports, useConnectorsHealth } from "../hooks";
@@ -28,6 +29,7 @@ import { colors } from "../../lib/styles";
 import { HouseholdBlocksPreview } from "./HouseholdBlocksPreview";
 
 export function CalendarPreview() {
+  const router = useRouter();
   const exports = useCalendarExports();
   const health = useConnectorsHealth();
 
@@ -67,16 +69,20 @@ export function CalendarPreview() {
       </Text>
 
       {banner && (
-        <View
+        <Pressable
           style={[
             styles.banner,
             banner.tone === "warn" && styles.bannerWarn,
             banner.tone === "error" && styles.bannerErr,
           ]}
+          onPress={() => router.push("/control-plane")}
+          accessibilityRole="link"
+          accessibilityLabel={`${banner.title}. Tap to open control plane.`}
         >
           <Text style={styles.bannerTitle}>{banner.title}</Text>
           <Text style={styles.bannerBody}>{banner.body}</Text>
-        </View>
+          <Text style={styles.bannerLink}>Open Control Plane</Text>
+        </Pressable>
       )}
 
       {grouped.length === 0 ? (
@@ -306,6 +312,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     lineHeight: 16,
+  },
+  bannerLink: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 8,
   },
 
   dayBlock: { marginBottom: 14 },

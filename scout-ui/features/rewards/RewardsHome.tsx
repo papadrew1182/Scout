@@ -14,10 +14,12 @@
  * `useIsParent()` (PRIMARY_PARENT or PARENT) — never on age.
  */
 
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { RewardsCurrentWeekResponse } from "../lib/contracts";
 import { useIsParent, useRewardsWeek } from "../hooks";
+import { useHasPermission } from "../../lib/permissions";
 import { colors } from "../../lib/styles";
 import { DailyWinCard } from "./DailyWinCard";
 import { WeeklyPayoutCard } from "./WeeklyPayoutCard";
@@ -73,6 +75,7 @@ export function RewardsHome() {
         <WeeklyPayoutCard key={m.family_member_id} member={m} isParent={isParent} />
       ))}
 
+      {/* no-op: informational disclosure text, not interactive */}
       <Text style={styles.note}>
         Reward calculation is owned by Scout. Greenlight is the payout-facing
         rail. Approval and settlement land later in this lane.
@@ -88,6 +91,8 @@ function ApprovalRow({
   data: RewardsCurrentWeekResponse;
   isParent: boolean;
 }) {
+  const canRunPayout = useHasPermission("allowance.run_payout");
+  const [showAction, setShowAction] = useState(false);
   const state = data.approval.state;
   const label =
     state === "approved"
@@ -95,15 +100,19 @@ function ApprovalRow({
       : state === "ready_for_review"
         ? "Ready for review"
         : "Draft";
-  const showPlaceholder = isParent && state === "ready_for_review";
+  const canTap = isParent && canRunPayout && state === "ready_for_review";
   return (
     <View style={styles.approvalRow}>
-      <View
+      <Pressable
         style={[
           styles.approvalPill,
           state === "approved" && styles.approvalApproved,
           state === "ready_for_review" && styles.approvalReady,
         ]}
+        onPress={canTap ? () => setShowAction(!showAction) : undefined}
+        accessibilityRole={canTap ? "button" : "text"}
+        accessibilityLabel={`Approval status: ${label}`}
+        disabled={!canTap}
       >
         <Text
           style={[
@@ -114,8 +123,16 @@ function ApprovalRow({
         >
           {label.toUpperCase()}
         </Text>
-      </View>
-      {showPlaceholder && (
+      </Pressable>
+      {canTap && showAction && (
+        <View style={styles.approvalAction}>
+          <Text style={styles.approvalHelp}>
+            Parent approval flow lands in a later sprint. The period state
+            is read-only until then.
+          </Text>
+        </View>
+      )}
+      {isParent && !canTap && state === "ready_for_review" && (
         <Text style={styles.approvalHelp}>
           A parent approval flow lands later in this lane. Until then the
           period state is read-only here.
@@ -205,6 +222,12 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     letterSpacing: 0.6,
+  },
+  approvalAction: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 8,
   },
   approvalHelp: {
     color: colors.textMuted,

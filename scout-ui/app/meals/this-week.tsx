@@ -72,6 +72,7 @@ export default function MealsThisWeek() {
   const [plan, setPlan] = useState<WeeklyMealPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
   // Dietary rows: sourced from real members + dietary.notes config, with
   // seedData fallback for display props (tint, initials) and dietary label.
@@ -187,15 +188,29 @@ export default function MealsThisWeek() {
           <Text style={shared.cardAction}> </Text>
         </View>
         <View style={styles.weekGrid}>
-          {MEALS_THIS_WEEK.map((m) => (
-            <View key={m.day} style={styles.dayCol}>
-              <Text style={[styles.dayLabel, m.isToday && { color: colors.purple, fontWeight: "700" }]}>{m.day}</Text>
-              <View style={[styles.cell, m.isToday && styles.cellToday]}>
-                <Text style={[styles.cellName, m.isToday && { color: colors.purpleDeep, fontWeight: "500" }]}>{m.name}</Text>
-              </View>
-              <Text style={[styles.cellNote, m.isToday && { color: colors.purple }]}>{m.note}</Text>
-            </View>
-          ))}
+          {MEALS_THIS_WEEK.map((m) => {
+            const isExpanded = expandedDay === m.day;
+            return (
+              <Pressable
+                key={m.day}
+                style={styles.dayCol}
+                onPress={() => setExpandedDay(isExpanded ? null : m.day)}
+                accessibilityRole="button"
+                accessibilityLabel={`${m.day}: ${m.name}`}
+              >
+                <Text style={[styles.dayLabel, m.isToday && { color: colors.purple, fontWeight: "700" }]}>{m.day}</Text>
+                <View style={[styles.cell, m.isToday && styles.cellToday, isExpanded && styles.cellExpanded]}>
+                  <Text style={[styles.cellName, m.isToday && { color: colors.purpleDeep, fontWeight: "500" }]}>{m.name}</Text>
+                  {isExpanded && m.note ? (
+                    <Text style={styles.cellExpandedNote}>{m.note}</Text>
+                  ) : null}
+                </View>
+                {!isExpanded && (
+                  <Text style={[styles.cellNote, m.isToday && { color: colors.purple }]}>{m.note}</Text>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
@@ -266,7 +281,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cellToday: { backgroundColor: colors.purpleLight, borderColor: colors.purpleMid },
+  cellExpanded: { borderColor: colors.purple, borderWidth: 2 },
   cellName: { fontSize: 11, color: colors.text, fontFamily: fonts.body, textAlign: "center" },
+  cellExpandedNote: { fontSize: 9, color: colors.muted, fontFamily: fonts.body, textAlign: "center", marginTop: 4 },
   cellNote: { fontSize: 10, color: colors.muted, fontFamily: fonts.body },
 
   grid2: { flexDirection: "row", gap: 12 },

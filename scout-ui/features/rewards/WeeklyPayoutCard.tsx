@@ -8,7 +8,8 @@
  * Parent-only affordances are hidden when isParent === false.
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import { RewardsMember } from "../lib/contracts";
 import { colors } from "../../lib/styles";
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function WeeklyPayoutCard({ member, isParent }: Props) {
+  const router = useRouter();
   const percentColor =
     member.payout_percent >= 100
       ? colors.positive
@@ -29,7 +31,12 @@ export function WeeklyPayoutCard({ member, isParent }: Props) {
           : colors.negative;
 
   return (
-    <View style={styles.card}>
+    <Pressable
+      style={styles.card}
+      onPress={() => router.push(`/members/${member.family_member_id}?tab=payout`)}
+      accessibilityRole="link"
+      accessibilityLabel={`${member.name} payout details`}
+    >
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.name}>{member.name}</Text>
@@ -79,7 +86,7 @@ export function WeeklyPayoutCard({ member, isParent }: Props) {
           Currently below the 3-daily-win threshold for any payout this week.
         </Text>
       )}
-    </View>
+    </Pressable>
   );
 }
 
