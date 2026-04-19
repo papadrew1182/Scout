@@ -58,9 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_affirmation_delivery_member_time
     ON scout.affirmation_delivery_log (family_member_id, surfaced_at DESC);
 
 -- 4. Permission key
-INSERT INTO scout.permissions (key, description)
+INSERT INTO scout.permissions (permission_key, description)
 VALUES ('affirmations.manage_config', 'Manage affirmation library, rules, targeting, and analytics')
-ON CONFLICT (key) DO NOTHING;
+ON CONFLICT (permission_key) DO NOTHING;
 
 -- Grant to PRIMARY_PARENT and ADMIN tiers
 INSERT INTO scout.role_tier_permissions (role_tier_id, permission_id)
@@ -68,7 +68,7 @@ SELECT rt.id, p.id
 FROM role_tiers rt
 CROSS JOIN scout.permissions p
 WHERE rt.name IN ('PRIMARY_PARENT', 'ADMIN')
-  AND p.key = 'affirmations.manage_config'
+  AND p.permission_key = 'affirmations.manage_config'
 ON CONFLICT DO NOTHING;
 
 -- 5. Seed starter affirmations (25 across categories/tones/audiences)
