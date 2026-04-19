@@ -272,6 +272,108 @@ function checkPermissionKeyFormat() {
 }
 
 // ---------------------------------------------------------------------------
+// Check 5: Dead tap-target detection (interaction contract enforcement)
+// ---------------------------------------------------------------------------
+
+// Dashboard card components that MUST have onPress wiring.
+const DASHBOARD_CARD_ALLOWLIST = [
+  "DailyWinCard",
+  "WeeklyPayoutCard",
+];
+
+// Patterns for empty/no-op handlers that should be flagged.
+const EMPTY_HANDLER_RE = /onPress\s*=\s*\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/;
+const UNDEFINED_HANDLER_RE = /onPress\s*=\s*\{\s*undefined\s*\}/;
+const NULL_HANDLER_RE = /onPress\s*=\s*\{\s*null\s*\}/;
+const INDIRECT_ESCAPE_RE = /\/\/\s*arch-check:\s*indirect-handler/;
+
+// Whether Check 5 blocks the exit code. Starts as false (report-only);
+// flipped to true once all dead taps from the Phase 1 audit are fixed.
+const CHECK_5_ENFORCE = false;
+
+function checkDeadTapTargets() {
+  const warnings = [];
+  const featuresDir = path.join(REPO_ROOT, "scout-ui", "features");
+  const tsxInFeatures = walkDir(featuresDir, ".tsx");
+  const tsxInApp = walkDir(FRONTEND_APP_DIR, ".tsx");
+  const allTsx = [...tsxInFeatures, ...tsxInApp];
+
+  for (const filePath of allTsx) {
+    const lines = readLines(filePath);
+    const rel = relPath(filePath);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Check for empty arrow handler: onPress={() => {}}
+      if (EMPTY_HANDLER_RE.test(line)) {
+        const prevLine = i > 0 ? lines[i - 1] : "";
+        if (!INDIRECT_ESCAPE_RE.test(prevLine)) {
+          warnings.push({
+            type: "DEAD_TAP_TARGET",
+            severity: "WARN",
+            file: rel,
+            line: i + 1,
+            message: `Empty onPress handler: ${rel}:${i + 1}`,
+          });
+        }
+      }
+
+      // Check for onPress={undefined}
+      if (UNDEFINED_HANDLER_RE.test(line)) {
+        const prevLine = i > 0 ? lines[i - 1] : "";
+        if (!INDIRECT_ESCAPE_RE.test(prevLine)) {
+          warnings.push({
+            type: "DEAD_TAP_TARGET",
+            severity: "WARN",
+            file: rel,
+            line: i + 1,
+            message: `onPress={undefined}: ${rel}:${i + 1}`,
+          });
+        }
+      }
+
+      // Check for onPress={null}
+      if (NULL_HANDLER_RE.test(line)) {
+        const prevLine = i > 0 ? lines[i - 1] : "";
+        if (!INDIRECT_ESCAPE_RE.test(prevLine)) {
+          warnings.push({
+            type: "DEAD_TAP_TARGET",
+            severity: "WARN",
+            file: rel,
+            line: i + 1,
+            message: `onPress={null}: ${rel}:${i + 1}`,
+          });
+        }
+      }
+    }
+
+    // Check dashboard card allowlist: these components must have onPress
+    // wiring on their outermost interactive element.
+    const content = fs.readFileSync(filePath, "utf8");
+    for (const cardName of DASHBOARD_CARD_ALLOWLIST) {
+      // Only check the file that defines the component (export function CardName)
+      const defRe = new RegExp(`export\\s+function\\s+${cardName}\\s*\\(`);
+      if (!defRe.test(content)) continue;
+
+      // The component must contain at least one onPress or Pressable with onPress
+      const hasOnPress = /onPress\s*[={]/.test(content);
+      if (!hasOnPress) {
+        warnings.push({
+          type: "DEAD_TAP_TARGET",
+          severity: "WARN",
+          file: rel,
+          line: null,
+          message: `Dashboard card "${cardName}" has no onPress handler: ${rel}`,
+        });
+      }
+    }
+  }
+
+  return warnings;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -283,14 +385,22 @@ function main() {
   const frontendWarnings = checkFrontendAdminActions();
   const seedInfos = checkSeedDataDrift();
   const keyFormatWarnings = checkPermissionKeyFormat();
+  const deadTapWarnings = checkDeadTapTargets();
 
   const allEntries = [
     ...backendWarnings,
     ...frontendWarnings,
     ...seedInfos,
     ...keyFormatWarnings,
+    ...deadTapWarnings,
   ];
 
+  // When CHECK_5_ENFORCE is false, dead-tap warnings are reported but
+  // do not contribute to the exit code. Once all dead taps are fixed,
+  // CHECK_5_ENFORCE is flipped to true and they block like any other WARN.
+  const enforcedWarnings = allEntries.filter(
+    (e) => e.severity === "WARN" && (e.type !== "DEAD_TAP_TARGET" || CHECK_5_ENFORCE),
+  );
   const warnings = allEntries.filter((e) => e.severity === "WARN");
   const infos = allEntries.filter((e) => e.severity === "INFO");
 
@@ -300,6 +410,7 @@ function main() {
     FRONTEND_MISSING_GATE: "Check 2: Frontend admin actions missing useHasPermission gate",
     SEED_DATA_DRIFT: "Check 3: seedData drift (de-hardcode targets — INFO only)",
     PERMISSION_KEY_FORMAT: "Check 4: Permission key format violations",
+    DEAD_TAP_TARGET: "Check 5: Dead tap-target detection (interaction contract)",
   };
 
   for (const [type, label] of Object.entries(groups)) {
@@ -334,7 +445,7 @@ function main() {
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
   console.log(`\nReport written to: ${path.relative(process.cwd(), reportPath)}`);
 
-  if (warnings.length > 0) {
+  if (enforcedWarnings.length > 0) {
     console.log(
       "\nFix warnings before merge. For genuinely public backend endpoints,\n" +
         "add a comment `# noqa: public-route` in the function body to suppress."
