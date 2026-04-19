@@ -347,3 +347,36 @@ def remove_dietary_preference(
     actor.require_family(family_id)
     actor.require_permission("meals.manage_staples")
     meals_service.remove_dietary_preference(db, family_id, member_id, preference_id)
+
+
+# --- Base-cook transformations (Phase 5) ---
+
+from pydantic import BaseModel as PydanticBaseModel
+from sqlalchemy import select, text
+
+class TransformationRead(PydanticBaseModel):
+    id: uuid.UUID
+    base_staple_id: uuid.UUID
+    transformed_staple_id: uuid.UUID
+    transformation_name: str
+    notes: str | None
+    model_config = {"from_attributes": True}
+
+
+@router.get("/meals/base-cooks/{staple_id}/transformations", response_model=list[TransformationRead])
+def list_transformations(
+    family_id: uuid.UUID,
+    staple_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    actor.require_family(family_id)
+    rows = db.execute(
+        text("""
+            SELECT id, base_staple_id, transformed_staple_id, transformation_name, notes
+            FROM scout.meal_transformations
+            WHERE family_id = :family_id AND base_staple_id = :staple_id
+        """),
+        {"family_id": family_id, "staple_id": staple_id},
+    ).all()
+    return [TransformationRead.model_validate(dict(r._mapping)) for r in rows]
