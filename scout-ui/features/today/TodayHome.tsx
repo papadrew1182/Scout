@@ -25,6 +25,7 @@
  * value with no other UI changes.
  */
 
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 
@@ -44,6 +45,7 @@ import {
 import { colors } from "../../lib/styles";
 import { HouseholdBoard } from "./HouseholdBoard";
 import { CompletionSheet } from "./CompletionSheet";
+import { AddTaskSheet } from "./AddTaskSheet";
 import { AffirmationCard } from "../affirmations/AffirmationCard";
 
 interface KidWinSummary {
@@ -63,6 +65,7 @@ export function TodayHome() {
   const { focused_member_id, setFocus } = useUiFocusMember();
   const { occurrence_id: sheetOccId, close: closeSheet } = useUiCompletionSheet();
   const { toast, dismiss } = useUiToast();
+  const [showAddTask, setShowAddTask] = useState(false);
 
   if (today.status === "idle" || today.status === "loading") {
     return <SkeletonState />;
@@ -184,6 +187,21 @@ export function TodayHome() {
       ) : (
         <HouseholdBoard data={filtered} />
       )}
+
+      <Pressable
+        style={styles.addTaskBtn}
+        onPress={() => setShowAddTask(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Add personal task"
+      >
+        <Text style={styles.addTaskText}>+ Add task</Text>
+      </Pressable>
+
+      <AddTaskSheet
+        visible={showAddTask}
+        onClose={() => setShowAddTask(false)}
+        onCreated={() => today.refresh()}
+      />
 
       <CompletionSheet
         occurrenceId={sheetOccId}
@@ -432,6 +450,21 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
   chipText: { color: colors.textSecondary, fontSize: 12, fontWeight: "700" },
   chipTextActive: { color: colors.buttonPrimaryText },
+
+  addTaskBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignSelf: "flex-start",
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  addTaskText: {
+    color: colors.buttonPrimaryText,
+    fontWeight: "700",
+    fontSize: 13,
+  },
 
   emptyState: { marginTop: 30, alignItems: "center", paddingHorizontal: 12 },
   emptyTitle: {
