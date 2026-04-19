@@ -38,6 +38,7 @@ def list_events(
 @router.post("", response_model=EventRead, status_code=201)
 def create_event(family_id: uuid.UUID, payload: EventCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     return calendar_service.create_event(db, family_id, payload)
 
 
@@ -56,12 +57,14 @@ def update_event(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     return calendar_service.update_event(db, family_id, event_id, payload)
 
 
 @router.delete("/{event_id}", status_code=204)
 def delete_event(family_id: uuid.UUID, event_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     calendar_service.delete_event(db, family_id, event_id)
 
 
@@ -74,6 +77,7 @@ def create_recurrence_instance(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     return calendar_service.create_recurrence_instance(db, family_id, event_id, payload)
 
 
@@ -94,6 +98,7 @@ def add_attendee(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     return calendar_service.add_attendee(db, family_id, event_id, payload)
 
 
@@ -107,6 +112,7 @@ def update_attendee(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     return calendar_service.update_attendee_response(db, family_id, event_id, attendee_id, payload)
 
 
@@ -119,4 +125,5 @@ def remove_attendee(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("calendar.manage_self")
     calendar_service.remove_attendee(db, family_id, event_id, attendee_id)
