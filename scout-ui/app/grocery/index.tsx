@@ -272,41 +272,49 @@ export default function Grocery() {
             {card.storeItems.length === 0 ? (
               <Text style={styles.emptyText}>No items for this store yet.</Text>
             ) : (
-              card.storeItems.map((item) => {
-                const isPurchased = item.approval_status === "purchased";
-                return (
-                  <View key={item.id} style={styles.itemRow}>
-                    <Pressable
-                      style={[styles.check, isPurchased && styles.checkDone]}
-                      onPress={isPurchased ? undefined : async () => {
-                        try {
-                          await updateGroceryItem(item.id, { approval_status: "purchased" });
-                          load();
-                        } catch (e: any) {
-                          setError(e?.message ?? "Check-off failed");
-                        }
-                      }}
-                      disabled={isPurchased}
-                      accessibilityRole="checkbox"
-                      accessibilityLabel={`Mark ${item.title} purchased`}
-                      accessibilityState={{ checked: isPurchased }}
-                    >
-                      {isPurchased && <Text style={styles.checkMark}>✓</Text>}
-                    </Pressable>
-                    <Text style={[styles.itemName, isPurchased && styles.itemNameDone]}>{item.title}</Text>
-                    {item.category && (
-                      <View style={styles.catTag}>
-                        <Text style={styles.catTagText}>{item.category}</Text>
-                      </View>
-                    )}
-                  </View>
-                );
-              }))
+              card.storeItems.map((item) => (
+                <GroceryItemRow
+                  key={item.id}
+                  item={item}
+                  onCheckOff={async (id) => {
+                    try {
+                      await updateGroceryItem(id, { approval_status: "purchased" });
+                      load();
+                    } catch (err) {
+                      setError(typeof err === "object" && err && "message" in err ? (err as Error).message : "Check-off failed");
+                    }
+                  }}
+                />
+              ))
             )}
           </View>
         ))}
       </View>
     </ScrollView>
+  );
+}
+
+function GroceryItemRow({ item, onCheckOff }: { item: GroceryItem; onCheckOff: (id: string) => void }) {
+  const isPurchased = item.approval_status === "purchased";
+  return (
+    <View style={styles.itemRow}>
+      <Pressable
+        style={[styles.check, isPurchased && styles.checkDone]}
+        onPress={isPurchased ? undefined : () => onCheckOff(item.id)}
+        disabled={isPurchased}
+        accessibilityRole="checkbox"
+        accessibilityLabel={`Mark ${item.title} purchased`}
+        accessibilityState={{ checked: isPurchased }}
+      >
+        {isPurchased && <Text style={styles.checkMark}>✓</Text>}
+      </Pressable>
+      <Text style={[styles.itemName, isPurchased && styles.itemNameDone]}>{item.title}</Text>
+      {item.category && (
+        <View style={styles.catTag}>
+          <Text style={styles.catTagText}>{item.category}</Text>
+        </View>
+      )}
+    </View>
   );
 }
 
