@@ -172,3 +172,42 @@ a phase complete.
 - [ ] `npx playwright test tests/data-entry.spec.ts` passes
 - [ ] Happy-path tests for all four domains
 - [ ] Permission-denial tests for admin forms
+
+---
+
+## Phase 6 - Finish Affirmations
+
+### User surface
+
+- [ ] AffirmationCard renders on /today after the summary strip
+- [ ] Card shows affirmation text with category and tone metadata
+- [ ] Reaction buttons visible (Heart, Nope, Skip, Later)
+- [ ] Tapping a reaction animates the card out
+- [ ] Refreshing shows a different affirmation (within cooldown rules)
+- [ ] AffirmationPreferences section visible on /settings
+
+### Admin surface
+
+- [ ] Admin affirmations page accessible at /admin/affirmations
+- [ ] Library tab shows list of affirmations with active/inactive toggle
+- [ ] Governance tab shows config (cooldown, repeat window, etc.)
+- [ ] Targeting tab shows per-member enable/disable toggles
+- [ ] Analytics tab shows delivery and reaction counts
+- [ ] Child user cannot access /admin/affirmations
+
+### Validation items (spec section 7)
+
+- [ ] 1. Admin routes return 403 without affirmations.manage_config
+- [ ] 2. Max 1 affirmation visible, reactions available
+- [ ] 3. Zero admin controls on user surface
+- [ ] 4. Thumbs-down removes affirmation from rotation
+- [ ] 5. Heart boosts category weight
+- [ ] 6. Cooldown prevents re-show
+- [ ] 7. Admin CRUD works
+- [ ] 8. Analytics returns aggregates
+- [ ] 9. Family-level disable works
+- [ ] 10. Member-level disable works
+
+### Smoke tests
+
+- [ ] `npx playwright test tests/affirmations.spec.ts` passes
