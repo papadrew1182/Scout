@@ -41,6 +41,7 @@ def list_meal_plans(family_id: uuid.UUID, actor: Actor = Depends(get_current_act
 @router.post("/meal-plans", response_model=MealPlanRead, status_code=201)
 def create_meal_plan(family_id: uuid.UUID, payload: MealPlanCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return meals_service.create_meal_plan(db, family_id, payload)
 
 
@@ -59,12 +60,14 @@ def update_meal_plan(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return meals_service.update_meal_plan(db, family_id, plan_id, payload)
 
 
 @router.delete("/meal-plans/{plan_id}", status_code=204)
 def delete_meal_plan(family_id: uuid.UUID, plan_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     meals_service.delete_meal_plan(db, family_id, plan_id)
 
 
@@ -81,6 +84,7 @@ def generate_weekly_plan(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meal_plan.generate")
     result = weekly_meal_plan_service.generate_weekly_meal_plan(
         db,
         family_id,
@@ -148,6 +152,7 @@ def update_weekly_plan(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return weekly_meal_plan_service.update_weekly_meal_plan(
         db, family_id, actor.member_id, plan_id, payload
     )
@@ -161,6 +166,7 @@ def approve_weekly_plan(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meal_plan.approve")
     return weekly_meal_plan_service.approve_weekly_meal_plan(
         db, family_id, actor.member_id, plan_id
     )
@@ -174,6 +180,7 @@ def archive_weekly_plan(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return weekly_meal_plan_service.archive_weekly_meal_plan(
         db, family_id, actor.member_id, plan_id
     )
@@ -188,6 +195,7 @@ def regenerate_weekly_plan_day(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meal_plan.generate")
     return weekly_meal_plan_service.regenerate_day(
         db,
         family_id,
@@ -222,7 +230,7 @@ def create_meal_review(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
-    # Override member_id with authenticated actor
+    actor.require_permission("meal.review_self")
     payload.member_id = actor.member_id
     return weekly_meal_plan_service.create_meal_review(db, family_id, payload)
 
@@ -265,6 +273,7 @@ def list_meals(
 @router.post("/meals", response_model=MealRead, status_code=201)
 def create_meal(family_id: uuid.UUID, payload: MealCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return meals_service.create_meal(db, family_id, payload)
 
 
@@ -283,12 +292,14 @@ def update_meal(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return meals_service.update_meal(db, family_id, meal_id, payload)
 
 
 @router.delete("/meals/{meal_id}", status_code=204)
 def delete_meal(family_id: uuid.UUID, meal_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     meals_service.delete_meal(db, family_id, meal_id)
 
 
@@ -318,6 +329,7 @@ def add_dietary_preference(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     return meals_service.add_dietary_preference(db, family_id, member_id, payload)
 
 
@@ -333,4 +345,5 @@ def remove_dietary_preference(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("meals.manage_staples")
     meals_service.remove_dietary_preference(db, family_id, member_id, preference_id)

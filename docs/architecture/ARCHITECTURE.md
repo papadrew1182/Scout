@@ -129,16 +129,16 @@ Resolving these is a follow-up sprint (post-Phase 7). When fixing each file, add
 
 | File | Endpoint count | Notes |
 |------|---------------|-------|
-| `backend/app/routes/meals.py` | 14 | Mix of user actions (add review) and admin actions (approve plan, archive meal); need to split by permission key |
+| `backend/app/routes/meals.py` | 0 | **Resolved Phase 2:** `meals.manage_staples` on admin actions, `meal_plan.generate`/`meal_plan.approve` on plan ops, `meal.review_self` on reviews |
 | `backend/app/routes/grocery.py` | 8 | Mix of `grocery.add_item`, `grocery.approve`, `purchase_request.approve`, `purchase_request.submit` |
-| `backend/app/routes/calendar.py` | 7 | All user-scoped (add/update/delete events); add `calendar.manage_self` or similar |
+| `backend/app/routes/calendar.py` | 0 | **Resolved Phase 2:** `calendar.manage_self` on all event and attendee mutations |
 | `backend/app/routes/notes.py` | 5 | Mix of self-scoped and `notes.manage_any` |
 | `backend/app/routes/finance.py` | 5 | Mix of self-scoped and `finance.manage` |
-| `backend/app/routes/personal_tasks.py` | 4 | All user-scoped; add `tasks.manage_self` |
+| `backend/app/routes/personal_tasks.py` | 0 | **Resolved Phase 2:** `tasks.manage_self` on all mutations |
 | `backend/app/routes/task_instances.py` | 4 | Chore completion self-scoped; `chore.complete_self` already defined |
 | `backend/app/routes/health_fitness.py` | 6 | All user-scoped; define `health.manage_self` |
 | `backend/app/routes/allowance.py` | 1 | `create_manual_entry` — needs `allowance.run_payout` or a new `allowance.manage_ledger` key |
-| `backend/app/routes/chores.py` | 1 | Mix of user action; `chore.complete_self` already seeded |
+| `backend/app/routes/chores.py` | 0 | **Resolved Phase 2:** `chores.manage_config` on create template |
 | `backend/app/routes/routines.py` | 2 | User-scoped; define `routines.manage_self` |
 | `backend/app/routes/families.py` | 1 | `family.manage_members` already seeded |
 | `backend/app/routes/canonical.py` | 1 | Audit endpoint; needs `admin.view_config` or similar |

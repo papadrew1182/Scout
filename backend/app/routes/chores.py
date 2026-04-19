@@ -20,6 +20,7 @@ def list_chore_templates(family_id: uuid.UUID, actor: Actor = Depends(get_curren
 @router.post("", response_model=ChoreTemplateRead, status_code=201)
 def create_chore_template(family_id: uuid.UUID, payload: ChoreTemplateCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("chores.manage_config")
     return chore_service.create_chore_template(db, family_id, payload)
 
 

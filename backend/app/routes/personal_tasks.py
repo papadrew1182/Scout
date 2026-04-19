@@ -69,6 +69,7 @@ def create_personal_task(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("tasks.manage_self")
     return personal_tasks_service.create_personal_task(db, family_id, payload)
 
 
@@ -87,6 +88,7 @@ def update_personal_task(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("tasks.manage_self")
     return personal_tasks_service.update_personal_task(db, family_id, task_id, payload)
 
 
@@ -95,10 +97,12 @@ def complete_personal_task(
     family_id: uuid.UUID, task_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
     actor.require_family(family_id)
+    actor.require_permission("tasks.manage_self")
     return personal_tasks_service.complete_personal_task(db, family_id, task_id)
 
 
 @router.delete("/{task_id}", status_code=204)
 def delete_personal_task(family_id: uuid.UUID, task_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("tasks.manage_self")
     personal_tasks_service.delete_personal_task(db, family_id, task_id)

@@ -1237,3 +1237,40 @@ export function patchConnectorStatus(
 ): Promise<ConnectorAccountItem> {
   return patch(`${API_BASE_URL}/admin/integrations/connections/${encodeURIComponent(accountId)}`, { status });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2: data entry create functions
+// ---------------------------------------------------------------------------
+
+export function createPersonalTask(payload: {
+  title: string;
+  assigned_to: string;
+  due_at?: string;
+  description?: string;
+  priority?: string;
+}): Promise<PersonalTask> {
+  return post(`${familyUrl()}/personal-tasks`, payload);
+}
+
+export function createEvent(payload: {
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  all_day?: boolean;
+  location?: string;
+  is_hearth_visible?: boolean;
+  description?: string;
+}): Promise<Event> {
+  return post(`${familyUrl()}/events`, payload);
+}
+
+export function createChoreTemplate(payload: {
+  name: string;
+  description?: string;
+  recurrence?: string;
+  due_time?: string;
+  assignment_type?: string;
+  assignment_rule?: Record<string, unknown>;
+}): Promise<ChoreTemplate> {
+  return post(`${familyUrl()}/chore-templates`, payload);
+}

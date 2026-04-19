@@ -19,6 +19,7 @@
  * the mock client serves the same shapes from seeded Roberts data.
  */
 
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 
@@ -27,11 +28,13 @@ import { useCalendarExports, useConnectorsHealth } from "../hooks";
 import { classifySlice } from "../lib/availability";
 import { colors } from "../../lib/styles";
 import { HouseholdBlocksPreview } from "./HouseholdBlocksPreview";
+import { AddEventSheet } from "./AddEventSheet";
 
 export function CalendarPreview() {
   const router = useRouter();
   const exports = useCalendarExports();
   const health = useConnectorsHealth();
+  const [showAddEvent, setShowAddEvent] = useState(false);
 
   const view = classifySlice(
     { status: exports.status, error: exports.error, data: exports.data },
@@ -101,8 +104,23 @@ export function CalendarPreview() {
         ))
       )}
 
+      <Pressable
+        style={styles.addEventBtn}
+        onPress={() => setShowAddEvent(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Add event"
+      >
+        <Text style={styles.addEventText}>+ Add event</Text>
+      </Pressable>
+
+      <AddEventSheet
+        visible={showAddEvent}
+        onClose={() => setShowAddEvent(false)}
+        onCreated={() => exports.refresh()}
+      />
+
       <Text style={styles.footnote}>
-        Hearth is display only. Tap a chore on Today to interact with it —
+        Hearth is display only. Tap a chore on Today to interact with it -
         Hearth never accepts task input.
       </Text>
     </View>
@@ -336,6 +354,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 12,
+  },
+
+  addEventBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignSelf: "flex-start",
+    marginTop: 14,
+  },
+  addEventText: {
+    color: colors.buttonPrimaryText,
+    fontWeight: "700",
+    fontSize: 13,
   },
 
   footnote: {
