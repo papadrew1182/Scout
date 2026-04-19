@@ -26,6 +26,7 @@
  */
 
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 
 import {
   BlockAssignment,
@@ -56,6 +57,7 @@ interface KidWinSummary {
 }
 
 export function TodayHome() {
+  const router = useRouter();
   const today = useHouseholdToday();
   const family = useFamilyContext();
   const { focused_member_id, setFocus } = useUiFocusMember();
@@ -117,17 +119,19 @@ export function TodayHome() {
         />
       </View>
 
-      {/* Daily Win strip — derived client-side; see file header note. */}
+      {/* Daily Win strip - derived client-side; see file header note. */}
       <View style={styles.winRow}>
         {winSummaries.map((s) => (
-          <View
+          <Pressable
             key={s.kid.family_member_id}
             style={[
               styles.winPill,
               s.all_done && styles.winPillDone,
               !s.all_done && !s.on_track && styles.winPillRisk,
             ]}
+            onPress={() => router.push(`/members/${s.kid.family_member_id}`)}
             accessible
+            accessibilityRole="link"
             accessibilityLabel={`${s.kid.name} ${s.completed} of ${s.required} complete`}
           >
             <Text
@@ -141,9 +145,9 @@ export function TodayHome() {
             </Text>
             <Text style={styles.winCount}>
               {s.completed} / {s.required}
-              {s.late > 0 ? `  · ${s.late} late` : ""}
+              {s.late > 0 ? `  . ${s.late} late` : ""}
             </Text>
-          </View>
+          </Pressable>
         ))}
       </View>
 
