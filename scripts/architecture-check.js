@@ -289,7 +289,7 @@ const INDIRECT_ESCAPE_RE = /\/\/\s*arch-check:\s*indirect-handler/;
 
 // Whether Check 5 blocks the exit code. Starts as false (report-only);
 // flipped to true once all dead taps from the Phase 1 audit are fixed.
-const CHECK_5_ENFORCE = false;
+const CHECK_5_ENFORCE = true;
 
 function checkDeadTapTargets() {
   const warnings = [];
