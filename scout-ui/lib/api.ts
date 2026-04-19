@@ -35,7 +35,7 @@ function familyUrl(): string {
   return `${API_BASE_URL}/families/${_familyId}`;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   return _authToken ? { Authorization: `Bearer ${_authToken}` } : {};
 }
 

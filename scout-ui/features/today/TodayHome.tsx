@@ -43,6 +43,7 @@ import {
 import { colors } from "../../lib/styles";
 import { HouseholdBoard } from "./HouseholdBoard";
 import { CompletionSheet } from "./CompletionSheet";
+import { AffirmationCard } from "../affirmations/AffirmationCard";
 
 interface KidWinSummary {
   kid: FamilyKid;
@@ -145,6 +146,8 @@ export function TodayHome() {
           </View>
         ))}
       </View>
+
+      <AffirmationCard />
 
       {/* Filter chips: household + per child */}
       <View style={styles.chipRow}>

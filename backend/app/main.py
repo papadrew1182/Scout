@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings, validate_startup
 from app.database import SessionLocal
 from app.routes import (
+    affirmations,
     ai,
     allowance,
     auth,
@@ -34,6 +35,7 @@ from app.routes.admin import permissions as admin_permissions
 from app.routes.admin import chores as admin_chores
 from app.routes.admin import allowance as admin_allowance
 from app.routes.admin import integrations as admin_integrations
+from app.routes.admin import affirmations as admin_affirmations
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,11 +105,13 @@ app.include_router(ai.router)
 app.include_router(memory_routes.router)
 app.include_router(mcp_http.router)
 app.include_router(canonical.router)
+app.include_router(affirmations.router)
 app.include_router(admin_permissions.router)
 app.include_router(admin_config.router)
 app.include_router(admin_chores.router)
 app.include_router(admin_allowance.router)
 app.include_router(admin_integrations.router)
+app.include_router(admin_affirmations.router)
 
 
 @app.get("/health")

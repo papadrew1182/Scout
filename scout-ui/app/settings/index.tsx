@@ -8,6 +8,7 @@ import { FAMILY } from "../../lib/seedData";
 import { useAuth } from "../../lib/auth";
 import { fetchMemberAccounts, updateMemberAccount } from "../../lib/api";
 import { useHasPermission } from "../../lib/permissions";
+import { AffirmationPreferences } from "../../features/affirmations/AffirmationPreferences";
 
 const TINT_BG: Record<string, string> = {
   purple: colors.avPurpleBg, teal: colors.avTealBg, amber: colors.avAmberBg, coral: colors.avCoralBg,
@@ -136,6 +137,8 @@ export default function Settings() {
               18 active sessions · <Text style={{ color: colors.red }}>Sign out all others</Text>
             </Text>
           </View>
+
+          <AffirmationPreferences />
 
           {/* Accounts & Access — per-user, admin-only */}
           {canManageAccounts && (
