@@ -52,6 +52,13 @@ class ChoreTemplate(Base):
     assignment_type: Mapped[str] = mapped_column(String(20), nullable=False)
     assignment_rule: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    included: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    not_included: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    done_means_done: Mapped[str | None] = mapped_column(Text)
+    supplies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    photo_example_url: Mapped[str | None] = mapped_column(Text)
+    estimated_duration_minutes: Mapped[int | None] = mapped_column()
+    consequence_on_miss: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
@@ -71,6 +78,8 @@ class TaskInstance(Base):
     override_completed: Mapped[bool | None] = mapped_column(Boolean)
     override_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("family_members.id", ondelete="RESTRICT"))
     override_note: Mapped[str | None] = mapped_column(Text)
+    in_scope_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    scope_dispute_opened_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
 
