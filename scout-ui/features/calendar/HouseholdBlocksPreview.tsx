@@ -14,7 +14,8 @@
  * surface.
  */
 
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { CalendarExport } from "../lib/contracts";
 import { formatTime } from "../lib/formatters";
@@ -25,6 +26,8 @@ interface Props {
 }
 
 export function HouseholdBlocksPreview({ items }: Props) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (items.length === 0) {
     return (
       <Text style={styles.empty}>No anchor blocks scheduled to publish.</Text>
@@ -33,15 +36,37 @@ export function HouseholdBlocksPreview({ items }: Props) {
   return (
     <View>
       {items.map((item) => (
-        <ExportRow key={item.calendar_export_id} item={item} />
+        <ExportRow
+          key={item.calendar_export_id}
+          item={item}
+          expanded={expandedId === item.calendar_export_id}
+          onToggle={() =>
+            setExpandedId(
+              expandedId === item.calendar_export_id ? null : item.calendar_export_id,
+            )
+          }
+        />
       ))}
     </View>
   );
 }
 
-function ExportRow({ item }: { item: CalendarExport }) {
+function ExportRow({
+  item,
+  expanded,
+  onToggle,
+}: {
+  item: CalendarExport;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <View style={styles.row}>
+    <Pressable
+      style={styles.row}
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.label}, ${formatTime(item.starts_at)} to ${formatTime(item.ends_at)}`}
+    >
       <View style={styles.timeCol}>
         <Text style={styles.timeMain}>{formatTime(item.starts_at)}</Text>
         <Text style={styles.timeSub}>{formatTime(item.ends_at)}</Text>
@@ -52,10 +77,24 @@ function ExportRow({ item }: { item: CalendarExport }) {
         <View style={styles.pillRow}>
           <Pill kind="source">{labelForSourceType(item.source_type)}</Pill>
           <Pill kind="target">{labelForTarget(item.target)}</Pill>
+          {/* no-op: status indicator, not interactive */}
           {item.hearth_visible && <Pill kind="hearth">On Hearth</Pill>}
         </View>
+        {expanded && (
+          <View style={styles.detail}>
+            <Text style={styles.detailText}>
+              Source: {labelForSourceType(item.source_type)}
+            </Text>
+            <Text style={styles.detailText}>
+              Target: {labelForTarget(item.target)}
+            </Text>
+            <Text style={styles.detailText}>
+              Hearth: {item.hearth_visible ? "Visible on wall display" : "Not on Hearth"}
+            </Text>
+          </View>
+        )}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -169,4 +208,16 @@ const styles = StyleSheet.create({
   pillTextSource: { color: colors.textSecondary },
   pillTextTarget: { color: colors.accent },
   pillTextHearth: { color: "#00866B" },
+  detail: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  detailText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginBottom: 3,
+    fontWeight: "600",
+  },
 });
