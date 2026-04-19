@@ -1,11 +1,13 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.auth import Actor, get_current_actor
 from app.database import get_db
+from app.models.life_management import TaskInstance
+from app.models.action_items import ParentActionItem
 from app.schemas.life_management import (
     StepCompletionRead,
     StepCompletionUpdate,
@@ -71,3 +73,34 @@ def update_step_completion(
 ):
     actor.require_family(family_id)
     return task_instance_service.update_step_completion(db, family_id, instance_id, step_completion_id, payload)
+
+
+@router.post("/{instance_id}/dispute-scope", response_model=TaskInstanceRead)
+def dispute_scope(
+    family_id: uuid.UUID,
+    instance_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    actor.require_family(family_id)
+    actor.require_permission("chore.complete_self")
+    task = db.get(TaskInstance, instance_id)
+    if not task or task.family_id != family_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task instance not found")
+    if task.scope_dispute_opened_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dispute already opened")
+    task.scope_dispute_opened_at = datetime.now(timezone.utc)
+    action_item = ParentActionItem(
+        family_id=family_id,
+        created_by_member_id=actor.member_id,
+        action_type="chore_scope_dispute",
+        title="Scope dispute on chore task",
+        detail=f"Member disputed scope for task instance {instance_id}",
+        entity_type="task_instance",
+        entity_id=instance_id,
+        status="pending",
+    )
+    db.add(action_item)
+    db.commit()
+    db.refresh(task)
+    return task
