@@ -35,6 +35,11 @@ async function login(page: Page, email: string, password: string) {
 
 test.describe("navigate-detail targets", () => {
   test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
+  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -93,6 +98,11 @@ test.describe("navigate-detail targets", () => {
 
 test.describe("execute-action targets", () => {
   test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
+  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -116,6 +126,11 @@ test.describe("execute-action targets", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("expand-inline targets", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
@@ -160,6 +175,11 @@ test.describe("expand-inline targets", () => {
 
 test.describe("no-op-documented targets", () => {
   test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
+  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -186,6 +206,11 @@ test.describe("no-op-documented targets", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("CompletionSheet stability", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });

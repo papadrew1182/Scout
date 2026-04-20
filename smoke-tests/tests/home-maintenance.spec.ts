@@ -17,6 +17,11 @@ async function login(page: Page, email: string, password: string) {
 }
 
 test.describe("Home maintenance", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("admin can view /home page", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/home");

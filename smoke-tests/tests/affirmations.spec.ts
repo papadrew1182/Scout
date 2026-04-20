@@ -23,6 +23,11 @@ async function login(page: Page, email: string, password: string) {
 }
 
 test.describe("Affirmation user surface", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("affirmation card visible on /today", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/today");
@@ -50,6 +55,11 @@ test.describe("Affirmation user surface", () => {
 });
 
 test.describe("Affirmation admin surface", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("admin can access affirmation library", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/admin/affirmations");

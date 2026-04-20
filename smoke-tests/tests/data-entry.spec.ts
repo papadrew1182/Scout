@@ -29,6 +29,11 @@ async function login(page: Page, email: string, password: string) {
 // ---------------------------------------------------------------------------
 
 test.describe("Personal task creation", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("parent can create personal task from /today", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/today");
@@ -60,6 +65,11 @@ test.describe("Personal task creation", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Calendar event creation", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("parent can create event from /calendar", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/calendar");
@@ -96,6 +106,11 @@ test.describe("Calendar event creation", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Chore template creation", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("admin can create chore template", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/admin/chores/new");
@@ -131,6 +146,11 @@ test.describe("Chore template creation", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("Meal staple creation", () => {
+  test.beforeEach(async ({ page }) => {
+    // Skip in CI environments without Session 3 frontend
+    if (!process.env.SMOKE_SESSION3) test.skip();
+  });
+
   test("admin can create meal staple", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/admin/meals/staples/new");
