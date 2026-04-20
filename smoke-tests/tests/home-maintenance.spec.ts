@@ -17,16 +17,12 @@ async function login(page: Page, email: string, password: string) {
 }
 
 test.describe("Home maintenance", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test("admin can view /home page", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/home");
     await page.waitForTimeout(2000);
-    const title = page.locator("text=Maintenance");
+    // Match exactly "Maintenance" (not "No upcoming maintenance" etc.)
+    const title = page.getByText("Maintenance", { exact: true });
     await expect(title).toBeVisible({ timeout: 5000 });
   });
 
@@ -43,11 +39,11 @@ test.describe("Home maintenance", () => {
     await page.goto("/admin/home");
     await page.waitForTimeout(2000);
 
-    const nameInput = page.locator('[accessibilityLabel="zones name"]');
+    const nameInput = page.locator('[aria-label="zones name"]');
     if (!(await nameInput.isVisible())) { test.skip(); return; }
     await nameInput.fill("Test Kitchen");
 
-    const createBtn = page.locator('[accessibilityLabel="Create zone"]');
+    const createBtn = page.locator('[aria-label="Create zone"]');
     await createBtn.click();
     await page.waitForTimeout(2000);
 

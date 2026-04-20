@@ -25,6 +25,19 @@ async function currentMemberId(page: Page): Promise<string> {
   return memberId;
 }
 
+async function siblingMemberId(page: Page, selfId: string): Promise<string | null> {
+  const headers = await page.evaluate(() => {
+    const token = localStorage.getItem("scout_session_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  });
+  const res = await page.request.get(`${API_URL}/api/family/context/current`, { headers });
+  if (!res.ok()) return null;
+  const body = await res.json();
+  const kids = (body?.kids ?? []) as Array<{ family_member_id: string }>;
+  const other = kids.find((k) => k.family_member_id && k.family_member_id !== selfId);
+  return other?.family_member_id ?? null;
+}
+
 async function login(page: Page, email: string, password: string) {
   await page.goto("/");
   await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
@@ -37,17 +50,12 @@ async function login(page: Page, email: string, password: string) {
 }
 
 test.describe("Child master card", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test("parent can view child master card", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/today");
     await page.waitForTimeout(2000);
 
-    const pill = page.locator('[accessibilityRole="link"]').first();
+    const pill = page.locator('[role="link"]').first();
     if (!(await pill.isVisible())) {
       test.skip();
       return;
@@ -57,10 +65,10 @@ test.describe("Child master card", () => {
 
     expect(page.url()).toContain("/members/");
 
-    const memberTitle = page.locator("text=MEMBER");
+    const memberTitle = page.getByText("MEMBER", { exact: true });
     await expect(memberTitle).toBeVisible({ timeout: 5000 });
 
-    const progressSection = page.locator("text=Today's progress");
+    const progressSection = page.getByText("Today's progress", { exact: true });
     await expect(progressSection).toBeVisible({ timeout: 5000 });
   });
 
@@ -78,16 +86,32 @@ test.describe("Child master card", () => {
     await page.goto(`/members/${memberId}`);
     await page.waitForTimeout(2000);
 
-    const memberTitle = page.locator("text=MEMBER");
+    // The eyebrow is the literal uppercase "MEMBER" string; use exact match
+    // to avoid matching "Member" fallback (memberName) or "Members" nav items.
+    const memberTitle = page.getByText("MEMBER", { exact: true });
     await expect(memberTitle).toBeVisible({ timeout: 5000 });
   });
 
   test("child cannot view another child's card", async ({ page }) => {
     await login(page, CHILD_EMAIL, PASSWORD);
-    await page.goto("/members/00000000-0000-0000-0000-000000000000");
+
+    let selfId: string;
+    try {
+      selfId = await currentMemberId(page);
+    } catch {
+      test.skip();
+      return;
+    }
+    const otherId = await siblingMemberId(page, selfId);
+    if (!otherId) {
+      test.skip();
+      return;
+    }
+
+    await page.goto(`/members/${otherId}`);
     await page.waitForTimeout(2000);
 
-    const denied = page.locator("text=Not available");
+    const denied = page.getByText("Not available", { exact: true });
     await expect(denied).toBeVisible({ timeout: 5000 });
   });
 });

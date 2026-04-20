@@ -35,11 +35,6 @@ async function login(page: Page, email: string, password: string) {
 
 test.describe("navigate-detail targets", () => {
   test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
-  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -49,7 +44,7 @@ test.describe("navigate-detail targets", () => {
     await page.goto("/today");
     await page.waitForTimeout(2000);
 
-    const pill = page.locator('[accessibilityRole="link"]').first();
+    const pill = page.locator('[role="link"]').first();
     if (await pill.isVisible()) {
       await pill.click();
       await page.waitForTimeout(1500);
@@ -64,7 +59,7 @@ test.describe("navigate-detail targets", () => {
     await page.waitForTimeout(2000);
 
     const card = page
-      .locator('[accessibilityLabel*="daily wins"]')
+      .locator('[aria-label*="daily wins"]')
       .first();
     if (await card.isVisible()) {
       await card.click();
@@ -81,7 +76,7 @@ test.describe("navigate-detail targets", () => {
     await page.waitForTimeout(2000);
 
     const card = page
-      .locator('[accessibilityLabel*="payout details"]')
+      .locator('[aria-label*="payout details"]')
       .first();
     if (await card.isVisible()) {
       await card.click();
@@ -97,11 +92,6 @@ test.describe("navigate-detail targets", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("execute-action targets", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
@@ -127,11 +117,6 @@ test.describe("execute-action targets", () => {
 
 test.describe("expand-inline targets", () => {
   test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
-  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -140,7 +125,7 @@ test.describe("expand-inline targets", () => {
     await page.waitForTimeout(2000);
 
     // Find a day cell and tap it
-    const dayCell = page.locator('[accessibilityRole="button"]').filter({
+    const dayCell = page.locator('[role="button"]').filter({
       hasText: /Mon|Tue|Wed|Thu|Fri|Sat|Sun/,
     }).first();
     if (await dayCell.isVisible()) {
@@ -156,7 +141,7 @@ test.describe("expand-inline targets", () => {
     await page.waitForTimeout(2000);
 
     const blockRow = page
-      .locator('[accessibilityRole="button"]')
+      .locator('[role="button"]')
       .filter({ hasText: /Routine block|Weekly event/ })
       .first();
     if (await blockRow.isVisible()) {
@@ -174,11 +159,6 @@ test.describe("expand-inline targets", () => {
 // ---------------------------------------------------------------------------
 
 test.describe("no-op-documented targets", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
@@ -207,11 +187,6 @@ test.describe("no-op-documented targets", () => {
 
 test.describe("CompletionSheet stability", () => {
   test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
-  test.beforeEach(async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
   });
 
@@ -223,7 +198,7 @@ test.describe("CompletionSheet stability", () => {
 
     // Find a task body to open the CompletionSheet
     const taskBody = page
-      .locator('[accessibilityLabel*="Open details for"]')
+      .locator('[aria-label*="Open details for"]')
       .first();
     if (!(await taskBody.isVisible())) {
       test.skip();
@@ -235,7 +210,7 @@ test.describe("CompletionSheet stability", () => {
 
     // The sheet should now be visible with a notes input
     const notesInput = page
-      .locator('[accessibilityLabel="Optional completion notes"]')
+      .locator('[aria-label="Optional completion notes"]')
       .first();
     if (!(await notesInput.isVisible({ timeout: 3000 }).catch(() => false))) {
       // Sheet might show "Done" state with no notes field - skip
@@ -251,7 +226,7 @@ test.describe("CompletionSheet stability", () => {
 
     // The sheet should still be visible (not collapsed)
     const closeButton = page.locator(
-      '[accessibilityLabel="Close completion sheet"]',
+      '[aria-label="Close completion sheet"]',
     );
     await expect(closeButton).toBeVisible({ timeout: 3000 });
   });
