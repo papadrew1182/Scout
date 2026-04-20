@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
@@ -6,24 +6,51 @@ import { colors, fonts } from "../lib/styles";
 interface Props {
   placeholder?: string;
   chips: string[];
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, attachment?: { blob: Blob; name: string }) => void;
   onChipPress: (chip: string) => void;
 }
 
 export function ScoutBar({ placeholder = "Ask Scout anything about your family...", chips, onSubmit, onChipPress }: Props) {
   const [value, setValue] = useState("");
+  const [pendingAttachment, setPendingAttachment] = useState<{ blob: Blob; name: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPendingAttachment({ blob: file, name: file.name });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const submit = () => {
     const trimmed = value.trim();
-    if (!trimmed) return;
-    onSubmit(trimmed);
+    if (!trimmed && !pendingAttachment) return;
+    onSubmit(trimmed, pendingAttachment ?? undefined);
     setValue("");
+    setPendingAttachment(null);
   };
 
   return (
     <View style={styles.bar}>
+      {/* Hidden file input (web) */}
+      {/* @ts-ignore */}
+      <input
+        type="file"
+        accept="image/*,application/pdf"
+        style={{ display: "none" }}
+        ref={fileInputRef as any}
+        onChange={handleFileSelected as any}
+      />
       <View style={styles.inputRow}>
         <View style={styles.dot} />
+        {pendingAttachment ? (
+          <View style={styles.attachBadge}>
+            <Text style={styles.attachBadgeText} numberOfLines={1}>{pendingAttachment.name}</Text>
+            <Pressable onPress={() => setPendingAttachment(null)} accessibilityLabel="Remove attachment">
+              <Text style={styles.attachBadgeRemove}>×</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <TextInput
           value={value}
           onChangeText={setValue}
@@ -33,6 +60,13 @@ export function ScoutBar({ placeholder = "Ask Scout anything about your family..
           onSubmitEditing={submit}
           returnKeyType="send"
         />
+        <Pressable
+          style={styles.clipBtn}
+          onPress={() => (fileInputRef.current as any)?.click()}
+          accessibilityLabel="Attach image"
+        >
+          <Text style={styles.clipIcon}>📎</Text>
+        </Pressable>
         <Pressable style={styles.sendBtn} onPress={submit} accessibilityLabel="Send to Scout">
           <Text style={styles.sendArrow}>↗</Text>
         </Pressable>
@@ -91,6 +125,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendArrow: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
+  clipBtn: {
+    width: 26,
+    height: 26,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clipIcon: { fontSize: 14 },
+  attachBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.purpleLight,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    maxWidth: 120,
+  },
+  attachBadgeText: {
+    flex: 1,
+    fontSize: 10,
+    color: colors.purpleDeep,
+    fontFamily: fonts.body,
+  },
+  attachBadgeRemove: { fontSize: 12, color: colors.purpleDeep, fontWeight: "700" },
 
   chipRow: {
     flexDirection: "row",

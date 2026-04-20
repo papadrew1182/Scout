@@ -29,6 +29,7 @@ from app.routes import (
     personal_tasks,
     routines,
     home_maintenance,
+    storage,
     task_instances,
 )
 from app.routes.admin import config as admin_config
@@ -104,6 +105,7 @@ app.include_router(grocery.router)
 app.include_router(home_maintenance.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
+app.include_router(storage.router)
 app.include_router(memory_routes.router)
 app.include_router(mcp_http.router)
 app.include_router(canonical.router)

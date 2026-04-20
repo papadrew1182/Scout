@@ -33,6 +33,12 @@ class ChatRequest(BaseModel):
         pattern="^(chat|weekly_plan)$",
     )
 
+    # Optional storage path for an image/PDF attachment uploaded via
+    # POST /api/storage/upload. When set, the backend downloads the file
+    # from Supabase Storage and includes it as a Claude vision content
+    # block in the Anthropic API call.
+    attachment_path: str | None = None
+
     @model_validator(mode="after")
     def _require_message_or_confirm(self) -> "ChatRequest":
         if not self.message.strip() and self.confirm_tool is None:
@@ -131,6 +137,10 @@ class MessageRead(BaseModel):
     tool_results: dict | None
     model: str | None
     token_usage: dict | None
+    # Attachment metadata stored when the user sent an image/PDF.
+    # Shape: {"attachment_path": "...", "attachment_url": "..."} | None
+    # Maps to the `metadata` column via the model's `attachment_meta` alias.
+    attachment_meta: dict | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

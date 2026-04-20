@@ -66,6 +66,7 @@ def ai_chat(
             conversation_id=body.conversation_id,
             confirm_tool=body.confirm_tool.model_dump() if body.confirm_tool else None,
             intent=body.intent,
+            attachment_path=body.attachment_path,
         )
         logger.info(
             "ai_chat_success trace=%s conversation=%s handoff=%s pending=%s",

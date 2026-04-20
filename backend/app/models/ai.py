@@ -36,6 +36,11 @@ class AIMessage(Base):
     tool_results: Mapped[dict | None] = mapped_column(JSONB)
     model: Mapped[str | None] = mapped_column(Text)
     token_usage: Mapped[dict | None] = mapped_column(JSONB)
+    # Auxiliary per-message metadata. Current uses:
+    #   attachment: {"attachment_path": "...", "attachment_url": "..."}
+    # Added in migration 045. Named 'attachment_meta' because 'metadata'
+    # is reserved by SQLAlchemy's Declarative API.
+    attachment_meta: Mapped[dict | None] = mapped_column("metadata", JSONB)
     # clock_timestamp() returns wall-clock time at the moment of INSERT,
     # so multiple rows flushed in the same transaction get distinct
     # microsecond timestamps. Migration 017 switched ai_messages off

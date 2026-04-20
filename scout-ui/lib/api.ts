@@ -401,6 +401,7 @@ export interface SendChatOptions {
   conversationId?: string;
   confirmTool?: { tool_name: string; arguments: Record<string, unknown> };
   intent?: "chat" | "weekly_plan";
+  attachmentPath?: string;
 }
 
 export async function sendChatMessage(
@@ -424,6 +425,7 @@ export async function sendChatMessage(
   if (opts.conversationId) body.conversation_id = opts.conversationId;
   if (opts.confirmTool) body.confirm_tool = opts.confirmTool;
   if (opts.intent) body.intent = opts.intent;
+  if (opts.attachmentPath) body.attachment_path = opts.attachmentPath;
 
   const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
     method: "POST",
@@ -470,7 +472,7 @@ export interface StreamHandlers {
  */
 export async function sendChatMessageStream(
   message: string,
-  opts: { surface?: string; conversationId?: string; intent?: "chat" | "weekly_plan" },
+  opts: { surface?: string; conversationId?: string; intent?: "chat" | "weekly_plan"; attachmentPath?: string },
   handlers: StreamHandlers,
 ): Promise<void> {
   const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -486,6 +488,7 @@ export async function sendChatMessageStream(
     conversation_id: opts.conversationId || undefined,
   };
   if (opts.intent) body.intent = opts.intent;
+  if (opts.attachmentPath) body.attachment_path = opts.attachmentPath;
 
   let res: Response;
   try {
@@ -1279,4 +1282,43 @@ export function createChoreTemplate(payload: {
   assignment_rule?: Record<string, unknown>;
 }): Promise<ChoreTemplate> {
   return post(`${familyUrl()}/chore-templates`, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Storage — file attachments for AI chat
+// ---------------------------------------------------------------------------
+
+export interface AttachmentUploadResult {
+  path: string;
+  signed_url: string;
+  content_type: string;
+}
+
+/**
+ * Upload a file to Supabase Storage via the backend proxy.
+ *
+ * Note: we intentionally do NOT include Content-Type in the headers —
+ * letting the browser set the multipart/form-data boundary automatically.
+ * authHeaders() returns only { Authorization: "Bearer ..." } which is safe.
+ */
+export async function uploadAttachment(
+  file: Blob,
+  filename: string,
+): Promise<AttachmentUploadResult> {
+  const form = new FormData();
+  form.append("file", file, filename);
+  const res = await fetch(`${API_BASE_URL}/api/storage/upload`, {
+    method: "POST",
+    headers: authHeaders(), // Authorization only — no Content-Type
+    body: form,
+  });
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Upload failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  return (await res.json()) as AttachmentUploadResult;
 }
