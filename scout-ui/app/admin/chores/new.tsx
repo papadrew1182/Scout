@@ -28,7 +28,10 @@ export default function NewChoreTemplate() {
         name: name.trim(),
         description: description.trim() || undefined,
         recurrence: cadence,
-        due_time: dueTime.trim() || undefined,
+        // chore_templates.due_time is NOT NULL in the DB. Default to
+        // end-of-day when the (optional) field is left blank so the
+        // template still creates cleanly.
+        due_time: dueTime.trim() || "23:59",
         // Backend CHECK constraint only allows fixed/rotating_daily/rotating_weekly.
         // Default to fixed with empty rule; an assignee picker can be
         // added later to populate assignment_rule.assigned_to.
