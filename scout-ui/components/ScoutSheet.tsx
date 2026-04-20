@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
-import { mockScoutResponse, SAMPLE_THREAD, QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
-import { fetchReady } from "../lib/api";
+import { SAMPLE_THREAD, QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
+import { fetchReady, sendChatMessageStream } from "../lib/api";
 
 interface Turn { role: "user" | "assistant"; content: string; }
 
@@ -54,8 +54,37 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
     if (!trimmed) return;
     setThread((prev) => [...prev, { role: "user", content: trimmed }]);
     setValue("");
-    const reply = await mockScoutResponse(trimmed);
-    setThread((prev) => [...prev, { role: "assistant", content: reply }]);
+    let accumulated = "";
+    setThread((prev) => [...prev, { role: "assistant", content: "..." }]);
+    await sendChatMessageStream(
+      trimmed,
+      { surface },
+      {
+        onEvent: (event) => {
+          if (event.type === "text") {
+            accumulated += event.text;
+            setThread((prev) => {
+              const copy = [...prev];
+              copy[copy.length - 1] = { role: "assistant", content: accumulated };
+              return copy;
+            });
+          } else if (event.type === "error") {
+            setThread((prev) => {
+              const copy = [...prev];
+              copy[copy.length - 1] = { role: "assistant", content: `Error: ${event.message}` };
+              return copy;
+            });
+          }
+        },
+        onError: (err) => {
+          setThread((prev) => {
+            const copy = [...prev];
+            copy[copy.length - 1] = { role: "assistant", content: `Error: ${err.message}` };
+            return copy;
+          });
+        },
+      },
+    );
   };
 
   const actions = QUICK_ACTIONS_BY_SURFACE[surface] ?? [];
