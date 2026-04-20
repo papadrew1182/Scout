@@ -474,8 +474,14 @@ export async function sendChatMessageStream(
   handlers: StreamHandlers,
 ): Promise<void> {
   const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const surfaceMap: Record<string, string> = {
+    dashboard: "parent", parent: "parent", child: "child",
+    personal: "personal", meals: "personal", grocery: "personal",
+    settings: "personal", today: "personal", rewards: "personal",
+    calendar: "personal",
+  };
   const body: Record<string, unknown> = {
-    surface: opts.surface ?? "personal",
+    surface: surfaceMap[opts.surface ?? "personal"] ?? "personal",
     message,
     conversation_id: opts.conversationId || undefined,
   };
