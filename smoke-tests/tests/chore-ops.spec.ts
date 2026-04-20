@@ -12,6 +12,19 @@ const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
 const API_URL = process.env.SCOUT_API_URL || "http://localhost:8000";
 
+async function currentMemberId(page: Page): Promise<string> {
+  const headers = await page.evaluate(() => {
+    const token = localStorage.getItem("scout_session_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  });
+  const res = await page.request.get(`${API_URL}/api/auth/me`, { headers });
+  if (!res.ok()) throw new Error(`/api/auth/me returned ${res.status()}`);
+  const body = await res.json();
+  const memberId = body?.member?.member_id ?? body?.member_id;
+  if (!memberId) throw new Error("/api/auth/me did not return a member id");
+  return memberId;
+}
+
 async function login(page: Page, email: string, password: string) {
   await page.goto("/");
   await page.waitForSelector('input[placeholder="Email"]', { timeout: 10000 });
@@ -49,16 +62,10 @@ test.describe("Child master card", () => {
   test("child sees own master card", async ({ page }) => {
     await login(page, CHILD_EMAIL, PASSWORD);
 
-    const meRes = await page.evaluate(async () => {
-      const token = localStorage.getItem("scout_session_token");
-      if (!token) return null;
-      const res = await fetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return res.ok ? res.json() : null;
-    });
-    const memberId = meRes?.member?.member_id;
-    if (!memberId) {
+    let memberId: string;
+    try {
+      memberId = await currentMemberId(page);
+    } catch {
       test.skip();
       return;
     }

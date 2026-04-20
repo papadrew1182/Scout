@@ -31,7 +31,7 @@ test.describe("Affirmation user surface", () => {
     // The AffirmationCard renders in TodayHome after the summary strip.
     // It might show an affirmation or be empty if cooldown is active.
     // We just verify the page loads without error.
-    const todayTitle = page.locator("text=Today");
+    const todayTitle = page.locator("text=Today").first();
     await expect(todayTitle).toBeVisible({ timeout: 5000 });
   });
 
