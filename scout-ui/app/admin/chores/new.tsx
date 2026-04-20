@@ -29,7 +29,11 @@ export default function NewChoreTemplate() {
         description: description.trim() || undefined,
         recurrence: cadence,
         due_time: dueTime.trim() || undefined,
-        assignment_type: "individual",
+        // Backend CHECK constraint only allows fixed/rotating_daily/rotating_weekly.
+        // Default to fixed with empty rule; an assignee picker can be
+        // added later to populate assignment_rule.assigned_to.
+        assignment_type: "fixed",
+        assignment_rule: {},
       });
       setMsg({ kind: "ok", text: "Template created" });
       setName("");

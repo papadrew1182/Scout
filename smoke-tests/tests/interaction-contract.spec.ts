@@ -44,7 +44,9 @@ test.describe("navigate-detail targets", () => {
     await page.goto("/today");
     await page.waitForTimeout(2000);
 
-    const pill = page.locator('[role="link"]').first();
+    // Daily Win pill is rendered as role=link with accessibleName
+    // "<kid> <done> of <required> complete" (TodayHome.tsx winPill).
+    const pill = page.getByRole("link", { name: /of \d+ complete$/ }).first();
     if (await pill.isVisible()) {
       await pill.click();
       await page.waitForTimeout(1500);

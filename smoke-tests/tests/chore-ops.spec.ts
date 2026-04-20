@@ -55,7 +55,10 @@ test.describe("Child master card", () => {
     await page.goto("/today");
     await page.waitForTimeout(2000);
 
-    const pill = page.locator('[role="link"]').first();
+    // Daily Win pills are rendered as role=link with accessibleName
+    // "<kid> <done> of <required> complete". Match that shape so we
+    // don't accidentally click a navbar/branding link.
+    const pill = page.getByRole("link", { name: /of \d+ complete$/ }).first();
     if (!(await pill.isVisible())) {
       test.skip();
       return;
