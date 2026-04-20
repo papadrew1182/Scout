@@ -5,7 +5,7 @@ import { useFonts, DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold } fro
 import { DMMono_400Regular, DMMono_500Medium } from "@expo-google-fonts/dm-mono";
 
 import { AuthProvider, useAuth } from "../lib/auth";
-import { setApiToken, setApiFamilyId } from "../lib/api";
+import { setApiToken, setApiFamilyId, uploadAttachment } from "../lib/api";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { LoginScreen } from "../components/LoginScreen";
 import { NavBar } from "../components/NavBar";
@@ -76,10 +76,27 @@ function AppShell() {
   const surface = pathToSurface(pathname);
   const { placeholder, chips } = CHIPS_BY_SURFACE[surface] ?? CHIPS_BY_SURFACE.dashboard;
 
-  // Mocked send/chip handlers — when the shell-level ScoutBar is used,
-  // we funnel into the Scout sheet so the user gets a visible response.
-  const handleScoutSubmit = (text: string) => {
-    setPendingPrompt(text);
+  // Shell-level ScoutBar submit: upload attachment if present, then open
+  // ScoutSheet with the text as initialPrompt. The ScoutSheet will handle
+  // the attachment_path if we pass it through pendingPrompt-style, but for
+  // simplicity we funnel the text and let ScoutSheet manage the attachment
+  // state independently. Chip presses have no attachment.
+  const handleScoutSubmit = async (text: string, attachment?: { blob: Blob; name: string }) => {
+    if (attachment) {
+      try {
+        const result = await uploadAttachment(attachment.blob, attachment.name);
+        // Open the sheet; the uploaded path isn't plumbed through initialPrompt
+        // in this pass — the ScoutSheet will open empty and the user can chat.
+        // The attachment was already uploaded; follow-up: thread attachmentPath
+        // through ScoutSheet's initialPrompt mechanism.
+        setPendingPrompt(text || null);
+        setScoutSheetOpen(true);
+        return;
+      } catch {
+        // Fall through: open sheet with text only
+      }
+    }
+    setPendingPrompt(text || null);
     setScoutSheetOpen(true);
   };
 

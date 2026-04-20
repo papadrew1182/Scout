@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
 import { SAMPLE_THREAD, QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
-import { fetchReady, sendChatMessageStream } from "../lib/api";
+import { fetchReady, sendChatMessageStream, uploadAttachment } from "../lib/api";
 
-interface Turn { role: "user" | "assistant"; content: string; }
+interface Turn {
+  role: "user" | "assistant";
+  content: string;
+  attachmentUri?: string; // local preview URI for images the user sent
+}
+
+interface PendingAttachment {
+  uri: string;   // object URL for local preview
+  blob: Blob;
+  name: string;
+}
 
 interface Props {
   visible: boolean;
@@ -23,6 +33,9 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
   );
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSentRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -49,16 +62,48 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
     send(initialPrompt);
   }, [visible, initialPrompt, readyState]);
 
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const uri = URL.createObjectURL(file);
+    setAttachment({ uri, blob: file, name: file.name });
+    setUploadError(null);
+    // Reset so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    setThread((prev) => [...prev, { role: "user", content: trimmed }]);
+    if (!trimmed && !attachment) return;
+    setUploadError(null);
+
+    // Snapshot and clear attachment before async work
+    const pendingAttachment = attachment;
+    setAttachment(null);
+
+    let attachPath: string | undefined;
+    let localUri: string | undefined;
+
+    if (pendingAttachment) {
+      localUri = pendingAttachment.uri;
+      try {
+        const result = await uploadAttachment(pendingAttachment.blob, pendingAttachment.name);
+        attachPath = result.path;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Upload failed";
+        setUploadError(msg);
+        setAttachment(pendingAttachment); // restore so user can retry
+        return;
+      }
+    }
+
+    setThread((prev) => [...prev, { role: "user", content: trimmed, attachmentUri: localUri }]);
     setValue("");
     let accumulated = "";
     setThread((prev) => [...prev, { role: "assistant", content: "..." }]);
     await sendChatMessageStream(
-      trimmed,
-      { surface },
+      trimmed || "What do you see in this image?",
+      { surface, attachmentPath: attachPath },
       {
         onEvent: (event) => {
           if (event.type === "text") {
@@ -116,10 +161,29 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
 
         {readyState === "ok" && (
           <>
+            {/* Hidden file input for attachment picking (web) */}
+            {/* @ts-ignore — HTMLInputElement ref on web */}
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              style={{ display: "none" }}
+              ref={fileInputRef as any}
+              onChange={handleFileSelected as any}
+            />
+
             <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.threadContent}>
               {thread.map((t, i) => (
                 <View key={i} style={[styles.bubble, t.role === "user" ? styles.userBubble : styles.assistantBubble]}>
-                  <Text style={t.role === "user" ? styles.userText : styles.assistantText}>{t.content}</Text>
+                  {t.attachmentUri ? (
+                    <Image
+                      source={{ uri: t.attachmentUri }}
+                      style={styles.attachmentThumb}
+                      accessibilityLabel="Attached image"
+                    />
+                  ) : null}
+                  {t.content ? (
+                    <Text style={t.role === "user" ? styles.userText : styles.assistantText}>{t.content}</Text>
+                  ) : null}
                 </View>
               ))}
             </ScrollView>
@@ -132,7 +196,32 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
               ))}
             </View>
 
+            {/* Attachment preview strip */}
+            {attachment ? (
+              <View style={styles.attachPreviewRow}>
+                <Image source={{ uri: attachment.uri }} style={styles.attachPreviewThumb} accessibilityLabel="Pending attachment" />
+                <Text style={styles.attachPreviewName} numberOfLines={1}>{attachment.name}</Text>
+                <Pressable onPress={() => setAttachment(null)} style={styles.attachRemoveBtn} accessibilityLabel="Remove attachment">
+                  <Text style={styles.attachRemoveText}>×</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {uploadError ? (
+              <View style={styles.uploadErrorRow}>
+                <Text style={styles.uploadErrorText}>{uploadError}</Text>
+              </View>
+            ) : null}
+
             <View style={styles.inputRow}>
+              <Pressable
+                style={styles.clipBtn}
+                onPress={() => (fileInputRef.current as any)?.click()}
+                accessibilityRole="button"
+                accessibilityLabel="Attach image"
+              >
+                <Text style={styles.clipIcon}>📎</Text>
+              </Pressable>
               <TextInput
                 value={value}
                 onChangeText={setValue}
@@ -196,6 +285,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.card,
+    alignItems: "center",
   },
   input: {
     flex: 1,
@@ -215,8 +305,64 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 18,
     justifyContent: "center",
+    height: 40,
   },
   sendText: { color: "#FFFFFF", fontSize: 14, fontWeight: "600", fontFamily: fonts.body },
+
+  // Attachment UI
+  clipBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clipIcon: { fontSize: 16 },
+  attachPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: colors.card,
+  },
+  attachPreviewThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: colors.border,
+  },
+  attachPreviewName: {
+    flex: 1,
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+  },
+  attachRemoveBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachRemoveText: { fontSize: 14, color: colors.text, lineHeight: 20 },
+  uploadErrorRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    backgroundColor: colors.card,
+  },
+  uploadErrorText: { fontSize: 11, color: "#e53e3e", fontFamily: fonts.body },
+  attachmentThumb: {
+    width: "100%",
+    height: 160,
+    borderRadius: 8,
+    marginBottom: 6,
+    backgroundColor: colors.border,
+  } as any,
 
   disabledWrap: {
     flex: 1,

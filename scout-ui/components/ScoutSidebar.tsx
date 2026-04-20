@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
 import {
@@ -7,9 +7,19 @@ import {
   QUICK_ACTIONS_BY_SURFACE,
   type ScoutSurface,
 } from "../lib/mockScout";
-import { fetchReady, sendChatMessageStream } from "../lib/api";
+import { fetchReady, sendChatMessageStream, uploadAttachment } from "../lib/api";
 
-interface Turn { role: "user" | "assistant"; content: string; }
+interface Turn {
+  role: "user" | "assistant";
+  content: string;
+  attachmentUri?: string;
+}
+
+interface PendingAttachment {
+  uri: string;
+  blob: Blob;
+  name: string;
+}
 
 interface Props {
   surface: ScoutSurface;
@@ -24,6 +34,8 @@ export function ScoutSidebar({ surface }: Props) {
   );
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,16 +51,41 @@ export function ScoutSidebar({ surface }: Props) {
     return () => { cancelled = true; };
   }, []);
 
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAttachment({ uri: URL.createObjectURL(file), blob: file, name: file.name });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    setThread((prev) => [...prev, { role: "user", content: trimmed }]);
+    if (!trimmed && !attachment) return;
+
+    const pendingAttachment = attachment;
+    setAttachment(null);
+
+    let attachPath: string | undefined;
+    let localUri: string | undefined;
+
+    if (pendingAttachment) {
+      localUri = pendingAttachment.uri;
+      try {
+        const result = await uploadAttachment(pendingAttachment.blob, pendingAttachment.name);
+        attachPath = result.path;
+      } catch {
+        setAttachment(pendingAttachment); // restore on failure
+        return;
+      }
+    }
+
+    setThread((prev) => [...prev, { role: "user", content: trimmed, attachmentUri: localUri }]);
     setValue("");
     let accumulated = "";
     setThread((prev) => [...prev, { role: "assistant", content: "..." }]);
     await sendChatMessageStream(
-      trimmed,
-      { surface },
+      trimmed || "What do you see in this image?",
+      { surface, attachmentPath: attachPath },
       {
         onEvent: (event) => {
           if (event.type === "text") {
@@ -95,10 +132,29 @@ export function ScoutSidebar({ surface }: Props) {
         <Text style={styles.disabledSub}>Checking availability…</Text>
       ) : (
         <>
+          {/* Hidden file input for web attachment picking */}
+          {/* @ts-ignore */}
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            style={{ display: "none" }}
+            ref={fileInputRef as any}
+            onChange={handleFileSelected as any}
+          />
+
           <ScrollView style={styles.thread} contentContainerStyle={{ gap: 4 }}>
             {thread.map((t, i) => (
               <View key={i} style={t.role === "user" ? styles.userBubble : styles.assistantBubble}>
-                <Text style={t.role === "user" ? styles.userText : styles.assistantText}>{t.content}</Text>
+                {t.attachmentUri ? (
+                  <Image
+                    source={{ uri: t.attachmentUri }}
+                    style={styles.attachThumb}
+                    accessibilityLabel="Attached image"
+                  />
+                ) : null}
+                {t.content ? (
+                  <Text style={t.role === "user" ? styles.userText : styles.assistantText}>{t.content}</Text>
+                ) : null}
               </View>
             ))}
           </ScrollView>
@@ -112,7 +168,24 @@ export function ScoutSidebar({ surface }: Props) {
             ))}
           </View>
 
+          {/* Compact attachment preview */}
+          {attachment ? (
+            <View style={styles.attachPreviewRow}>
+              <Image source={{ uri: attachment.uri }} style={styles.attachPreviewThumb} accessibilityLabel="Pending attachment" />
+              <Pressable onPress={() => setAttachment(null)} style={styles.attachRemove} accessibilityLabel="Remove attachment">
+                <Text style={styles.attachRemoveText}>×</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           <View style={styles.miniInput}>
+            <Pressable
+              onPress={() => (fileInputRef.current as any)?.click()}
+              style={styles.clipBtn}
+              accessibilityLabel="Attach image"
+            >
+              <Text style={styles.clipIcon}>📎</Text>
+            </Pressable>
             <TextInput
               value={value}
               onChangeText={setValue}
@@ -218,6 +291,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   miniSendArrow: { color: "#FFFFFF", fontSize: 9, fontWeight: "700" },
+
+  // Attachment UI (compact sidebar variant)
+  clipBtn: {
+    width: 18,
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clipIcon: { fontSize: 11 },
+  attachThumb: {
+    width: "100%",
+    height: 60,
+    borderRadius: 4,
+    marginBottom: 3,
+    backgroundColor: colors.border,
+  } as any,
+  attachPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+  },
+  attachPreviewThumb: {
+    width: 36,
+    height: 36,
+    borderRadius: 4,
+    backgroundColor: colors.border,
+  },
+  attachRemove: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachRemoveText: { fontSize: 11, color: colors.text, lineHeight: 16 },
 
   disabledWrap: {
     flex: 1,

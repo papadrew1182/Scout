@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     memory_inject_max_items: int = 12
     memory_inject_max_chars_per_item: int = 240
 
+    # Supabase Storage — used by the attachments service.
+    # Keys read from SCOUT_SUPABASE_URL, SCOUT_SUPABASE_SERVICE_ROLE_KEY,
+    # SCOUT_SUPABASE_STORAGE_BUCKET. All default to "" / "attachments" so
+    # the server starts cleanly without them; upload endpoints return 501
+    # when supabase_url is unset.
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "attachments"
+
     # Audio transcription (voice input). When unset, the transcribe
     # endpoint returns 501 and the frontend hides the mic button.
     # Provider options: "groq" (default, cheap Whisper) or "openai".

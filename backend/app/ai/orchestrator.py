@@ -134,6 +134,7 @@ def _persist_message(
     tool_results: dict | None = None,
     model: str | None = None,
     token_usage: dict | None = None,
+    attachment_meta: dict | None = None,
 ) -> AIMessage:
     msg = AIMessage(
         conversation_id=conversation_id,
@@ -143,6 +144,7 @@ def _persist_message(
         tool_results=tool_results,
         model=model,
         token_usage=token_usage,
+        attachment_meta=attachment_meta,
     )
     db.add(msg)
     db.flush()
@@ -385,6 +387,7 @@ def chat(
     conversation_id: uuid.UUID | None = None,
     confirm_tool: dict | None = None,
     intent: str = "chat",
+    attachment_path: str | None = None,
 ) -> dict:
     """Execute a full chat turn including tool execution.
 
@@ -464,7 +467,16 @@ def chat(
 
     # --- Normal LLM-driven turn.
     # Persist user message first so the history load includes it.
-    _persist_message(db, conversation.id, "user", content=user_message)
+    # When an attachment_path is provided, store its reference in
+    # attachment_meta so the frontend can render it when replaying.
+    user_msg_attachment_meta: dict | None = None
+    if attachment_path:
+        user_msg_attachment_meta = {"attachment_path": attachment_path}
+    _persist_message(
+        db, conversation.id, "user",
+        content=user_message,
+        attachment_meta=user_msg_attachment_meta,
+    )
 
     # Moderation gate: deterministic reject list that runs before any
     # Anthropic call. On block, we write an audit row, persist a canned
@@ -525,6 +537,66 @@ def chat(
     )
 
     messages = _load_conversation_messages(db, conversation.id)
+
+    # When an attachment_path is present, replace the last user message
+    # (which _load_conversation_messages just built as a plain string) with
+    # a Anthropic vision content block so Claude can see the image.
+    # The image is downloaded from Supabase Storage and base64-encoded here,
+    # just before the first Anthropic round. Subsequent tool-loop rounds
+    # already have the image in their history via the content block.
+    if attachment_path and messages and messages[-1]["role"] == "user":
+        import asyncio
+        from app.services.storage import download_file_base64
+        try:
+            b64_data, img_ct = asyncio.get_event_loop().run_until_complete(
+                download_file_base64(attachment_path)
+            )
+            text_part = user_message or "What do you see in this image?"
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": img_ct,
+                            "data": b64_data,
+                        },
+                    },
+                    {"type": "text", "text": text_part},
+                ],
+            }
+            # Also record the signed URL in the persisted message metadata
+            # so the frontend can render the thumbnail. We update the row
+            # that _persist_message already flushed above.
+            from app.services.storage import create_signed_url
+            try:
+                signed_url = asyncio.get_event_loop().run_until_complete(
+                    create_signed_url(attachment_path)
+                )
+                if user_msg_attachment_meta is not None:
+                    user_msg_attachment_meta["attachment_url"] = signed_url
+                    # Patch the already-flushed row
+                    from sqlalchemy import select as _select
+                    last_user_msg = db.scalars(
+                        _select(AIMessage)
+                        .where(AIMessage.conversation_id == conversation.id)
+                        .where(AIMessage.role == "user")
+                        .order_by(AIMessage.created_at.desc(), AIMessage.id.desc())
+                        .limit(1)
+                    ).first()
+                    if last_user_msg is not None:
+                        last_user_msg.attachment_meta = user_msg_attachment_meta
+                        db.flush()
+            except Exception:
+                pass  # signed URL enrichment is best-effort
+        except Exception as _att_err:
+            import logging as _log
+            _log.getLogger("scout.ai.orchestrator").warning(
+                "attachment_download_fail path=%s err=%s",
+                attachment_path, str(_att_err)[:200],
+            )
+            # Fall through — send text-only message; don't abort the chat
 
     provider = get_provider()
 
