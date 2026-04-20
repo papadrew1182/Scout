@@ -2,7 +2,7 @@
 
 CREATE TABLE IF NOT EXISTS scout.home_zones (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id       UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id       UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
     zone_type       TEXT NOT NULL DEFAULT 'room',
     notes           TEXT,
@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS scout.home_zones (
 
 CREATE TABLE IF NOT EXISTS scout.home_assets (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id       UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id       UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     zone_id         UUID REFERENCES scout.home_zones(id) ON DELETE SET NULL,
     name            TEXT NOT NULL,
     asset_type      TEXT,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS scout.home_assets (
 
 CREATE TABLE IF NOT EXISTS scout.maintenance_templates (
     id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id                   UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id                   UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     zone_id                     UUID REFERENCES scout.home_zones(id) ON DELETE SET NULL,
     asset_id                    UUID REFERENCES scout.home_assets(id) ON DELETE SET NULL,
     name                        TEXT NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS scout.maintenance_templates (
 
 CREATE TABLE IF NOT EXISTS scout.maintenance_instances (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id               UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id               UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     template_id             UUID NOT NULL REFERENCES scout.maintenance_templates(id) ON DELETE CASCADE,
     owner_member_id         UUID NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
     scheduled_for           TIMESTAMPTZ NOT NULL,

@@ -12,7 +12,7 @@ ALTER TABLE public.meals
 -- 2. Meal transformations (many-to-many through table)
 CREATE TABLE IF NOT EXISTS scout.meal_transformations (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    family_id               UUID NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+    family_id               UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     base_staple_id          UUID NOT NULL REFERENCES public.meals(id) ON DELETE CASCADE,
     transformed_staple_id   UUID NOT NULL REFERENCES public.meals(id) ON DELETE CASCADE,
     transformation_name     TEXT NOT NULL,
