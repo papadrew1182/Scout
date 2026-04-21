@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 from sqlalchemy.orm import Session
 
 from app.models.calendar import Event, EventAttendee
+from app.models.life_management import ChoreTemplate, Routine, TaskInstance
 from app.models.personal_tasks import PersonalTask
 from app.services import nudges_service
 
@@ -181,3 +182,143 @@ class TestScanUpcomingEvents:
         db.commit()
 
         assert nudges_service.scan_upcoming_events(db, now, lead_minutes=30) == []
+
+
+class TestScanMissedRoutines:
+    def _make_routine(self, db, family, member, name="Morning routine"):
+        r = Routine(
+            family_id=family.id,
+            family_member_id=member.id,
+            name=name,
+            block="morning",
+            recurrence="daily",
+            due_time_weekday=time(7, 30),
+            due_time_weekend=time(9, 0),
+        )
+        db.add(r)
+        db.flush()
+        return r
+
+    def test_missed_routine_today_produces_proposal(
+        self, db: Session, family, children
+    ):
+        sadie = children["sadie"]
+        routine = self._make_routine(db, family, sadie)
+        now = _utcnow()
+        instance = TaskInstance(
+            family_id=family.id,
+            family_member_id=sadie.id,
+            routine_id=routine.id,
+            instance_date=now.date(),
+            due_at=now - timedelta(minutes=20),
+            is_completed=False,
+        )
+        db.add(instance)
+        db.commit()
+
+        proposals = nudges_service.scan_missed_routines(db, now)
+
+        assert len(proposals) == 1
+        p = proposals[0]
+        assert p.family_member_id == sadie.id
+        assert p.trigger_kind == "missed_routine"
+        assert p.trigger_entity_kind == "task_instance"
+        assert p.trigger_entity_id == instance.id
+        assert p.context["name"] == "Morning routine"
+        assert p.severity == "low"  # revised plan Section 6
+
+    def test_completed_routine_is_ignored(
+        self, db: Session, family, children
+    ):
+        sadie = children["sadie"]
+        routine = self._make_routine(db, family, sadie)
+        now = _utcnow()
+        db.add(
+            TaskInstance(
+                family_id=family.id,
+                family_member_id=sadie.id,
+                routine_id=routine.id,
+                instance_date=now.date(),
+                due_at=now - timedelta(minutes=20),
+                is_completed=True,
+                completed_at=now - timedelta(minutes=5),
+            )
+        )
+        db.commit()
+
+        assert nudges_service.scan_missed_routines(db, now) == []
+
+    def test_override_completed_is_treated_as_completed(
+        self, db: Session, family, children, adults
+    ):
+        sadie = children["sadie"]
+        parent = adults["robert"]
+        routine = self._make_routine(db, family, sadie)
+        now = _utcnow()
+        db.add(
+            TaskInstance(
+                family_id=family.id,
+                family_member_id=sadie.id,
+                routine_id=routine.id,
+                instance_date=now.date(),
+                due_at=now - timedelta(minutes=20),
+                is_completed=False,
+                override_completed=True,
+                override_by=parent.id,
+            )
+        )
+        db.commit()
+
+        assert nudges_service.scan_missed_routines(db, now) == []
+
+    def test_future_due_routine_is_ignored(
+        self, db: Session, family, children
+    ):
+        sadie = children["sadie"]
+        routine = self._make_routine(db, family, sadie)
+        now = _utcnow()
+        db.add(
+            TaskInstance(
+                family_id=family.id,
+                family_member_id=sadie.id,
+                routine_id=routine.id,
+                instance_date=now.date(),
+                due_at=now + timedelta(minutes=30),
+                is_completed=False,
+            )
+        )
+        db.commit()
+
+        assert nudges_service.scan_missed_routines(db, now) == []
+
+    def test_chore_template_instance_ignored(
+        self, db: Session, family, children
+    ):
+        """scan_missed_routines is routine-only. Ignore task_instances
+        rows whose routine_id is NULL."""
+        sadie = children["sadie"]
+        now = _utcnow()
+        chore = ChoreTemplate(
+            family_id=family.id,
+            name="Sweep",
+            recurrence="daily",
+            due_time=time(19, 0),
+            assignment_type="fixed",
+            assignment_rule={"assigned_to": str(sadie.id)},
+        )
+        db.add(chore)
+        db.flush()
+        db.add(
+            TaskInstance(
+                family_id=family.id,
+                family_member_id=sadie.id,
+                routine_id=None,
+                chore_template_id=chore.id,
+                instance_date=now.date(),
+                due_at=now - timedelta(minutes=20),
+                is_completed=False,
+            )
+        )
+        db.commit()
+
+        assert nudges_service.scan_missed_routines(db, now) == []

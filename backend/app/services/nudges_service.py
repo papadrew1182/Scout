@@ -151,11 +151,48 @@ def scan_upcoming_events(
     return proposals
 
 
-def scan_missed_routines(db: Session, now_utc: datetime) -> list[NudgeProposal]:
-    """Emit one proposal per task_instances row whose routine-based
-    due_at has passed and is not completed (respecting
-    override_completed). Implemented in Task 6."""
-    return []
+def scan_missed_routines(
+    db: Session, now_utc: datetime
+) -> list[NudgeProposal]:
+    """task_instances rows with routine_id (not chore_template) whose
+    due_at has passed AND are not completed (respecting
+    override_completed). severity='low' per revised plan Section 6.
+    scheduled_for = due_at + 15 min (lead-after-miss; apply_proactivity
+    may shift earlier)."""
+    rows = db.execute(
+        text(
+            """
+            SELECT ti.id,
+                   ti.family_member_id,
+                   ti.due_at,
+                   r.name AS routine_name
+            FROM task_instances ti
+            JOIN routines r ON r.id = ti.routine_id
+            WHERE ti.routine_id IS NOT NULL
+              AND ti.is_completed = false
+              AND COALESCE(ti.override_completed, false) = false
+              AND ti.due_at < :now
+            """
+        ),
+        {"now": now_utc},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.family_member_id,
+                trigger_kind="missed_routine",
+                trigger_entity_kind="task_instance",
+                trigger_entity_id=row.id,
+                scheduled_for=row.due_at + timedelta(minutes=15),
+                severity="low",
+                context={
+                    "name": row.routine_name,
+                    "due_time": row.due_at.strftime("%I:%M %p"),
+                },
+            )
+        )
+    return proposals
 
 
 def apply_proactivity(
