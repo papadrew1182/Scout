@@ -47,6 +47,7 @@ import { HouseholdBoard } from "./HouseholdBoard";
 import { CompletionSheet } from "./CompletionSheet";
 import { AddTaskSheet } from "./AddTaskSheet";
 import { AffirmationCard } from "../affirmations/AffirmationCard";
+import { ProjectsTodayCard } from "../projects/ProjectsTodayCard";
 
 interface KidWinSummary {
   kid: FamilyKid;
@@ -155,6 +156,8 @@ export function TodayHome() {
       </View>
 
       <AffirmationCard />
+
+      <ProjectsTodayCard />
 
       {/* Filter chips: household + per child */}
       <View style={styles.chipRow}>
