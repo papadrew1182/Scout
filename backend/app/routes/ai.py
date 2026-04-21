@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import pytz
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.ai import orchestrator
@@ -29,6 +29,8 @@ from app.schemas.ai import (
     ConversationStats,
     MessagePage,
     MessageRead,
+    PersonalityPatchRequest,
+    PersonalityResponse,
     ResumableConversation,
     StapleMealsRequest,
     StapleMealsResponse,
@@ -36,7 +38,7 @@ from app.schemas.ai import (
     WeeklyPlanRequest,
     WeeklyPlanResponse,
 )
-from app.services import ai_conversation_service
+from app.services import ai_conversation_service, ai_personality_service
 
 RESUME_FRESHNESS_MINUTES = 30
 
@@ -577,6 +579,101 @@ def list_messages(
         before_message_id=before_message_id,
     )
     return MessagePage(messages=messages, has_more=has_more)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 04 Phase 2 - per-member personality config
+# ---------------------------------------------------------------------------
+
+
+def _build_personality_response(
+    db: Session, family_member_id: uuid.UUID
+) -> PersonalityResponse:
+    stored = ai_personality_service.get_stored_config(db, family_member_id)
+    resolved = ai_personality_service.get_resolved_config(db, family_member_id)
+    preamble = ai_personality_service.build_personality_preamble(resolved)
+    return PersonalityResponse(stored=stored, resolved=resolved, preamble=preamble)
+
+
+@router.get("/personality/me", response_model=PersonalityResponse)
+def get_my_personality(
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Current member's stored + resolved personality config plus the
+    backend-composed preamble preview. Self-scoped; no permission
+    required beyond authenticated access."""
+    return _build_personality_response(db, actor.member_id)
+
+
+@router.patch("/personality/me", response_model=PersonalityResponse)
+def patch_my_personality(
+    body: PersonalityPatchRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Update own personality config. Unknown keys rejected with 422;
+    enum values validated against app.ai.personality_defaults."""
+    actor.require_permission("ai.edit_own_personality")
+    payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    ai_personality_service.upsert_personality(
+        db,
+        family_member_id=actor.member_id,
+        payload=payload,
+        updated_by=actor.member_id,
+    )
+    return _build_personality_response(db, actor.member_id)
+
+
+@router.get("/personality/members/{member_id}", response_model=PersonalityResponse)
+def get_member_personality(
+    member_id: uuid.UUID,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Read another family member's personality config for the admin
+    screen. Requires ai.edit_any_personality. Cross-family reads are
+    blocked via the family membership check."""
+    actor.require_permission("ai.edit_any_personality")
+    # Cross-family defense: confirm the target member is in the actor's family.
+    row = db.execute(
+        text("SELECT family_id FROM family_members WHERE id = :mid"),
+        {"mid": member_id},
+    ).first()
+    if row is None or row[0] != actor.family_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
+        )
+    return _build_personality_response(db, member_id)
+
+
+@router.patch("/personality/members/{member_id}", response_model=PersonalityResponse)
+def patch_member_personality(
+    member_id: uuid.UUID,
+    body: PersonalityPatchRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Edit another family member's personality config. Admin surface."""
+    actor.require_permission("ai.edit_any_personality")
+    row = db.execute(
+        text("SELECT family_id FROM family_members WHERE id = :mid"),
+        {"mid": member_id},
+    ).first()
+    if row is None or row[0] != actor.family_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found",
+        )
+    payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    ai_personality_service.upsert_personality(
+        db,
+        family_member_id=member_id,
+        payload=payload,
+        updated_by=actor.member_id,
+    )
+    return _build_personality_response(db, member_id)
 
 
 @router.get("/usage")
