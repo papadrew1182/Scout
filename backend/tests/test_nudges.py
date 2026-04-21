@@ -847,3 +847,83 @@ class TestDispatchWithItems:
         # First is new (+1), second is deduped (no change)
         assert written == 1
         assert db.query(NudgeDispatchItem).count() == 2
+
+
+class TestTickBenchmark:
+    def test_tick_completes_under_10_seconds_with_realistic_fixture(
+        self, db: Session, family, adults, children, monkeypatch
+    ):
+        """Revised plan §5: a single tick must complete in under 10
+        seconds even with a realistic family size. 50+ personal_tasks,
+        20+ events. Push calls are stubbed out (push is not our
+        bottleneck under test)."""
+        import time as _time
+
+        now = _utcnow().replace(tzinfo=None)
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        sadie = children["sadie"]
+
+        # 50 overdue personal_tasks split across adults
+        for i in range(50):
+            owner = andrew if i % 2 == 0 else megan
+            db.add(
+                PersonalTask(
+                    family_id=family.id,
+                    assigned_to=owner.id,
+                    title=f"Task {i}",
+                    status="pending",
+                    due_at=now - timedelta(minutes=30 + i),
+                )
+            )
+
+        # 20 upcoming events, one attendee each
+        for i in range(20):
+            owner = andrew if i % 2 == 0 else megan
+            ev = Event(
+                family_id=family.id,
+                title=f"Event {i}",
+                starts_at=now + timedelta(minutes=5 + i),
+                ends_at=now + timedelta(minutes=35 + i),
+            )
+            db.add(ev)
+            db.flush()
+            db.add(EventAttendee(event_id=ev.id, family_member_id=owner.id))
+
+        db.commit()
+
+        # Stub push so it's not a bottleneck
+        from types import SimpleNamespace
+
+        def fake_send_push(db_arg, **kwargs):
+            pd = __import__("app.models.push", fromlist=["PushDelivery"]).PushDelivery(
+                family_member_id=kwargs["family_member_id"],
+                category=kwargs["category"],
+                title=kwargs["title"],
+                body=kwargs["body"],
+                data=kwargs.get("data") or {},
+                trigger_source=kwargs.get("trigger_source", "nudge_scan"),
+                status="provider_accepted",
+                provider="expo",
+                notification_group_id=__import__("uuid").uuid4(),
+            )
+            db_arg.add(pd)
+            db_arg.flush()
+            return SimpleNamespace(
+                delivery_ids=[pd.id],
+                accepted_count=1,
+                error_count=0,
+                notification_group_id=pd.notification_group_id,
+            )
+
+        from app.services import push_service as ps
+
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        t0 = _time.monotonic()
+        written = nudges_service.run_nudge_scan(db, now_utc=now)
+        elapsed = _time.monotonic() - t0
+
+        # Everyone defaults to balanced proactivity, so 70 proposals should dispatch
+        assert written >= 50, f"expected >=50 dispatches, got {written}"
+        assert elapsed < 10.0, f"tick took {elapsed:.2f}s (budget 10.0s)"

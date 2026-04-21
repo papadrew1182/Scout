@@ -44,6 +44,7 @@ from app.models.action_items import ParentActionItem
 from app.models.foundation import Family, FamilyMember
 from app.models.scheduled import ScheduledRun
 from app.models.tier5 import AnomalySuppression
+from app.services import nudges_service
 
 logger = logging.getLogger("scout.scheduler")
 
@@ -184,6 +185,16 @@ def _tick(db_factory: Callable[[], Session]) -> None:
             except Exception as e:
                 db.rollback()
                 logger.exception("push_receipt_poll_tick_failed: %s", e)
+            finally:
+                db.close()
+
+            db = db_factory()
+            try:
+                nudges_service.run_nudge_scan_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("nudge_scan_tick_failed: %s", e)
             finally:
                 db.close()
         finally:
