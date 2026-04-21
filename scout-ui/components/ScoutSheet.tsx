@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
 import { QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
@@ -207,15 +207,20 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
 
         {readyState === "ok" && (
           <>
-            {/* Hidden file input for attachment picking (web) */}
-            {/* @ts-ignore — HTMLInputElement ref on web */}
-            <input
-              type="file"
-              accept="image/*,application/pdf"
-              style={{ display: "none" }}
-              ref={fileInputRef as any}
-              onChange={handleFileSelected as any}
-            />
+            {/* Hidden file input — web only. Native renders null
+                because RN has no `input` component; file picking on
+                iOS/Android will move to expo-image-picker /
+                expo-document-picker in a separate feature. */}
+            {Platform.OS === "web" && (
+              // @ts-ignore — lowercase `input` is HTML-only; guard above keeps it web-only
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                style={{ display: "none" }}
+                ref={fileInputRef as any}
+                onChange={handleFileSelected as any}
+              />
+            )}
 
             <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.threadContent}>
               {thread.map((t, i) => (
