@@ -103,7 +103,24 @@ class Settings(BaseSettings):
         return bool(self.transcribe_api_key)
 
 
+class PushSettings(BaseSettings):
+    # PUSH_PROVIDER is unprefixed because it mirrors the value the
+    # frontend ships as EXPO_PUBLIC_PUSH_PROVIDER — both halves of the
+    # stack need to agree on the provider, and keeping the key name
+    # identical avoids drift during env review.
+    push_provider: str = "expo"
+    # Off by default so dev environments work without an Expo access
+    # token. When true, EXPO_ACCESS_TOKEN is mandatory.
+    expo_push_security_enabled: bool = False
+    expo_access_token: str = ""
+    expo_push_api_base: str = "https://exp.host/--/api/v2/push"
+    push_receipt_poll_batch: int = 1000
+
+    model_config = {"env_prefix": ""}
+
+
 settings = Settings()
+push_settings = PushSettings()
 
 
 def validate_startup() -> list[str]:
@@ -134,4 +151,14 @@ def validate_startup() -> list[str]:
         warnings.append("AI features disabled via SCOUT_ENABLE_AI=false")
     if not settings.enable_meal_generation:
         warnings.append("Meal generation disabled via SCOUT_ENABLE_MEAL_GENERATION=false")
+
+    if push_settings.push_provider != "expo":
+        warnings.append(
+            f"PUSH_PROVIDER={push_settings.push_provider!r}; only 'expo' is wired in Phase 1"
+        )
+    if push_settings.expo_push_security_enabled and not push_settings.expo_access_token:
+        warnings.append(
+            "EXPO_PUSH_SECURITY_ENABLED=true but EXPO_ACCESS_TOKEN is empty; "
+            "Expo will reject sends until the token is set"
+        )
     return warnings

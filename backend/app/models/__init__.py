@@ -20,6 +20,7 @@ from app.models.health_fitness import ActivityRecord, HealthSummary
 from app.models.meals import DietaryPreference, Meal, MealPlan, MealReview, WeeklyMealPlan
 from app.models.notes import Note
 from app.models.personal_tasks import PersonalTask
+from app.models.push import PushDelivery, PushDevice
 from app.models.tier5 import (
     AnomalySuppression,
     FamilyMemory,
@@ -63,6 +64,8 @@ __all__ = [
     "AIConversation",
     "AIMessage",
     "AIToolAudit",
+    "PushDevice",
+    "PushDelivery",
     "AnomalySuppression",
     "FamilyMemory",
     "PlannerBundleApply",

@@ -27,6 +27,7 @@ from app.routes import (
     memory as memory_routes,
     notes,
     personal_tasks,
+    push,
     routines,
     home_maintenance,
     storage,
@@ -103,6 +104,7 @@ app.include_router(health_fitness.router)
 app.include_router(integrations.router)
 app.include_router(grocery.router)
 app.include_router(home_maintenance.router)
+app.include_router(push.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
 app.include_router(storage.router)
