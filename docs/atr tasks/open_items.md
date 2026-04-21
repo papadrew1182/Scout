@@ -45,7 +45,54 @@ No open items.
 
 ---
 
-## Right now — PR #37 (Sprint 04 Phase 1, AI conversation resume) — MERGED + DEPLOYED
+## Right now — PR #40 (Sprint 04 Phase 2, per-member personalities) — MERGED + DEPLOYED
+
+Branch: `sprint/sprint-04-ai-personalities` (remote deleted)
+PR: https://github.com/papadrew1182/Scout/pull/40
+Merge commit: `16325d3f`
+
+### Status
+- [x] CI green on branch after a fix pass (FamilyMember import path;
+      missing savingText style)
+- [x] PR #40 squash-merged to main 2026-04-21
+- [x] Migration 048 applied on Railway via the public proxy URL
+- [x] Two new permission keys live: `ai.edit_own_personality`,
+      `ai.edit_any_personality`
+- [x] Post-merge CI on main: backend + frontend-types + smoke-web
+      green (arch-check fails continue-on-error only)
+- [x] Railway backend `/health` returns `{"status":"ok"}` post-merge
+- [x] Vercel production deploy: success
+
+### On Andrew's plate
+- [ ] `git checkout main && git pull` locally
+- [ ] `git branch -d sprint/sprint-04-ai-personalities`
+- [ ] Try it: open Scout, tune tone/verbosity at `/settings/ai`,
+      send a chat, watch the voice shift on the next turn
+- [ ] As adult, visit `/admin/ai/personalities` to edit another
+      member's config if desired
+
+### Follow-ups flagged during execution
+- `/admin/ai/personalities` has no nav link from `/admin` yet.
+  Add a row in the admin index in a small follow-up.
+- Chip / free-text input helper components duplicated between
+  `/settings/ai` and `/admin/ai/personalities`. Extract to
+  `scout-ui/components/PersonalityControls.tsx` if a third site
+  needs them.
+- Proactivity field stored but not yet used. Sprint 05 nudges
+  engine picks it up.
+
+---
+
+## PR #39 (Sprint 04 Phase 1 follow-ups) — MERGED
+
+Merge commit: `8412d90c`. Shipped: SAMPLE_THREAD removal from both
+AI launcher surfaces + "Your conversations" list on `/settings/ai`
+with per-row Rename / Pin / Archive actions. No backend changes,
+no migration. CI green, Vercel deploy success.
+
+---
+
+## PR #37 (Sprint 04 Phase 1, AI conversation resume) — MERGED + DEPLOYED
 
 Branch: `sprint/sprint-04-ai-conversation-resume` (remote deleted)
 PR: https://github.com/papadrew1182/Scout/pull/37
@@ -148,21 +195,42 @@ without them.
 
 ## Before starting Phase 2 (Google Calendar)
 
-- [ ] Confirm Phase 1 Railway + Vercel deploys are live and healthy
-      (per your `feedback_verify_deploys` memory rule)
-- [ ] Google Cloud project with Calendar API enabled
-- [ ] OAuth consent screen configured, test users added
-- [ ] Backend callback + webhook URL publicly reachable over HTTPS
-- [ ] Confirm intended redirect URI and post-connect app return URI
-- [ ] Railway env vars for Phase 2:
-  - [ ] `GOOGLE_CLIENT_ID` (needs GCP OAuth client created first)
-  - [ ] `GOOGLE_CLIENT_SECRET` (needs GCP OAuth client created first)
-  - [x] `SCOUT_OAUTH_ENCRYPTION_KEY` — set 2026-04-21; local backup at
+GCP OAuth setup completed 2026-04-21 by Andrew. All Phase 2 prereqs
+green — code kick-off is unblocked.
+
+- [x] Phase 1 Railway + Vercel deploys confirmed live (2026-04-21)
+- [x] Google Cloud project with Calendar API enabled
+- [x] OAuth consent screen configured, test users added
+- [x] Backend callback + webhook URL publicly reachable over HTTPS
+      (Railway production URL)
+- [x] Redirect URI + app return URI recorded on Railway
+- Railway env vars for Phase 2:
+  - [x] `GOOGLE_CLIENT_ID` set
+  - [x] `GOOGLE_CLIENT_SECRET` set
+  - [x] `SCOUT_OAUTH_ENCRYPTION_KEY` set (local backup at
         `C:\Users\rober\scout-secrets-backup.txt` — copy to 1Password
-        then delete the backup file
-  - [x] `SCOUT_GOOGLE_OAUTH_REDIRECT_URI` — set 2026-04-21 to
+        then delete the backup file)
+  - [x] `SCOUT_GOOGLE_OAUTH_REDIRECT_URI` set to
         `https://scout-backend-production-9991.up.railway.app/api/connectors/google/oauth/callback`
-  - [ ] `SCOUT_GOOGLE_OAUTH_APP_RETURN_URI` (needs app URL scheme decision)
+  - [x] `SCOUT_GOOGLE_OAUTH_APP_RETURN_URI` set to
+        `com.papadrew.scout://oauth/google/callback` (renamed
+        2026-04-21 from an earlier `SCOUT_GOOGLE_0AUTH_APP_RETURN_URI`
+        typo; zero variant is gone)
+
+### Phase 2 sprint-plan decisions (written into SCOUT_EXPANSION_SPRINT_V2.md §7)
+- [x] §D5 resolved: canonical Google Calendar connector path is
+      `backend/services/connectors/google_calendar/`. Retire
+      `backend/app/services/integrations/google_calendar.py` by end
+      of Phase 2. Do not create a third location.
+- [x] §D6 resolved: `DevToolsPanel.tsx` does not exist; `DEV_MODE` in
+      `scout-ui/lib/config.ts` has no consumer. Phase 2 should instead
+      annotate / retire: (1) the backend integration service, (2) the
+      `POST /integrations/google-calendar/ingest` route, (3) the dead
+      TS wrappers `ingestGoogleCalendar` and `ingestYnabBill` in
+      `scout-ui/lib/api.ts` (safe to delete — zero callers), and
+      (4) `smoke-tests/tests/dev-mode.spec.ts` (currently asserts
+      absent buttons that never existed; flip once `/settings/connections`
+      ships).
 
 ---
 
