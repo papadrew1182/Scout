@@ -61,7 +61,9 @@ def _make_account_and_token(db: Session, member_id, email: str) -> str:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    # Return tz-aware UTC so comparisons against the timestamptz column
+    # (which SQLAlchemy hydrates as tz-aware) don't raise TypeError.
+    return datetime.now(timezone.utc)
 
 
 @pytest.fixture
@@ -232,7 +234,7 @@ class TestListAndStats:
     def test_stats_are_self_scoped(self, db: Session, family, adults):
         """Member A's stats don't include member B's conversations."""
         andrew = adults["robert"]
-        sally = adults["sally"]
+        sally = adults["megan"]
         get_or_create_conversation(db, family.id, andrew.id, "personal")
         get_or_create_conversation(db, family.id, sally.id, "personal")
         get_or_create_conversation(db, family.id, sally.id, "personal")
@@ -278,7 +280,7 @@ class TestBulkArchive:
         self, db: Session, family, adults
     ):
         andrew = adults["robert"]
-        sally = adults["sally"]
+        sally = adults["megan"]
         sally_stale = AIConversation(
             family_id=family.id,
             family_member_id=sally.id,
@@ -435,7 +437,7 @@ class TestOwnershipDenial:
     def test_patch_another_members_conversation_returns_404(
         self, db: Session, family, adults, client
     ):
-        sally = adults["sally"]
+        sally = adults["megan"]
         andrew = adults["robert"]
         sally_conv = get_or_create_conversation(
             db, family.id, sally.id, "personal"
@@ -456,7 +458,7 @@ class TestOwnershipDenial:
     def test_read_another_members_messages_returns_404(
         self, db: Session, family, adults, client
     ):
-        sally = adults["sally"]
+        sally = adults["megan"]
         andrew = adults["robert"]
         sally_conv = get_or_create_conversation(
             db, family.id, sally.id, "personal"

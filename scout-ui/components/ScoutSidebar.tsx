@@ -7,7 +7,8 @@ import {
   QUICK_ACTIONS_BY_SURFACE,
   type ScoutSurface,
 } from "../lib/mockScout";
-import { fetchReady, sendChatMessageStream, uploadAttachment } from "../lib/api";
+import { fetchReady, fetchResumableConversation, sendChatMessageStream, uploadAttachment } from "../lib/api";
+import { fetchConversationMessagesPaginated } from "../lib/ai-conversations";
 
 interface Turn {
   role: "user" | "assistant";
@@ -35,6 +36,8 @@ export function ScoutSidebar({ surface }: Props) {
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
+  // Sprint 04 Phase 1: track conversation id for cross-turn continuity.
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
