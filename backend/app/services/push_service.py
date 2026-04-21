@@ -213,7 +213,11 @@ def send_push(
         deliveries.append(row)
     db.flush()
 
-    # Build Expo payload in the same order.
+    # Build Expo payload in the same order. `category` is tracked only
+    # on the delivery row (trigger_source / category columns); Expo's
+    # push-send schema doesn't recognize a top-level category field, so
+    # we don't emit one here — prior `_category` key was silently
+    # stripped by Expo and added nothing.
     messages = [
         {
             "to": device.expo_push_token,
@@ -221,7 +225,6 @@ def send_push(
             "body": body,
             "sound": "default",
             "data": {**data, "scout_delivery_id": str(row.id)},
-            "_category": category,
         }
         for device, row in zip(devices, deliveries)
     ]
