@@ -11,6 +11,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 
 import { API_BASE_URL } from "./config";
@@ -271,11 +274,6 @@ export function usePushRegistration(opts: { enabled: boolean }) {
     let cancelled = false;
     (async () => {
       try {
-        // Dynamic imports so the web bundle doesn't pull these in.
-        const Notifications = await import("expo-notifications");
-        const Device = await import("expo-device");
-        const Constants = (await import("expo-constants")).default;
-
         if (!Device.isDevice) {
           if (!cancelled) setState({ status: "unsupported", reason: "simulator" });
           return;
