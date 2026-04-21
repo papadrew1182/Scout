@@ -585,6 +585,31 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { backgroundColor: colors.border },
   saveBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
+
+  // Adjustment card
+  savedOk: { fontSize: 12, color: colors.greenText, fontWeight: "600", fontFamily: fonts.body, marginTop: 8 },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 },
+  chip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+  },
+  chipActive: { backgroundColor: colors.purpleLight, borderColor: colors.purple },
+  chipText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body },
+  chipTextActive: { color: colors.purpleDeep, fontWeight: "600" },
+  adjustmentButtonRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  adjustmentBtn: {
+    flex: 1,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  bonusBtn: { backgroundColor: colors.green },
+  penaltyBtn: { backgroundColor: colors.red },
+  adjustmentBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
 });
 
 // Kid row styles
@@ -645,28 +670,4 @@ const kidStyles = StyleSheet.create({
   },
   saveBtnDisabled: { backgroundColor: colors.border },
   saveBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
-
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 },
-  chip: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: colors.card,
-  },
-  chipActive: { backgroundColor: colors.purpleLight, borderColor: colors.purple },
-  chipText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body },
-  chipTextActive: { color: colors.purpleDeep, fontWeight: "600" },
-
-  adjustmentButtonRow: { flexDirection: "row", gap: 10, marginTop: 12 },
-  adjustmentBtn: {
-    flex: 1,
-    borderRadius: radii.md,
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  bonusBtn: { backgroundColor: colors.green },
-  penaltyBtn: { backgroundColor: colors.red },
-  adjustmentBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
 });
