@@ -1,3 +1,18 @@
+> **SUPERSEDED - do not implement.**
+>
+> This Phase 1 implementation plan was written against the original
+> `SCOUT_SPRINT_05_PROACTIVE_NUDGES.md` spec before external review.
+>
+> Superseded by `docs/plans/2026-04-21-sprint-05-plan.md` which adopts:
+> - parent-child dispatch model (`nudge_dispatches` + `nudge_dispatch_items`)
+> - `occurrence_local_date` for dedupe (not `scheduled_for::date`)
+> - AST-validated canonical SQL for P4 rule engine
+> - YNAB + Apple Health excluded from P5 digest
+> - `/admin/ai/*` route namespace
+>
+> Kept for historical reference only.
+
+---
 # Sprint 05 Phase 1 — Core Nudge Engine — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
