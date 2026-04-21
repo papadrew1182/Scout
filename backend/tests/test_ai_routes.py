@@ -87,6 +87,11 @@ class _FakeAIResponse:
         self.model = model
         self.input_tokens = 1
         self.output_tokens = 1
+        # Phase 10 prompt caching: orchestrator logs these after every
+        # provider.chat() call. Default to zero so fake responses look
+        # like a cache-miss (cheapest test shape).
+        self.cache_creation_input_tokens = 0
+        self.cache_read_input_tokens = 0
 
 
 class _FakeToolCall:
