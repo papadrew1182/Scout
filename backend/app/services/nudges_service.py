@@ -113,9 +113,42 @@ def scan_overdue_tasks(db: Session, now_utc: datetime) -> list[NudgeProposal]:
 def scan_upcoming_events(
     db: Session, now_utc: datetime, lead_minutes: int = 30
 ) -> list[NudgeProposal]:
-    """Emit one proposal per attendee of a non-cancelled, non-all-day
-    event starting within lead_minutes. Implemented in Task 5."""
-    return []
+    """Events starting within lead_minutes of now produce one proposal
+    per attendee. Past, cancelled, and all-day events are excluded.
+    scheduled_for = starts_at - lead_minutes so the proposal carries
+    the intended lead intact through apply_proactivity."""
+    horizon = now_utc + timedelta(minutes=lead_minutes)
+    rows = db.execute(
+        text(
+            """
+            SELECT e.id, e.title, e.starts_at, ea.family_member_id
+            FROM events e
+            JOIN event_attendees ea ON ea.event_id = e.id
+            WHERE e.is_cancelled = false
+              AND e.all_day = false
+              AND e.starts_at > :now
+              AND e.starts_at <= :horizon
+            """
+        ),
+        {"now": now_utc, "horizon": horizon},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.family_member_id,
+                trigger_kind="upcoming_event",
+                trigger_entity_kind="event",
+                trigger_entity_id=row.id,
+                scheduled_for=row.starts_at - timedelta(minutes=lead_minutes),
+                severity="normal",
+                context={
+                    "title": row.title,
+                    "start_time": row.starts_at.strftime("%I:%M %p"),
+                },
+            )
+        )
+    return proposals
 
 
 def scan_missed_routines(db: Session, now_utc: datetime) -> list[NudgeProposal]:

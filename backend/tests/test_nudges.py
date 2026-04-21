@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.calendar import Event, EventAttendee
 from app.models.personal_tasks import PersonalTask
 from app.services import nudges_service
 
@@ -75,3 +76,108 @@ class TestScanOverdueTasks:
         db.commit()
 
         assert nudges_service.scan_overdue_tasks(db, now) == []
+
+
+class TestScanUpcomingEvents:
+    def test_event_within_lead_window_produces_proposal_for_each_attendee(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        now = _utcnow()
+        event = Event(
+            family_id=family.id,
+            title="Pediatrician appointment",
+            starts_at=now + timedelta(minutes=20),
+            ends_at=now + timedelta(minutes=50),
+        )
+        db.add(event)
+        db.flush()
+        db.add_all(
+            [
+                EventAttendee(event_id=event.id, family_member_id=andrew.id),
+                EventAttendee(event_id=event.id, family_member_id=megan.id),
+            ]
+        )
+        db.commit()
+
+        proposals = nudges_service.scan_upcoming_events(db, now, lead_minutes=30)
+
+        assert len(proposals) == 2
+        member_ids = {p.family_member_id for p in proposals}
+        assert member_ids == {andrew.id, megan.id}
+        for p in proposals:
+            assert p.trigger_kind == "upcoming_event"
+            assert p.trigger_entity_kind == "event"
+            assert p.trigger_entity_id == event.id
+            assert p.context["title"] == "Pediatrician appointment"
+            assert p.severity == "normal"
+
+    def test_event_outside_lead_window_is_ignored(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow()
+        event = Event(
+            family_id=family.id,
+            title="Way out",
+            starts_at=now + timedelta(hours=5),
+            ends_at=now + timedelta(hours=6),
+        )
+        db.add(event)
+        db.flush()
+        db.add(EventAttendee(event_id=event.id, family_member_id=andrew.id))
+        db.commit()
+
+        assert nudges_service.scan_upcoming_events(db, now, lead_minutes=30) == []
+
+    def test_past_event_is_ignored(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        now = _utcnow()
+        event = Event(
+            family_id=family.id,
+            title="Already happened",
+            starts_at=now - timedelta(hours=1),
+            ends_at=now - timedelta(minutes=30),
+        )
+        db.add(event)
+        db.flush()
+        db.add(EventAttendee(event_id=event.id, family_member_id=andrew.id))
+        db.commit()
+
+        assert nudges_service.scan_upcoming_events(db, now, lead_minutes=30) == []
+
+    def test_cancelled_event_is_ignored(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        now = _utcnow()
+        event = Event(
+            family_id=family.id,
+            title="Cancelled",
+            starts_at=now + timedelta(minutes=15),
+            ends_at=now + timedelta(minutes=45),
+            is_cancelled=True,
+        )
+        db.add(event)
+        db.flush()
+        db.add(EventAttendee(event_id=event.id, family_member_id=andrew.id))
+        db.commit()
+
+        assert nudges_service.scan_upcoming_events(db, now, lead_minutes=30) == []
+
+    def test_all_day_event_is_ignored(self, db: Session, family, adults):
+        """all-day events have no meaningful heads-up moment."""
+        andrew = adults["robert"]
+        now = _utcnow()
+        event = Event(
+            family_id=family.id,
+            title="All day",
+            starts_at=now + timedelta(minutes=15),
+            ends_at=now + timedelta(hours=12),
+            all_day=True,
+        )
+        db.add(event)
+        db.flush()
+        db.add(EventAttendee(event_id=event.id, family_member_id=andrew.id))
+        db.commit()
+
+        assert nudges_service.scan_upcoming_events(db, now, lead_minutes=30) == []
