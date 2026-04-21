@@ -17,6 +17,15 @@
           "color": "#ffffff"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "32f36e55-df4d-4375-a2d0-7c9b34c4b219"
+      }
+    },
+    "owner": "papadrew1182"
   }
 }
