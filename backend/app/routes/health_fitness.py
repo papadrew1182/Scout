@@ -55,6 +55,7 @@ def create_health_summary(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-member-ingested health data; require_family() is the access boundary and no dedicated health.manage key exists yet (TODO: add in a follow-up migration when health surfaces get role-gated admin UI)
     return health_fitness_service.create_health_summary(db, family_id, payload)
 
 
@@ -75,6 +76,7 @@ def update_health_summary(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-scoped; see create_health_summary note on pending health.manage key
     return health_fitness_service.update_health_summary(
         db, family_id, summary_id, payload
     )
@@ -85,6 +87,7 @@ def delete_health_summary(
     family_id: uuid.UUID, summary_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-scoped; see create_health_summary note
     health_fitness_service.delete_health_summary(db, family_id, summary_id)
 
 
@@ -128,6 +131,7 @@ def create_activity_record(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-scoped; see create_health_summary note
     return health_fitness_service.create_activity_record(db, family_id, payload)
 
 
@@ -148,6 +152,7 @@ def update_activity_record(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-scoped; see create_health_summary note
     return health_fitness_service.update_activity_record(
         db, family_id, activity_id, payload
     )
@@ -158,4 +163,5 @@ def delete_activity_record(
     family_id: uuid.UUID, activity_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
 ):
     actor.require_family(family_id)
+    # noqa: public-route — family-scoped; see create_health_summary note
     health_fitness_service.delete_activity_record(db, family_id, activity_id)

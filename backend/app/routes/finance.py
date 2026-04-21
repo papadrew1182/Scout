@@ -51,6 +51,7 @@ def list_unpaid(family_id: uuid.UUID, actor: Actor = Depends(get_current_actor),
 @router.post("", response_model=BillRead, status_code=201)
 def create_bill(family_id: uuid.UUID, payload: BillCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("admin.manage_config")
     return finance_service.create_bill(db, family_id, payload)
 
 
@@ -69,22 +70,26 @@ def update_bill(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("admin.manage_config")
     return finance_service.update_bill(db, family_id, bill_id, payload)
 
 
 @router.post("/{bill_id}/pay", response_model=BillRead)
 def pay_bill(family_id: uuid.UUID, bill_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("admin.manage_config")
     return finance_service.mark_bill_paid(db, family_id, bill_id)
 
 
 @router.post("/{bill_id}/unpay", response_model=BillRead)
 def unpay_bill(family_id: uuid.UUID, bill_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("admin.manage_config")
     return finance_service.mark_bill_unpaid(db, family_id, bill_id)
 
 
 @router.delete("/{bill_id}", status_code=204)
 def delete_bill(family_id: uuid.UUID, bill_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("admin.manage_config")
     finance_service.delete_bill(db, family_id, bill_id)

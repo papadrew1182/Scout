@@ -61,6 +61,7 @@ def create_grocery_item(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("grocery.add_item")
     return grocery_service.create_grocery_item(db, family_id, actor.member_id, payload)
 
 
@@ -76,6 +77,7 @@ def update_grocery_item(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("grocery.add_item")
     return grocery_service.update_grocery_item(db, family_id, actor.member_id, item_id, payload)
 
 
@@ -90,6 +92,7 @@ def approve_grocery_item(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("grocery.approve")
     return grocery_service.approve_grocery_item(db, family_id, actor.member_id, item_id)
 
 
@@ -104,6 +107,7 @@ def reject_grocery_item(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("grocery.approve")
     return grocery_service.reject_grocery_item(db, family_id, actor.member_id, item_id)
 
 
@@ -142,6 +146,7 @@ def create_purchase_request(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("purchase_request.submit")
     return grocery_service.create_purchase_request(db, family_id, actor.member_id, payload)
 
 
@@ -157,6 +162,7 @@ def approve_purchase_request(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("purchase_request.approve")
     return grocery_service.approve_purchase_request(db, family_id, actor.member_id, request_id, body)
 
 
@@ -172,6 +178,7 @@ def reject_purchase_request(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("purchase_request.approve")
     return grocery_service.reject_purchase_request(db, family_id, actor.member_id, request_id, body)
 
 
@@ -186,6 +193,7 @@ def convert_to_grocery(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("purchase_request.approve")
     _req, item = grocery_service.convert_purchase_request_to_grocery(
         db, family_id, actor.member_id, request_id
     )

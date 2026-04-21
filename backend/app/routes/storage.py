@@ -44,6 +44,7 @@ async def upload(
     1 hour. For conversation replay the frontend should request a fresh
     URL if the stored one has expired (follow-up: GET /api/storage/signed-url).
     """
+    # noqa: public-route — any authenticated family member may upload attachments for AI chat and notes; path is namespaced per family, size/type limits enforced below
     if not settings.supabase_url:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,

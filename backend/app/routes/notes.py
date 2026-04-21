@@ -56,6 +56,7 @@ def search_notes(
 @router.post("", response_model=NoteRead, status_code=201)
 def create_note(family_id: uuid.UUID, payload: NoteCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("notes.manage_any")
     return notes_service.create_note(db, family_id, payload)
 
 
@@ -74,22 +75,26 @@ def update_note(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("notes.manage_any")
     return notes_service.update_note(db, family_id, note_id, payload)
 
 
 @router.post("/{note_id}/archive", response_model=NoteRead)
 def archive_note(family_id: uuid.UUID, note_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("notes.manage_any")
     return notes_service.archive_note(db, family_id, note_id)
 
 
 @router.post("/{note_id}/unarchive", response_model=NoteRead)
 def unarchive_note(family_id: uuid.UUID, note_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("notes.manage_any")
     return notes_service.unarchive_note(db, family_id, note_id)
 
 
 @router.delete("/{note_id}", status_code=204)
 def delete_note(family_id: uuid.UUID, note_id: uuid.UUID, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("notes.manage_any")
     notes_service.delete_note(db, family_id, note_id)

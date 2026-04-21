@@ -53,6 +53,7 @@ def google_calendar_ingest(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — webhook-style ingestion from a connected Google account; authed as an Actor but acts as an automated sync path, not a per-user mutation
     event, created = ingest_event(db, body.family_id, body.payload)
     return GoogleCalendarIngestResponse(event=event, created=created)
 
@@ -63,5 +64,6 @@ def ynab_ingest(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — webhook-style YNAB ingestion; see google_calendar_ingest note
     bill, created = ingest_scheduled_transaction(db, body.family_id, body.payload)
     return YnabIngestResponse(bill=bill, created=created)

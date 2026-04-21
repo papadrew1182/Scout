@@ -35,6 +35,7 @@ def list_task_instances(
 @router.post("/generate", response_model=list[TaskInstanceRead], status_code=201)
 def generate_tasks(family_id: uuid.UUID, target_date: date = Query(...), actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("chores.manage_config")
     return task_generation_service.generate_for_date(db, family_id, target_date)
 
 
@@ -47,12 +48,14 @@ def get_task_instance(family_id: uuid.UUID, instance_id: uuid.UUID, actor: Actor
 @router.post("/{instance_id}/complete", response_model=TaskInstanceRead)
 def mark_completed(family_id: uuid.UUID, instance_id: uuid.UUID, payload: TaskInstanceComplete, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("household.complete_own_task")
     return task_instance_service.mark_completed(db, family_id, instance_id, payload)
 
 
 @router.post("/{instance_id}/override", response_model=TaskInstanceRead)
 def apply_override(family_id: uuid.UUID, instance_id: uuid.UUID, payload: TaskInstanceOverride, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("household.complete_any_task")
     return task_instance_service.apply_override(db, family_id, instance_id, payload)
 
 
@@ -72,6 +75,7 @@ def update_step_completion(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("household.complete_own_task")
     return task_instance_service.update_step_completion(db, family_id, instance_id, step_completion_id, payload)
 
 

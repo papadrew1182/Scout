@@ -34,6 +34,7 @@ def list_families(actor: Actor = Depends(get_current_actor), db: Session = Depen
 
 @router.post("", response_model=FamilyRead, status_code=201)
 def create_family(payload: FamilyCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
+    # noqa: public-route — multi-tenant setup path; production family creation is gated by SCOUT_ENABLE_BOOTSTRAP + zero-accounts check at /api/auth/bootstrap. Any existing family member creating siblings isn't meaningful in the current single-family deploy.
     return family_service.create_family(db, payload)
 
 

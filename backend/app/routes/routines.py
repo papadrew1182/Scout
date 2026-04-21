@@ -31,6 +31,7 @@ def list_routines(
 @router.post("", response_model=RoutineRead, status_code=201)
 def create_routine(family_id: uuid.UUID, payload: RoutineCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("chores.manage_config")
     return routine_service.create_routine(db, family_id, payload)
 
 
@@ -49,4 +50,5 @@ def list_steps(family_id: uuid.UUID, routine_id: uuid.UUID, actor: Actor = Depen
 @router.post("/{routine_id}/steps", response_model=RoutineStepRead, status_code=201)
 def create_step(family_id: uuid.UUID, routine_id: uuid.UUID, payload: RoutineStepCreate, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)):
     actor.require_family(family_id)
+    actor.require_permission("chores.manage_config")
     return routine_service.create_step(db, family_id, routine_id, payload)
