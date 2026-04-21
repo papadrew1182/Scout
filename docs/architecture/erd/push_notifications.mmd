@@ -1,0 +1,38 @@
+erDiagram
+    family_members ||--o{ push_devices : "registers"
+    family_members ||--o{ push_deliveries : "receives"
+    push_devices   ||--o{ push_deliveries : "targeted by"
+
+    push_devices {
+        uuid id PK
+        uuid family_member_id FK
+        text expo_push_token UK
+        text device_label
+        text platform
+        text app_version
+        bool is_active
+        timestamptz last_registered_at
+        timestamptz last_successful_delivery_at
+    }
+
+    push_deliveries {
+        uuid id PK
+        uuid notification_group_id
+        uuid family_member_id FK
+        uuid push_device_id FK
+        text provider
+        text category
+        text title
+        text body
+        jsonb data
+        text trigger_source
+        text status
+        text provider_ticket_id
+        text provider_receipt_status
+        jsonb provider_receipt_payload
+        text error_message
+        timestamptz sent_at
+        timestamptz receipt_checked_at
+        timestamptz provider_handoff_at
+        timestamptz tapped_at
+    }

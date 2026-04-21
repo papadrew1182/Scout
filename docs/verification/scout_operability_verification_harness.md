@@ -211,3 +211,73 @@ a phase complete.
 ### Smoke tests
 
 - [ ] `npx playwright test tests/affirmations.spec.ts` passes
+
+---
+
+## Expansion Phase 1 — Push notifications
+
+### Prerequisites
+
+- [ ] `PUSH_PROVIDER=expo` set in Railway env
+- [ ] `EXPO_PUBLIC_PUSH_PROVIDER=expo` set in Vercel env
+- [ ] EAS project ID populated in `scout-ui/app.json` (`expo.extra.eas.projectId`)
+- [ ] APNs Auth Key uploaded to the Scout Expo project
+- [ ] Apple Developer bundle ID registered for production
+
+### Backend tests
+
+- [ ] `py -m pytest backend/tests/test_push_notifications.py` — 13 tests
+      covering service happy-path, receipt polling, DeviceNotRegistered
+      deactivation, route permission denial, and AI tool push/fallback
+- [ ] Full suite green at or above prior passing count
+
+### User surface
+
+- [ ] `/settings/notifications` renders for all tiers
+- [ ] On web build, a non-error "not supported" notice appears
+- [ ] Registered devices list reflects the current actor only
+- [ ] Recent notifications list reflects the current actor only
+- [ ] Revoke button deactivates a device and the list refreshes
+
+### Admin surface
+
+- [ ] Admins see the "Send a test push" card on /settings/notifications
+- [ ] Admins see the "Family delivery log" card on /settings/notifications
+- [ ] Child-tier actor receives 403 on POST /api/push/test-send
+- [ ] Child-tier actor receives 403 on GET /api/push/deliveries
+      (family-wide log)
+
+### Provider semantics
+
+- [ ] A successful Expo ticket sets delivery row `status=provider_accepted`
+      and stores `provider_ticket_id`
+- [ ] Receipt polling transitions rows to `provider_handoff_ok` or
+      `provider_error`
+- [ ] DeviceNotRegistered (ticket or receipt) deactivates
+      `scout.push_devices.is_active`
+
+### Scheduler
+
+- [ ] APScheduler tick (5 min) invokes `run_push_receipt_poll_tick`
+- [ ] Advisory lock gate is respected — two app instances do not
+      double-poll
+
+### AI tool
+
+- [ ] With an active device and an accepted ticket,
+      `send_notification_or_create_action` returns
+      `status=push_delivered` and creates no ParentActionItem
+- [ ] With no active device, the tool returns
+      `status=fallback_action_inbox` and creates one ParentActionItem
+
+### Manual physical-device validation
+
+- [ ] Install the Scout app on a physical iPhone and sign in
+- [ ] Device appears under /settings/notifications → Registered devices
+- [ ] Admin sends a test push from another session
+- [ ] iPhone displays the notification
+- [ ] Tapping the notification opens Scout and `tapped_at` populates
+
+### Smoke tests
+
+- [ ] `npx playwright test tests/push-notifications.spec.ts` passes
