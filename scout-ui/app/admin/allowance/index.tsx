@@ -22,7 +22,12 @@ import { Redirect } from "expo-router";
 import { shared, colors, fonts, radii } from "../../../lib/styles";
 import { useHasPermission } from "../../../lib/permissions";
 import { useFamilyConfig } from "../../../lib/config";
-import { fetchAllowancePolicies, fetchMembers, putAllowancePolicy } from "../../../lib/api";
+import {
+  createAllowanceAdjustment,
+  fetchAllowancePolicies,
+  fetchMembers,
+  putAllowancePolicy,
+} from "../../../lib/api";
 import type { FamilyMember } from "../../../lib/types";
 import type { AllowanceTarget } from "../../../lib/allowance";
 import { DEFAULT_ALLOWANCE_TARGET } from "../../../lib/allowance";
@@ -375,7 +380,12 @@ export default function AllowanceAdmin() {
       </View>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Section 3: Analytics stub                                           */}
+      {/* Section 3: Quick bonus / penalty                                    */}
+      {/* ------------------------------------------------------------------ */}
+      <AdjustmentsCard kids={kids} />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Section 4: Analytics stub                                           */}
       {/* ------------------------------------------------------------------ */}
       <View style={shared.card}>
         <View style={shared.cardTitleRow}>
@@ -386,6 +396,148 @@ export default function AllowanceAdmin() {
         </Text>
       </View>
     </ScrollView>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Quick adjustment form — writes to POST /allowance/adjustments
+// ---------------------------------------------------------------------------
+
+function AdjustmentsCard({ kids }: { kids: FamilyMember[] }) {
+  const [selectedKidId, setSelectedKidId] = useState<string | null>(null);
+  const [amountDollars, setAmountDollars] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  // Default the selection to the first kid once the list loads.
+  useEffect(() => {
+    if (selectedKidId === null && kids.length > 0) {
+      setSelectedKidId(kids[0].id);
+    }
+  }, [kids, selectedKidId]);
+
+  const submit = useCallback(
+    async (kind: "bonus" | "penalty") => {
+      if (!selectedKidId) {
+        setMsg({ kind: "err", text: "Pick a kid" });
+        return;
+      }
+      const cents = Math.round(parseFloat(amountDollars || "0") * 100);
+      if (!cents || cents <= 0) {
+        setMsg({ kind: "err", text: "Amount must be more than $0" });
+        return;
+      }
+      if (!reason.trim()) {
+        setMsg({ kind: "err", text: "Reason is required" });
+        return;
+      }
+      setBusy(true);
+      setMsg(null);
+      try {
+        await createAllowanceAdjustment({
+          family_member_id: selectedKidId,
+          cents,
+          reason: reason.trim(),
+          kind,
+        });
+        setMsg({
+          kind: "ok",
+          text: `${kind === "bonus" ? "Bonus" : "Penalty"} applied`,
+        });
+        setAmountDollars("");
+        setReason("");
+      } catch (e: any) {
+        setMsg({ kind: "err", text: e?.message ?? "Failed" });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selectedKidId, amountDollars, reason],
+  );
+
+  return (
+    <View style={shared.card}>
+      <View style={shared.cardTitleRow}>
+        <Text style={shared.cardTitle}>Bonus / penalty</Text>
+      </View>
+
+      <Text style={styles.fieldLabel}>Kid</Text>
+      <View style={styles.chipRow}>
+        {kids.map((kid) => {
+          const active = kid.id === selectedKidId;
+          return (
+            <Pressable
+              key={kid.id}
+              style={[styles.chip, active && styles.chipActive]}
+              onPress={() => setSelectedKidId(kid.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${kid.first_name}`}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {kid.first_name}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Text style={styles.fieldLabel}>Amount ($)</Text>
+      <TextInput
+        style={styles.input as any}
+        value={amountDollars}
+        onChangeText={setAmountDollars}
+        placeholder="2.00"
+        placeholderTextColor={colors.muted}
+        keyboardType="decimal-pad"
+        editable={!busy}
+        accessibilityLabel="Adjustment amount"
+      />
+
+      <Text style={styles.fieldLabel}>Reason</Text>
+      <TextInput
+        style={styles.input as any}
+        value={reason}
+        onChangeText={setReason}
+        placeholder="e.g. Helped cook dinner"
+        placeholderTextColor={colors.muted}
+        editable={!busy}
+        accessibilityLabel="Adjustment reason"
+      />
+
+      {msg && (
+        <Text
+          style={[
+            styles.savedOk,
+            msg.kind === "err" && { color: colors.redText },
+          ]}
+        >
+          {msg.text}
+        </Text>
+      )}
+
+      <View style={styles.adjustmentButtonRow}>
+        <Pressable
+          style={[styles.adjustmentBtn, styles.bonusBtn, busy && styles.saveBtnDisabled]}
+          onPress={() => submit("bonus")}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Apply bonus"
+        >
+          <Text style={styles.adjustmentBtnText}>Bonus</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.adjustmentBtn, styles.penaltyBtn, busy && styles.saveBtnDisabled]}
+          onPress={() => submit("penalty")}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Apply penalty"
+        >
+          <Text style={styles.adjustmentBtnText}>Penalty</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -493,4 +645,28 @@ const kidStyles = StyleSheet.create({
   },
   saveBtnDisabled: { backgroundColor: colors.border },
   saveBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
+
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 6 },
+  chip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+  },
+  chipActive: { backgroundColor: colors.purpleLight, borderColor: colors.purple },
+  chipText: { fontSize: 12, color: colors.muted, fontFamily: fonts.body },
+  chipTextActive: { color: colors.purpleDeep, fontWeight: "600" },
+
+  adjustmentButtonRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  adjustmentBtn: {
+    flex: 1,
+    borderRadius: radii.md,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  bonusBtn: { backgroundColor: colors.green },
+  penaltyBtn: { backgroundColor: colors.red },
+  adjustmentBtnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600", fontFamily: fonts.body },
 });

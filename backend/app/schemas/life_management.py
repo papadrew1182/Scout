@@ -1,7 +1,8 @@
 import uuid
 from datetime import date, datetime, time
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # --- Routine ---
@@ -167,6 +168,21 @@ class AllowanceLedgerCreate(BaseModel):
     amount_cents: int
     week_start: date | None = None
     note: str | None = None
+
+
+class AllowanceAdjustmentCreate(BaseModel):
+    """Parent-initiated bonus or penalty on top of the weekly payout.
+
+    ``cents`` is always positive; ``kind`` determines the sign written
+    to the ledger. ``reason`` is a short parent-facing explanation that
+    ends up in the ledger ``note`` field prefixed with ``[bonus]`` or
+    ``[penalty]`` so UI can categorize without another column.
+    """
+
+    family_member_id: uuid.UUID
+    cents: int = Field(gt=0, description="Magnitude in cents; always positive")
+    reason: str = Field(min_length=1, max_length=200)
+    kind: Literal["bonus", "penalty"]
 
 
 class WeeklyPayoutRequest(BaseModel):

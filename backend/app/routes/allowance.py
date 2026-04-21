@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.auth import Actor, get_current_actor
 from app.database import get_db
 from app.schemas.life_management import (
+    AllowanceAdjustmentCreate,
     AllowanceLedgerCreate,
     AllowanceLedgerRead,
     BalanceRead,
@@ -58,3 +59,22 @@ def get_balance(family_id: uuid.UUID, member_id: uuid.UUID, actor: Actor = Depen
     actor.require_family(family_id)
     balance = payout_service.get_balance(db, family_id, member_id)
     return BalanceRead(family_member_id=member_id, balance_cents=balance)
+
+
+@router.post("/adjustments", response_model=AllowanceLedgerRead, status_code=201)
+def create_adjustment(
+    family_id: uuid.UUID,
+    payload: AllowanceAdjustmentCreate,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Create a parent-initiated bonus or penalty adjustment.
+
+    Writes to the existing ``allowance_ledger`` with
+    ``entry_type='adjustment'`` and a signed ``amount_cents`` matching
+    the ``kind`` (bonus=positive, penalty=negative). Requires
+    ``allowance.manage_config`` — this is a parent-only operation.
+    """
+    actor.require_family(family_id)
+    actor.require_permission("allowance.manage_config")
+    return payout_service.create_adjustment(db, family_id, payload)

@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.life_management import AllowanceLedger, DailyWin
-from app.schemas.life_management import AllowanceLedgerCreate
+from app.schemas.life_management import AllowanceAdjustmentCreate, AllowanceLedgerCreate
 from app.services.tenant_guard import require_family, require_member_in_family
 
 PAYOUT_TIERS = {5: 1.0, 4: 0.8, 3: 0.6}  # 2 or fewer = 0
@@ -110,6 +110,33 @@ def create_manual_entry(db: Session, family_id: uuid.UUID, payload: AllowanceLed
         amount_cents=payload.amount_cents,
         week_start=payload.week_start,
         note=payload.note,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def create_adjustment(
+    db: Session, family_id: uuid.UUID, payload: AllowanceAdjustmentCreate
+) -> AllowanceLedger:
+    """Create a parent-initiated bonus or penalty ledger entry.
+
+    ``cents`` is always positive; the sign is derived from ``kind``.
+    The note field captures ``[bonus]`` / ``[penalty]`` plus the
+    parent-supplied reason, so readers can categorize without adding
+    another column.
+    """
+    require_family(db, family_id)
+    require_member_in_family(db, family_id, payload.family_member_id)
+
+    signed_cents = payload.cents if payload.kind == "bonus" else -payload.cents
+    entry = AllowanceLedger(
+        family_id=family_id,
+        family_member_id=payload.family_member_id,
+        entry_type="adjustment",
+        amount_cents=signed_cents,
+        note=f"[{payload.kind}] {payload.reason.strip()}",
     )
     db.add(entry)
     db.commit()
