@@ -3,7 +3,6 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 
 import { colors, fonts } from "../lib/styles";
 import {
-  SAMPLE_THREAD,
   QUICK_ACTIONS_BY_SURFACE,
   type ScoutSurface,
 } from "../lib/mockScout";
@@ -27,12 +26,8 @@ interface Props {
 }
 
 export function ScoutSidebar({ surface }: Props) {
-  const [thread, setThread] = useState<Turn[]>(() =>
-    SAMPLE_THREAD.flatMap((t) => [
-      { role: "user", content: t.user } as Turn,
-      { role: "assistant", content: t.assistant } as Turn,
-    ]),
-  );
+  // Starts blank; hydrates from /resumable on mount when eligible.
+  const [thread, setThread] = useState<Turn[]>([]);
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
