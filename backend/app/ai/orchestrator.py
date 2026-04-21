@@ -10,6 +10,7 @@ Handles the full chat loop:
 """
 
 import json
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
@@ -24,6 +25,7 @@ from app.ai.context import (
 )
 from app.ai.homework import record_homework_turn
 from app.ai.moderation import check_user_message
+from app.ai.observability import log_ai_call, new_trace_id
 from app.ai.provider import AIResponse, AnthropicProvider, ToolDefinition, get_provider
 from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor, _audit
 from app.models.ai import AIConversation, AIMessage
@@ -605,12 +607,31 @@ def chat(
     pending_confirmation: dict | None = None
     turn_tool_calls = 0  # incremented each time the executor runs a tool this turn
 
+    # Observability: one trace_id per turn spans every provider round plus
+    # the tool-executor calls nested inside. The aggregation script uses it
+    # to stitch tool-loop rounds back into a single logical interaction.
+    turn_trace_id = new_trace_id()
+
     max_rounds = _rounds_for_intent(intent)
     for _round in range(max_rounds):
+        _round_started = time.monotonic()
         response = provider.chat(
             messages=messages,
             system=system_prompt,
             tools=tool_defs if tool_defs else None,
+        )
+        _round_elapsed_ms = int((time.monotonic() - _round_started) * 1000)
+        _round_tool = response.tool_calls[0].name if response.tool_calls else None
+        log_ai_call(
+            trace_id=turn_trace_id,
+            conversation_id=conversation.id,
+            family_id=family_id,
+            member_id=member_id,
+            model=response.model,
+            tool_name=_round_tool,
+            duration_ms=_round_elapsed_ms,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
         )
 
         if not response.tool_calls:
@@ -840,6 +861,9 @@ def chat_stream(
     pending_confirmation: dict | None = None
     turn_tool_calls = 0
 
+    # Same trace_id for every stream round in this turn — see log_ai_call().
+    turn_trace_id = new_trace_id()
+
     max_rounds = _rounds_for_intent(intent)
     for _round in range(max_rounds):
         # Collect this round's streamed events from Anthropic.
@@ -850,6 +874,7 @@ def chat_stream(
         round_in = 0
         round_out = 0
         round_error: str | None = None
+        _round_started = time.monotonic()
 
         for ev in provider.chat_stream(
             messages=messages,
@@ -887,6 +912,18 @@ def chat_stream(
         last_model = round_model or last_model
         total_in += round_in
         total_out += round_out
+
+        log_ai_call(
+            trace_id=turn_trace_id,
+            conversation_id=conversation.id,
+            family_id=family_id,
+            member_id=member_id,
+            model=round_model,
+            tool_name=(round_tool_calls[0].get("name") if round_tool_calls else None),
+            duration_ms=int((time.monotonic() - _round_started) * 1000),
+            input_tokens=round_in,
+            output_tokens=round_out,
+        )
 
         if not round_tool_calls:
             # Pure text round — this was the final narration.
@@ -1024,11 +1061,24 @@ def generate_daily_brief(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         f"Today's data: {json.dumps(today_data, default=str)}"
     )
 
+    _trace_id = new_trace_id()
+    _started = time.monotonic()
     response = provider.chat(
         messages=[{"role": "user", "content": prompt}],
         system=system,
         model=None,  # uses default summary model
         max_tokens=512,
+    )
+    log_ai_call(
+        trace_id=_trace_id,
+        conversation_id=None,
+        family_id=family_id,
+        member_id=member_id,
+        model=response.model,
+        tool_name="generate_daily_brief",
+        duration_ms=int((time.monotonic() - _started) * 1000),
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
     )
 
     return {
@@ -1069,10 +1119,23 @@ def generate_weekly_plan(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         f"Tasks: {json.dumps(tasks, default=str)}"
     )
 
+    _trace_id = new_trace_id()
+    _started = time.monotonic()
     response = provider.chat(
         messages=[{"role": "user", "content": prompt}],
         system=system,
         max_tokens=768,
+    )
+    log_ai_call(
+        trace_id=_trace_id,
+        conversation_id=None,
+        family_id=family_id,
+        member_id=member_id,
+        model=response.model,
+        tool_name="generate_weekly_plan",
+        duration_ms=int((time.monotonic() - _started) * 1000),
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
     )
 
     return {
@@ -1098,10 +1161,23 @@ def suggest_staple_meals(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         f"Recent meals: {json.dumps(meals, default=str)}"
     )
 
+    _trace_id = new_trace_id()
+    _started = time.monotonic()
     response = provider.chat(
         messages=[{"role": "user", "content": prompt}],
         system=system,
         max_tokens=512,
+    )
+    log_ai_call(
+        trace_id=_trace_id,
+        conversation_id=None,
+        family_id=family_id,
+        member_id=member_id,
+        model=response.model,
+        tool_name="suggest_staple_meals",
+        duration_ms=int((time.monotonic() - _started) * 1000),
+        input_tokens=response.input_tokens,
+        output_tokens=response.output_tokens,
     )
 
     return {
