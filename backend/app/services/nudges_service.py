@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("scout.nudges")
@@ -74,9 +75,39 @@ class OccurrenceFields:
 
 
 def scan_overdue_tasks(db: Session, now_utc: datetime) -> list[NudgeProposal]:
-    """Emit one proposal per active personal_tasks row whose due_at has
-    passed. Implemented in Task 4."""
-    return []
+    """Emit one proposal per active personal_tasks row whose due_at
+    has passed. Pure read; no side effects. scheduled_for is the
+    original due_at so the dispatch dedupe_key uses the same moment
+    regardless of when the scanner actually runs."""
+    rows = db.execute(
+        text(
+            """
+            SELECT id, assigned_to, title, due_at
+            FROM personal_tasks
+            WHERE status != 'done'
+              AND due_at IS NOT NULL
+              AND due_at < :now
+            """
+        ),
+        {"now": now_utc},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.assigned_to,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=row.id,
+                scheduled_for=row.due_at,
+                severity="normal",
+                context={
+                    "title": row.title,
+                    "due_time": row.due_at.strftime("%I:%M %p"),
+                },
+            )
+        )
+    return proposals
 
 
 def scan_upcoming_events(
