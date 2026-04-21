@@ -138,8 +138,10 @@ def test_aggregation_script_parses_log_line(
         )
 
     # Reconstruct the lines the way Railway's log pipe would emit them.
+    # The parser only cares about the "ai_call {json}" suffix — the
+    # prefix can be anything.
     raw_lines = [
-        f"{rec.asctime or ''} INFO scout.ai.observability: {rec.getMessage()}"
+        f"2026-04-20T22:11:03Z INFO scout.ai.observability: {rec.getMessage()}"
         for rec in caplog.records
         if rec.name == "scout.ai.observability"
     ]
