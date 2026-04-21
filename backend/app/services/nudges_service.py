@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+import pytz
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -106,6 +107,7 @@ def scan_overdue_tasks(db: Session, now_utc: datetime) -> list[NudgeProposal]:
                 context={
                     "title": row.title,
                     "due_time": row.due_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.due_at,
                 },
             )
         )
@@ -147,6 +149,7 @@ def scan_upcoming_events(
                 context={
                     "title": row.title,
                     "start_time": row.starts_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.starts_at,
                 },
             )
         )
@@ -191,6 +194,7 @@ def scan_missed_routines(
                 context={
                     "name": row.routine_name,
                     "due_time": row.due_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.due_at,
                 },
             )
         )
@@ -256,9 +260,76 @@ def apply_proactivity(
 def resolve_occurrence_fields(
     db: Session, proposal: NudgeProposal
 ) -> OccurrenceFields:
-    """Compute occurrence_at_utc + occurrence_local_date (from the
-    family's timezone) + source_dedupe_key. Implemented in Task 8."""
-    raise NotImplementedError("resolve_occurrence_fields ships in Task 8")
+    """Compute the immutable occurrence triple. Reads the raw source
+    timestamp from proposal.context['occurrence_at_utc'] (scanner
+    stamps this), looks up the family's timezone, and converts the
+    UTC moment to a local date. source_dedupe_key is stable across
+    scheduler ticks and proactivity shifts because neither
+    occurrence_at_utc nor the family timezone changes between ticks
+    for the same source event."""
+    occurrence_at = proposal.context.get("occurrence_at_utc")
+    if occurrence_at is None:
+        raise ValueError(
+            f"proposal.context missing 'occurrence_at_utc' for "
+            f"trigger_kind={proposal.trigger_kind}. The scanner for "
+            f"this trigger must stamp the raw source timestamp."
+        )
+
+    row = db.execute(
+        text(
+            """
+            SELECT f.timezone
+            FROM family_members fm
+            JOIN families f ON f.id = fm.family_id
+            WHERE fm.id = :mid
+            """
+        ),
+        {"mid": proposal.family_member_id},
+    ).first()
+
+    if row is None or not row.timezone:
+        logger.warning(
+            "resolve_occurrence_fields: no timezone for member=%s; "
+            "falling back to UTC date.",
+            proposal.family_member_id,
+        )
+        local_date = occurrence_at.date()
+    else:
+        try:
+            tz = pytz.timezone(row.timezone)
+            # Treat naive UTC as UTC (the repo convention for timestamptz
+            # hydrated into naive Python datetimes)
+            aware_utc = (
+                pytz.utc.localize(occurrence_at)
+                if occurrence_at.tzinfo is None
+                else occurrence_at.astimezone(pytz.utc)
+            )
+            local_dt = aware_utc.astimezone(tz)
+            local_date = local_dt.date()
+        except pytz.UnknownTimeZoneError:
+            logger.warning(
+                "resolve_occurrence_fields: unknown timezone %r for member=%s; "
+                "falling back to UTC date.",
+                row.timezone,
+                proposal.family_member_id,
+            )
+            local_date = occurrence_at.date()
+
+    entity_part = (
+        str(proposal.trigger_entity_id)
+        if proposal.trigger_entity_id is not None
+        else "null"
+    )
+    dedupe_key = (
+        f"{proposal.family_member_id}:{proposal.trigger_kind}:"
+        f"{entity_part}:{local_date.isoformat()}"
+    )
+
+    return OccurrenceFields(
+        occurrence_at_utc=occurrence_at,
+        occurrence_local_date=local_date,
+        source_dedupe_key=dedupe_key,
+    )
 
 
 def dispatch_with_items(

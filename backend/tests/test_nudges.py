@@ -458,3 +458,186 @@ class TestApplyProactivity:
         out = nudges_service.apply_proactivity(db, [prop_a, prop_b], now)
         assert len(out) == 2
         assert call_count["n"] == 1
+
+
+import pytz
+
+
+class TestResolveOccurrenceFields:
+    def test_overdue_task_resolves_family_timezone_correctly(
+        self, db: Session, family, adults
+    ):
+        """Families.timezone=America/Chicago. An event at 2026-04-21
+        03:30 UTC is 2026-04-20 22:30 local (CDT, UTC-5) - so
+        occurrence_local_date is 2026-04-20."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+
+        event_id = __import__("uuid").uuid4()
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=event_id,
+            scheduled_for=datetime(2026, 4, 21, 3, 30),
+            severity="normal",
+            context={
+                "title": "T",
+                "occurrence_at_utc": datetime(2026, 4, 21, 3, 30),
+            },
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+
+        assert fields.occurrence_at_utc == datetime(2026, 4, 21, 3, 30)
+        assert fields.occurrence_local_date.isoformat() == "2026-04-20"
+        assert fields.source_dedupe_key == f"{andrew.id}:overdue_task:{event_id}:2026-04-20"
+
+    def test_upcoming_event_uses_local_date_not_utc_date(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Los_Angeles"  # UTC-7/8
+        db.commit()
+
+        event_id = __import__("uuid").uuid4()
+        # 2026-04-21 06:00 UTC = 2026-04-20 23:00 PDT
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="upcoming_event",
+            trigger_entity_kind="event",
+            trigger_entity_id=event_id,
+            scheduled_for=datetime(2026, 4, 21, 5, 30),
+            severity="normal",
+            context={
+                "title": "T",
+                "occurrence_at_utc": datetime(2026, 4, 21, 6, 0),
+            },
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert fields.occurrence_local_date.isoformat() == "2026-04-20"
+
+    def test_null_trigger_entity_id_uses_null_literal_in_key(
+        self, db: Session, family, adults
+    ):
+        """AI-suggested proposals may have no entity id. The key uses
+        the string 'null' in that slot so it still stays stable
+        across ticks."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="family",
+            trigger_entity_id=None,
+            scheduled_for=datetime(2026, 4, 21, 12, 0),
+            severity="normal",
+            context={"occurrence_at_utc": datetime(2026, 4, 21, 12, 0)},
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert fields.source_dedupe_key == f"{andrew.id}:ai_suggested:null:2026-04-21"
+
+    def test_missing_occurrence_at_utc_raises_value_error(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=_utcnow(),
+            severity="normal",
+            context={},  # missing occurrence_at_utc
+        )
+
+        with pytest.raises(ValueError, match="occurrence_at_utc"):
+            nudges_service.resolve_occurrence_fields(db, prop)
+
+
+class TestScannerStampsOccurrence:
+    """Confirm each scanner stamps context['occurrence_at_utc']."""
+
+    def test_overdue_task_scanner_stamps_due_at(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow()
+        due = now - timedelta(hours=1)
+        db.add(
+            PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title="t",
+                status="pending",
+                due_at=due,
+            )
+        )
+        db.commit()
+
+        proposals = nudges_service.scan_overdue_tasks(db, now)
+        assert len(proposals) == 1
+        assert "occurrence_at_utc" in proposals[0].context
+        # Ignore microseconds / tz parity; the underlying due_at round-trips
+        assert proposals[0].context["occurrence_at_utc"].date() == due.date()
+
+    def test_upcoming_event_scanner_stamps_starts_at(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow()
+        starts = now + timedelta(minutes=15)
+        ev = Event(
+            family_id=family.id,
+            title="t",
+            starts_at=starts,
+            ends_at=starts + timedelta(minutes=30),
+        )
+        db.add(ev)
+        db.flush()
+        db.add(EventAttendee(event_id=ev.id, family_member_id=andrew.id))
+        db.commit()
+
+        proposals = nudges_service.scan_upcoming_events(db, now)
+        assert len(proposals) == 1
+        assert "occurrence_at_utc" in proposals[0].context
+
+    def test_missed_routine_scanner_stamps_due_at(
+        self, db: Session, family, adults, children
+    ):
+        sadie = children["sadie"]
+        parent = adults["robert"]
+        now = _utcnow()
+        from datetime import time as dtime
+
+        r = Routine(
+            family_id=family.id,
+            family_member_id=sadie.id,
+            name="t",
+            block="morning",
+            recurrence="daily",
+            due_time_weekday=dtime(7, 30),
+            due_time_weekend=dtime(9, 0),
+        )
+        db.add(r)
+        db.flush()
+        db.add(
+            TaskInstance(
+                family_id=family.id,
+                family_member_id=sadie.id,
+                routine_id=r.id,
+                instance_date=now.date(),
+                due_at=now - timedelta(minutes=20),
+                is_completed=False,
+            )
+        )
+        db.commit()
+
+        proposals = nudges_service.scan_missed_routines(db, now)
+        assert len(proposals) == 1
+        assert "occurrence_at_utc" in proposals[0].context
