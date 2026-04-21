@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
-import { SAMPLE_THREAD, QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
+import { QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
 import { fetchReady, fetchResumableConversation, sendChatMessageStream, uploadAttachment } from "../lib/api";
 import { fetchConversationMessagesPaginated } from "../lib/ai-conversations";
 
@@ -26,12 +26,10 @@ interface Props {
 }
 
 export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) {
-  const [thread, setThread] = useState<Turn[]>(() =>
-    SAMPLE_THREAD.flatMap((t) => [
-      { role: "user", content: t.user } as Turn,
-      { role: "assistant", content: t.assistant } as Turn,
-    ]),
-  );
+  // Starts blank; hydrates from /resumable on open when an eligible
+  // conversation exists. Quick-action chips remain visible so the
+  // panel doesn't feel dead on first open.
+  const [thread, setThread] = useState<Turn[]>([]);
   const [value, setValue] = useState("");
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);

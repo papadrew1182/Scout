@@ -20,9 +20,27 @@ import { useRouter } from "expo-router";
 import {
   archiveOlderConversations,
   getConversationStats,
+  listMyConversations,
+  patchConversation,
+  type Conversation,
   type ConversationStats,
 } from "../../lib/ai-conversations";
 import { colors, fonts, shared } from "../../lib/styles";
+
+function formatRelative(iso: string | null): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diffMin = Math.round((now - then) / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  const diffMo = Math.round(diffDay / 30);
+  return `${diffMo}mo ago`;
+}
 
 const ARCHIVE_PRESETS = [
   { label: "7 days", days: 7 },
@@ -33,6 +51,9 @@ const ARCHIVE_PRESETS = [
 export default function AISettings() {
   const router = useRouter();
   const [stats, setStats] = useState<ConversationStats | null>(null);
+  const [conversations, setConversations] = useState<Conversation[] | null>(null);
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<number | null>(null);
   const [archiveResult, setArchiveResult] = useState<
@@ -41,8 +62,12 @@ export default function AISettings() {
 
   const load = async () => {
     try {
-      const s = await getConversationStats();
+      const [s, convs] = await Promise.all([
+        getConversationStats(),
+        listMyConversations({ includeArchived, limit: 20, pinnedFirst: true }),
+      ]);
       setStats(s);
+      setConversations(convs);
       setLoadError(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to load stats";
@@ -52,7 +77,47 @@ export default function AISettings() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [includeArchived]);
+
+  const togglePin = async (c: Conversation) => {
+    setRowBusy(c.id);
+    try {
+      await patchConversation(c.id, { is_pinned: !c.is_pinned });
+      await load();
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const toggleArchive = async (c: Conversation) => {
+    setRowBusy(c.id);
+    try {
+      await patchConversation(c.id, {
+        status: c.status === "archived" ? "active" : "archived",
+      });
+      await load();
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const rename = async (c: Conversation) => {
+    // Web-only prompt; on native builds the rename control is hidden.
+    const next =
+      typeof window !== "undefined" && typeof window.prompt === "function"
+        ? window.prompt("New title", c.title ?? "")
+        : null;
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === c.title) return;
+    setRowBusy(c.id);
+    try {
+      await patchConversation(c.id, { title: trimmed });
+      await load();
+    } finally {
+      setRowBusy(null);
+    }
+  };
 
   const handleArchive = async (days: number) => {
     setArchiving(days);
@@ -143,6 +208,82 @@ export default function AISettings() {
           </Text>
         )}
       </View>
+
+      <View style={shared.card}>
+        <View style={styles.listHeader}>
+          <Text style={shared.cardTitle}>Your conversations</Text>
+          <Pressable
+            onPress={() => setIncludeArchived((v) => !v)}
+            accessibilityRole="button"
+            accessibilityLabel={
+              includeArchived ? "Hide archived" : "Show archived"
+            }
+            style={styles.toggleBtn}
+          >
+            <Text style={styles.toggleBtnText}>
+              {includeArchived ? "Hide archived" : "Show archived"}
+            </Text>
+          </Pressable>
+        </View>
+
+        {conversations === null ? (
+          <ActivityIndicator color={colors.muted} style={{ marginTop: 8 }} />
+        ) : conversations.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No conversations yet. Open Scout and send a message to start one.
+          </Text>
+        ) : (
+          conversations.map((c) => (
+            <View key={c.id} style={styles.row}>
+              <View style={styles.rowMain}>
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {c.is_pinned ? "⭐ " : ""}
+                  {c.title ?? "New conversation"}
+                </Text>
+                <Text style={styles.rowMeta}>
+                  {c.status === "archived" ? "Archived · " : ""}
+                  {formatRelative(c.last_active_at)}
+                </Text>
+              </View>
+              <View style={styles.rowActions}>
+                <Pressable
+                  onPress={() => rename(c)}
+                  disabled={rowBusy === c.id}
+                  style={styles.rowBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Rename ${c.title ?? "conversation"}`}
+                >
+                  <Text style={styles.rowBtnText}>Rename</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => togglePin(c)}
+                  disabled={rowBusy === c.id}
+                  style={styles.rowBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={c.is_pinned ? "Unpin" : "Pin"}
+                >
+                  <Text style={styles.rowBtnText}>
+                    {c.is_pinned ? "Unpin" : "Pin"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => toggleArchive(c)}
+                  disabled={rowBusy === c.id}
+                  style={styles.rowBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    c.status === "archived" ? "Unarchive" : "Archive"
+                  }
+                >
+                  <Text style={styles.rowBtnText}>
+                    {c.status === "archived" ? "Unarchive" : "Archive"}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -231,6 +372,61 @@ const styles = StyleSheet.create({
     color: "#dc2626",
     fontSize: 13,
     marginTop: 8,
+    fontFamily: fonts.body,
+  },
+  listHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  toggleBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  toggleBtnText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontFamily: fonts.body,
+  },
+  emptyText: {
+    color: colors.muted,
+    fontSize: 13,
+    paddingVertical: 10,
+    fontFamily: fonts.body,
+  },
+  row: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#e5e7eb",
+    gap: 6,
+  },
+  rowMain: { gap: 2 },
+  rowTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontFamily: fonts.body,
+  },
+  rowMeta: {
+    color: colors.muted,
+    fontSize: 12,
+    fontFamily: fonts.body,
+  },
+  rowActions: {
+    flexDirection: "row",
+    gap: 8,
+    flexWrap: "wrap",
+    marginTop: 4,
+  },
+  rowBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: "#f3f4f6",
+  },
+  rowBtnText: {
+    color: colors.text,
+    fontSize: 12,
     fontFamily: fonts.body,
   },
 });
