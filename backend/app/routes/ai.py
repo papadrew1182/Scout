@@ -18,11 +18,16 @@ from app.config import settings
 from app.database import get_db
 from app.models.ai import AIConversation, AIMessage, AIToolAudit
 from app.schemas.ai import (
+    ArchiveOlderRequest,
     BriefRequest,
     BriefResponse,
     ChatRequest,
     ChatResponse,
+    ConversationCreateRequest,
+    ConversationPatchRequest,
     ConversationRead,
+    ConversationStats,
+    MessagePage,
     MessageRead,
     ResumableConversation,
     StapleMealsRequest,
@@ -31,6 +36,7 @@ from app.schemas.ai import (
     WeeklyPlanRequest,
     WeeklyPlanResponse,
 )
+from app.services import ai_conversation_service
 
 RESUME_FRESHNESS_MINUTES = 30
 
@@ -320,27 +326,108 @@ def staple_meals(
 
 @router.get("/conversations", response_model=list[ConversationRead])
 def list_conversations(
-    family_id: uuid.UUID = Query(...),
+    include_archived: bool = Query(False),
+    pinned_first: bool = Query(True),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    family_id: uuid.UUID | None = Query(
+        None,
+        description="Optional legacy param. Listing is self-scoped by actor.",
+    ),
     kind: str | None = Query(
         None,
         pattern="^(chat|tool|mixed|moderation)$",
-        description="Filter by conversation_kind",
+        description="Optional filter by conversation_kind.",
     ),
-    limit: int = Query(20, ge=1, le=100),
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(family_id)
-    stmt = (
-        select(AIConversation)
-        .where(AIConversation.family_id == family_id)
-        .where(AIConversation.family_member_id == actor.member_id)
-        .order_by(AIConversation.updated_at.desc())
-        .limit(limit)
+    """Drawer / settings list of the caller's own conversations.
+
+    Self-scoped by actor. `ended` conversations (user hit "New Chat")
+    are hidden. `archived` conversations are hidden unless
+    `include_archived=true`. Ordered by `last_active_at DESC`, with
+    pinned rows floated to the top when `pinned_first=true`."""
+    if family_id is not None:
+        actor.require_family(family_id)
+    rows = ai_conversation_service.list_conversations(
+        db,
+        family_member_id=actor.member_id,
+        include_archived=include_archived,
+        pinned_first=pinned_first,
+        limit=limit,
+        offset=offset,
     )
     if kind:
-        stmt = stmt.where(AIConversation.conversation_kind == kind)
-    return list(db.scalars(stmt).all())
+        rows = [r for r in rows if r.conversation_kind == kind]
+    return rows
+
+
+@router.get("/conversations/stats", response_model=ConversationStats)
+def get_conversation_stats(
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Self-scoped conversation counts for the settings history panel."""
+    return ai_conversation_service.get_conversation_stats(
+        db, family_member_id=actor.member_id
+    )
+
+
+@router.post("/conversations", response_model=ConversationRead)
+def create_conversation(
+    body: ConversationCreateRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Create a blank conversation for the 'New conversation' drawer
+    affordance. Title derives from first_message when provided; the
+    orchestrator upgrades the title on the first real user turn."""
+    actor.require_permission("ai.manage_own_conversations")
+    return ai_conversation_service.create_conversation(
+        db,
+        family_id=actor.family_id,
+        family_member_id=actor.member_id,
+        first_message=body.first_message,
+    )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationRead)
+def patch_conversation(
+    conversation_id: uuid.UUID,
+    body: ConversationPatchRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Rename, archive-toggle, or pin-toggle own conversation. Unset
+    fields are untouched. Ownership enforced at the service layer;
+    non-owners get 404."""
+    actor.require_permission("ai.manage_own_conversations")
+    return ai_conversation_service.patch_conversation(
+        db,
+        conversation_id=conversation_id,
+        actor=actor,
+        title=body.title,
+        status=body.status,
+        is_pinned=body.is_pinned,
+    )
+
+
+@router.post("/conversations/archive-older-than")
+def archive_older_than(
+    body: ArchiveOlderRequest,
+    actor: Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+):
+    """Bulk archive own active conversations with no activity in the
+    last `days` days. Archive-only; never deletes. Self-scoped."""
+    actor.require_permission("ai.clear_own_history")
+    archived = ai_conversation_service.bulk_archive_older_than(
+        db,
+        family_member_id=actor.member_id,
+        days=body.days,
+    )
+    return {"archived_count": archived}
 
 
 @router.get("/conversations/resumable", response_model=ResumableConversation)
@@ -452,23 +539,44 @@ def end_conversation(
     return {"conversation_id": str(conv.id), "status": conv.status}
 
 
-@router.get("/conversations/{conversation_id}/messages", response_model=list[MessageRead])
+@router.get("/conversations/{conversation_id}/messages", response_model=MessagePage)
 def list_messages(
     conversation_id: uuid.UUID,
-    family_id: uuid.UUID = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    before_message_id: uuid.UUID | None = Query(None),
+    family_id: uuid.UUID | None = Query(
+        None, description="Optional legacy param. Access is self-scoped."
+    ),
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
-    actor.require_family(family_id)
+    """Paginated message read. Returns up to ``limit`` newest messages
+    before ``before_message_id`` (or before now), ordered oldest-first
+    for chronological rendering. ``has_more`` is true when older
+    messages exist beyond the returned window.
+
+    Ownership: caller must own the conversation (family_member_id match).
+    This tightens the prior behavior, which only checked family-level
+    access and allowed a sibling to read another sibling's thread."""
+    if family_id is not None:
+        actor.require_family(family_id)
     conv = db.get(AIConversation, conversation_id)
-    if not conv or conv.family_id != family_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
-    stmt = (
-        select(AIMessage)
-        .where(AIMessage.conversation_id == conversation_id)
-        .order_by(AIMessage.created_at)
+    if (
+        conv is None
+        or conv.family_id != actor.family_id
+        or conv.family_member_id != actor.member_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found",
+        )
+    messages, has_more = ai_conversation_service.list_messages_paginated(
+        db,
+        conversation_id=conversation_id,
+        limit=limit,
+        before_message_id=before_message_id,
     )
-    return list(db.scalars(stmt).all())
+    return MessagePage(messages=messages, has_more=has_more)
 
 
 @router.get("/usage")
