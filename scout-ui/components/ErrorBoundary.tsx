@@ -1,6 +1,7 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { report } from "../lib/errorReporter";
 import { colors } from "../lib/styles";
 
 interface Props {
@@ -31,9 +32,15 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: unknown) {
-    // Logged to stdout / DevTools. A production error reporting provider
-    // (e.g. Sentry) can hook in here once one is wired up.
+    // Local dev / DevTools still gets the full error + info for debugging.
     console.error("[Scout ErrorBoundary]", error, info);
+    // Production crash reporter: fire-and-forget POST to
+    // /api/client-errors → structured `client_error` log on Railway.
+    report({
+      message: error.message || "Unknown error",
+      stack: error.stack,
+      source: "error_boundary",
+    });
   }
 
   reset = () => {
