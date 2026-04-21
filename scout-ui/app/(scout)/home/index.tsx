@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { API_BASE_URL } from "../../../lib/config";
 import { colors } from "../../../lib/styles";
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_SCOUT_API_URL || "http://localhost:8000";
 
 interface Zone { id: string; name: string; zone_type: string }
 interface Instance {

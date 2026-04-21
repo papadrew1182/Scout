@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { API_BASE_URL } from "../../../../lib/config";
 import { colors, fonts, shared } from "../../../../lib/styles";
 import { useHasPermission } from "../../../../lib/permissions";
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_SCOUT_API_URL || "http://localhost:8000";
 
 const PATTERN_CATEGORIES = [
   "assembly_line",
