@@ -26,6 +26,12 @@
         "projectId": "32f36e55-df4d-4375-a2d0-7c9b34c4b219"
       }
     },
-    "owner": "papadrew1182"
+    "owner": "papadrew1182",
+    "ios": {
+      "bundleIdentifier": "com.papadrew.scout",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
   }
 }
