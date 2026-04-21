@@ -32,6 +32,30 @@ class AIResponse:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    # Anthropic prompt-cache metrics. Zero on models/SDK versions that
+    # don't emit them, which is safe — the orchestrator just won't see
+    # any cache activity in its logs.
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+
+def _build_system_param(system: str | list[dict], cache_system: bool):
+    """Normalize the system arg into the Anthropic Messages API shape.
+
+    - If ``system`` is already a list of content blocks, return it as-is
+      (caller is responsible for any cache_control placement).
+    - If it's a string and caching is on, wrap it in a single text block
+      with ``cache_control: ephemeral`` so every call in a conversation
+      with an identical prefix reads from cache on turn 2 onwards.
+    - If it's a string and caching is off, return it unchanged.
+    """
+    if isinstance(system, list):
+        return system
+    if not system:
+        return None
+    if not cache_system:
+        return system
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
 class AnthropicProvider:
@@ -49,11 +73,12 @@ class AnthropicProvider:
         self,
         *,
         messages: list[dict],
-        system: str = "",
+        system: str | list[dict] = "",
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        cache_system: bool = True,
     ) -> AIResponse:
         kwargs: dict[str, Any] = {
             "model": model or settings.ai_chat_model,
@@ -61,8 +86,9 @@ class AnthropicProvider:
             "temperature": temperature if temperature is not None else settings.ai_temperature,
             "messages": messages,
         }
-        if system:
-            kwargs["system"] = system
+        system_param = _build_system_param(system, cache_system)
+        if system_param is not None:
+            kwargs["system"] = system_param
         if tools:
             kwargs["tools"] = [
                 {
@@ -85,24 +111,28 @@ class AnthropicProvider:
                     ToolCall(id=block.id, name=block.name, input=block.input)
                 )
 
+        usage = response.usage
         return AIResponse(
             content=content_text,
             tool_calls=tool_calls,
             stop_reason=response.stop_reason,
             model=response.model,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+            cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
         )
 
     def chat_stream(
         self,
         *,
         messages: list[dict],
-        system: str = "",
+        system: str | list[dict] = "",
         tools: list[ToolDefinition] | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        cache_system: bool = True,
     ) -> Iterator[dict]:
         """Stream a single chat round from Anthropic.
 
@@ -127,8 +157,9 @@ class AnthropicProvider:
             "temperature": temperature if temperature is not None else settings.ai_temperature,
             "messages": messages,
         }
-        if system:
-            kwargs["system"] = system
+        system_param = _build_system_param(system, cache_system)
+        if system_param is not None:
+            kwargs["system"] = system_param
         if tools:
             kwargs["tools"] = [
                 {
@@ -170,6 +201,12 @@ class AnthropicProvider:
             "model": final.model or "",
             "input_tokens": getattr(final.usage, "input_tokens", 0),
             "output_tokens": getattr(final.usage, "output_tokens", 0),
+            "cache_creation_input_tokens": getattr(
+                final.usage, "cache_creation_input_tokens", 0
+            ) or 0,
+            "cache_read_input_tokens": getattr(
+                final.usage, "cache_read_input_tokens", 0
+            ) or 0,
         }
 
 

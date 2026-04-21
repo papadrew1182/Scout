@@ -632,6 +632,8 @@ def chat(
             duration_ms=_round_elapsed_ms,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
+            cache_creation_input_tokens=response.cache_creation_input_tokens,
+            cache_read_input_tokens=response.cache_read_input_tokens,
         )
 
         if not response.tool_calls:
@@ -873,6 +875,8 @@ def chat_stream(
         round_model = ""
         round_in = 0
         round_out = 0
+        round_cache_creation = 0
+        round_cache_read = 0
         round_error: str | None = None
         _round_started = time.monotonic()
 
@@ -893,6 +897,8 @@ def chat_stream(
                 round_model = ev.get("model", "")
                 round_in = ev.get("input_tokens", 0)
                 round_out = ev.get("output_tokens", 0)
+                round_cache_creation = ev.get("cache_creation_input_tokens", 0)
+                round_cache_read = ev.get("cache_read_input_tokens", 0)
             elif t == "error":
                 round_error = ev.get("message", "upstream error")
 
@@ -923,6 +929,8 @@ def chat_stream(
             duration_ms=int((time.monotonic() - _round_started) * 1000),
             input_tokens=round_in,
             output_tokens=round_out,
+            cache_creation_input_tokens=round_cache_creation,
+            cache_read_input_tokens=round_cache_read,
         )
 
         if not round_tool_calls:
@@ -1079,6 +1087,8 @@ def generate_daily_brief(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         duration_ms=int((time.monotonic() - _started) * 1000),
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
+        cache_creation_input_tokens=response.cache_creation_input_tokens,
+        cache_read_input_tokens=response.cache_read_input_tokens,
     )
 
     return {
@@ -1136,6 +1146,8 @@ def generate_weekly_plan(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         duration_ms=int((time.monotonic() - _started) * 1000),
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
+        cache_creation_input_tokens=response.cache_creation_input_tokens,
+        cache_read_input_tokens=response.cache_read_input_tokens,
     )
 
     return {
@@ -1178,6 +1190,8 @@ def suggest_staple_meals(db: Session, family_id: uuid.UUID, member_id: uuid.UUID
         duration_ms=int((time.monotonic() - _started) * 1000),
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
+        cache_creation_input_tokens=response.cache_creation_input_tokens,
+        cache_read_input_tokens=response.cache_read_input_tokens,
     )
 
     return {
