@@ -493,12 +493,82 @@ def _convert_purchase_request_to_grocery(executor: ToolExecutor, args: dict) -> 
 
 
 def _send_notification_or_create_action(executor: ToolExecutor, args: dict) -> dict:
+    """Send a push if the target has an active device; otherwise fall back
+    to an Action Inbox row. A push with at least one provider-accepted
+    device attempt counts as delivered and does not create a duplicate
+    inbox row."""
+    import uuid as _uuid
+
+    from app.models.action_items import ParentActionItem
+    from app.models.foundation import FamilyMember
+    from app.services import push_service
+
+    target_raw = args.get("target_member_id")
+    message = (args.get("message") or "").strip()
+    title = (args.get("title") or "").strip() or "Scout notification"
+    action_type = args.get("action_type") or "notification"
+    route_hint = args.get("route_hint")
+
+    if not target_raw or not message:
+        return {"error": "target_member_id and message are required"}
+
+    try:
+        target_id = _uuid.UUID(str(target_raw))
+    except (TypeError, ValueError):
+        return {"error": "target_member_id is not a valid uuid"}
+
+    target = executor.db.get(FamilyMember, target_id)
+    if target is None or target.family_id != executor.family_id:
+        return {"error": "target member not found in your family"}
+
+    data: dict = {"action_type": action_type, "source": "ai_tool"}
+    if route_hint:
+        data["route_hint"] = route_hint
+
+    push_result = push_service.send_push(
+        executor.db,
+        family_member_id=target_id,
+        category=action_type,
+        title=title,
+        body=message,
+        data=data,
+        trigger_source="ai.send_notification_or_create_action",
+    )
+
+    if push_result.accepted_count > 0:
+        return {
+            "status": "push_delivered",
+            "notification_group_id": str(push_result.notification_group_id),
+            "accepted_count": push_result.accepted_count,
+            "error_count": push_result.error_count,
+            "target_member_id": str(target_id),
+        }
+
+    # No active devices, or every device attempt was rejected at
+    # provider submission. Preserve the Action Inbox path so the
+    # message is not silently lost. parent_action_items.action_type
+    # is bounded by a CHECK constraint — use the always-valid
+    # 'general' bucket and keep the AI's semantic action_type in
+    # the detail/title.
+    inbox = ParentActionItem(
+        family_id=executor.family_id,
+        created_by_member_id=executor.actor_member_id,
+        action_type="general",
+        title=title,
+        detail=message,
+        entity_type="family_member",
+        entity_id=target_id,
+        status="pending",
+    )
+    executor.db.add(inbox)
+    executor.db.flush()
+
     return {
-        "status": "logged",
-        "message": args.get("message", ""),
-        "target_member_id": args.get("target_member_id"),
-        "action_type": args.get("action_type", "notification"),
-        "note": "Notification delivery is not yet implemented. This action has been logged.",
+        "status": "fallback_action_inbox",
+        "action_item_id": str(inbox.id),
+        "target_member_id": str(target_id),
+        "push_accepted_count": 0,
+        "push_error_count": push_result.error_count,
     }
 
 
@@ -1206,13 +1276,18 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     ),
     "send_notification_or_create_action": ToolDefinition(
         name="send_notification_or_create_action",
-        description="Send a notification or create an action for a family member. Parent-only.",
+        description=(
+            "Deliver a push notification to a family member. If the target "
+            "has no active device, falls back to an Action Inbox item. Parent-only."
+        ),
         input_schema={
             "type": "object",
             "properties": {
                 "target_member_id": {"type": "string"},
+                "title": {"type": "string"},
                 "message": {"type": "string"},
                 "action_type": {"type": "string", "enum": ["notification", "reminder", "action"]},
+                "route_hint": {"type": "string"},
                 "confirmed": {"type": "boolean"},
             },
             "required": ["target_member_id", "message"],

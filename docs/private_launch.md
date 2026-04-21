@@ -55,6 +55,70 @@ Healthchecks: Postgres waits for pg_isready, backend waits for Postgres healthy,
 | `SCOUT_SMOKE_ADULT_EMAIL` | Persistent smoke operator account | `smoke@scout.app` |
 | `SCOUT_SMOKE_ADULT_PASSWORD` | Persistent smoke operator password | (random 43-char token) |
 | `EXPO_PUBLIC_API_URL` | Frontend build | `https://api.yourfamily.com` |
+| `PUSH_PROVIDER` | Phase 1 expansion | `expo` |
+| `EXPO_PUSH_SECURITY_ENABLED` | Phase 1 expansion | `false` (true requires access token) |
+| `EXPO_ACCESS_TOKEN` | Only when security enabled | token from Expo dashboard |
+| `EXPO_PUBLIC_PUSH_PROVIDER` | Frontend, Phase 1 | `expo` |
+
+## Push notifications (Sprint Expansion Phase 1)
+
+Scout delivers time-sensitive notifications through the Expo Push
+Service, which fans out to APNs. The backend records one delivery row
+per device attempt and polls Expo for receipts on the scheduler tick.
+
+### Setup
+
+1. Register an Apple Developer bundle ID for Scout and upload the APNs
+   Auth Key to the Expo project. Expo handles the handoff to APNs.
+2. Run `eas init` inside `scout-ui/` to create the EAS project ID. Paste
+   the generated ID into `scout-ui/app.json` under
+   `expo.extra.eas.projectId`. Without it,
+   `Notifications.getExpoPushTokenAsync` fails on EAS-built apps.
+3. Set `PUSH_PROVIDER=expo` on the backend (Railway). Leave
+   `EXPO_PUSH_SECURITY_ENABLED=false` unless you have enabled Expo's
+   push-security flow; in that case also set `EXPO_ACCESS_TOKEN`.
+4. Set `EXPO_PUBLIC_PUSH_PROVIDER=expo` on the frontend (Vercel).
+
+### Provider semantics
+
+- A successful **ticket** from the Expo `/send` endpoint means Expo
+  accepted the payload. The backend sets the delivery row to
+  `provider_accepted` and stores `provider_ticket_id`.
+- A successful **receipt** from `/getReceipts` (polled on the scheduler
+  tick) means Expo handed the payload to APNs. The row moves to
+  `provider_handoff_ok`.
+- Neither guarantees the device displayed the notification. Physical-
+  device validation is required for end-to-end confidence.
+
+### DeviceNotRegistered handling
+
+If Expo reports `DeviceNotRegistered` (either on the send ticket or on
+the receipt), the backend deactivates `scout.push_devices.is_active`
+for that token. Subsequent sends skip the stale device.
+
+### Receipt polling
+
+The APScheduler tick (every five minutes) polls pending receipts in
+batches of up to `push_receipt_poll_batch` (default 1000). No separate
+scheduler is introduced — receipt polling rides the existing tier-5
+advisory-locked tick.
+
+### AI tool integration
+
+`send_notification_or_create_action` now delivers a real push when the
+target member has at least one active device. If no active device exists
+or every send attempt is rejected at provider submission, the tool
+falls back to an Action Inbox row so the message is not lost. A
+successful push does NOT create a duplicate Action Inbox row.
+
+### Manual validation
+
+Automated tests cover provider submission and receipt processing only.
+Each push release must include a manual validation step: install the
+Scout app on a physical iPhone, register the device from
+`/settings/notifications`, send a test push, verify delivery on the
+device, and confirm `tapped_at` populates when the notification is
+tapped.
 
 ## Production Fail-Closed Rules
 
