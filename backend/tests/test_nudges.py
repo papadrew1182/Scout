@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.calendar import Event, EventAttendee
 from app.models.life_management import ChoreTemplate, Routine, TaskInstance
 from app.models.personal_tasks import PersonalTask
-from app.services import nudges_service
+from app.services import ai_personality_service, nudges_service
 
 
 def _utcnow() -> datetime:
@@ -322,3 +322,139 @@ class TestScanMissedRoutines:
         db.commit()
 
         assert nudges_service.scan_missed_routines(db, now) == []
+
+
+def _set_proactivity(db, member_id, value):
+    ai_personality_service.upsert_personality(
+        db, family_member_id=member_id, payload={"proactivity": value}
+    )
+
+
+class TestApplyProactivity:
+    def test_quiet_drops_all_proposals(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "quiet")
+        now = _utcnow()
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=None,
+            scheduled_for=now,
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop], now)
+        assert out == []
+
+    def test_balanced_is_passthrough(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "balanced")
+        now = _utcnow()
+        original = now + timedelta(minutes=30)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="upcoming_event",
+            trigger_entity_kind="event",
+            trigger_entity_id=None,
+            scheduled_for=original,
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop], now)
+        assert len(out) == 1
+        assert out[0].scheduled_for == original
+        assert out[0].context["proactivity"] == "balanced"
+
+    def test_forthcoming_shifts_upcoming_event_30_min_earlier(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "forthcoming")
+        now = _utcnow()
+        original = now  # start_at - 30 = now
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="upcoming_event",
+            trigger_entity_kind="event",
+            trigger_entity_id=None,
+            scheduled_for=original,
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop], now)
+        assert len(out) == 1
+        assert out[0].scheduled_for == original - timedelta(minutes=30)
+        assert out[0].context["proactivity"] == "forthcoming"
+
+    def test_forthcoming_shifts_missed_routine_10_min_earlier(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "forthcoming")
+        now = _utcnow()
+        original = now  # due_at + 15, which is also now
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=None,
+            scheduled_for=original,
+            severity="low",
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop], now)
+        assert len(out) == 1
+        assert out[0].scheduled_for == original - timedelta(minutes=10)
+
+    def test_forthcoming_does_not_shift_overdue_task(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "forthcoming")
+        now = _utcnow()
+        original = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=None,
+            scheduled_for=original,
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop], now)
+        assert len(out) == 1
+        assert out[0].scheduled_for == original
+
+    def test_caches_member_lookup(self, db: Session, family, adults, monkeypatch):
+        """If one member has two proposals, get_resolved_config is called
+        only once for that member."""
+        andrew = adults["robert"]
+        _set_proactivity(db, andrew.id, "balanced")
+        now = _utcnow()
+        prop_a = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=None,
+            scheduled_for=now,
+        )
+        prop_b = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="upcoming_event",
+            trigger_entity_kind="event",
+            trigger_entity_id=None,
+            scheduled_for=now,
+        )
+
+        call_count = {"n": 0}
+        real = ai_personality_service.get_resolved_config
+
+        def counting(db_arg, family_member_id):
+            call_count["n"] += 1
+            return real(db_arg, family_member_id)
+
+        monkeypatch.setattr(
+            ai_personality_service, "get_resolved_config", counting
+        )
+
+        out = nudges_service.apply_proactivity(db, [prop_a, prop_b], now)
+        assert len(out) == 2
+        assert call_count["n"] == 1

@@ -35,6 +35,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services import ai_personality_service
+
 logger = logging.getLogger("scout.nudges")
 
 
@@ -195,12 +197,60 @@ def scan_missed_routines(
     return proposals
 
 
+_FORTHCOMING_SHIFT_MINUTES = {
+    "upcoming_event": 30,
+    "missed_routine": 10,
+    # overdue_task: 0 -- cannot fire before already-overdue
+}
+
+
 def apply_proactivity(
     db: Session, proposals: list[NudgeProposal], now_utc: datetime
 ) -> list[NudgeProposal]:
-    """Gate + lead-time adjust per member proactivity. Implemented in
-    Task 7."""
-    return proposals
+    """Gate + lead-time adjust per member proactivity setting. quiet
+    drops proposals. balanced passes through unchanged. forthcoming
+    shifts scheduled_for earlier for triggers that support it (see
+    _FORTHCOMING_SHIFT_MINUTES). overdue_task is never shifted.
+
+    Stamps the effective proactivity setting into proposal.context
+    so dispatch_with_items can record it on the child row without a
+    second DB roundtrip.
+
+    Caches the member->setting lookup to one call per unique
+    family_member_id per invocation."""
+    out: list[NudgeProposal] = []
+    settings_cache: dict[uuid.UUID, str] = {}
+    for prop in proposals:
+        setting = settings_cache.get(prop.family_member_id)
+        if setting is None:
+            resolved = ai_personality_service.get_resolved_config(
+                db, prop.family_member_id
+            )
+            setting = resolved.get("proactivity", "balanced")
+            settings_cache[prop.family_member_id] = setting
+
+        if setting == "quiet":
+            continue
+
+        shifted_for = prop.scheduled_for
+        if setting == "forthcoming":
+            shift = _FORTHCOMING_SHIFT_MINUTES.get(prop.trigger_kind, 0)
+            if shift > 0:
+                shifted_for = prop.scheduled_for - timedelta(minutes=shift)
+
+        new_context = {**prop.context, "proactivity": setting}
+        out.append(
+            NudgeProposal(
+                family_member_id=prop.family_member_id,
+                trigger_kind=prop.trigger_kind,
+                trigger_entity_kind=prop.trigger_entity_kind,
+                trigger_entity_id=prop.trigger_entity_id,
+                scheduled_for=shifted_for,
+                severity=prop.severity,
+                context=new_context,
+            )
+        )
+    return out
 
 
 def resolve_occurrence_fields(
