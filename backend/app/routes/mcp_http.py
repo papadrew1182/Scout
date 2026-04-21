@@ -277,6 +277,7 @@ def call_mcp_tool(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — MCP tools authenticate via a separate bearer token resolved by _resolve_bearer() with its own scope/rate-limit checks; the Actor/permission model does not apply here
     _require_remote_enabled()
     if not body.name or not body.name.strip():
         raise HTTPException(

@@ -66,9 +66,9 @@ jobs:
 
   arch-check:
     runs-on: ubuntu-latest
-    # Non-blocking for now — promotes to blocking once baseline signal is clean.
-    # Remove continue-on-error in a follow-up PR after all warnings are resolved.
-    continue-on-error: true
+    # Blocking as of the 2026-04-21 cleanup: every mutation endpoint
+    # now has either actor.require_permission(...) or a `# noqa:
+    # public-route` comment with a written justification.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

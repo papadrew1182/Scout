@@ -379,6 +379,7 @@ def post_household_completion(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    actor.require_permission("household.complete_own_task")
     # Verify the occurrence belongs to the actor's family.
     occ = db.execute(
         text(

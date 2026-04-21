@@ -79,6 +79,7 @@ def submit_feedback(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — any authenticated family member reacts to their own affirmation delivery; reaction rows are self-scoped by actor.member_id
     if payload.reaction_type not in ("heart", "thumbs_down", "skip", "reshow"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -120,6 +121,7 @@ def update_preferences(
     actor: Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ):
+    # noqa: public-route — self-scoped member_config write; keyed on actor.member_id, no cross-member reach
     row = (
         db.query(MemberConfig)
         .filter_by(family_member_id=actor.member_id, key="affirmations.preferences")

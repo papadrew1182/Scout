@@ -33,4 +33,5 @@ def compute_daily_wins(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("allowance.manage_config")
     return daily_win_service.compute_for_family_date(db, family_id, win_date)

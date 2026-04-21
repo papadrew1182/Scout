@@ -36,6 +36,7 @@ def create_manual_entry(
     db: Session = Depends(get_db),
 ):
     actor.require_family(family_id)
+    actor.require_permission("allowance.manage_config")
     return payout_service.create_manual_entry(db, family_id, payload)
 
 

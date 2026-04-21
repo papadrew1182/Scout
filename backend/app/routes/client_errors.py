@@ -75,6 +75,7 @@ def submit_error(
 ):
     """Accept a client-side error report and log it structured. No
     persistence — the log stream is the source of truth for now."""
+    # noqa: public-route — accepts anonymous crash reports so a broken auth path still produces observability signal; _actor_context best-effort attaches family/member when a valid Bearer is present
     ctx = _actor_context(request, db)
     event = {
         "message": payload.message,
