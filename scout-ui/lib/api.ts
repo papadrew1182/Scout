@@ -192,6 +192,24 @@ export async function createWeeklyPayout(
   return res.json();
 }
 
+export interface AllowanceAdjustmentPayload {
+  family_member_id: string;
+  cents: number;
+  reason: string;
+  kind: "bonus" | "penalty";
+}
+
+/**
+ * Create a parent-initiated bonus or penalty adjustment. Writes an
+ * entry_type='adjustment' row to allowance_ledger on the backend;
+ * server derives the sign from ``kind``.
+ */
+export async function createAllowanceAdjustment(
+  payload: AllowanceAdjustmentPayload,
+): Promise<{ id: string; amount_cents: number; note: string | null }> {
+  return post(`${familyUrl()}/allowance/adjustments`, payload);
+}
+
 // ---------------------------------------------------------------------------
 // Meals
 // ---------------------------------------------------------------------------
