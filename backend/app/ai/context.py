@@ -400,6 +400,9 @@ def get_allowed_tools_for_surface(role: str, surface: str) -> list[str]:
         # additionally by CONFIRMATION_REQUIRED so even a stray call
         # cannot write without explicit parent approval.
         "apply_weekly_plan_bundle",
+        # Phase 3 expansion — both CONFIRMATION_REQUIRED.
+        "create_project_from_template",
+        "add_project_task",
     ]
 
     parent_tools = [

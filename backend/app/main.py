@@ -28,6 +28,8 @@ from app.routes import (
     memory as memory_routes,
     notes,
     personal_tasks,
+    projects,
+    project_templates,
     push,
     routines,
     home_maintenance,
@@ -106,6 +108,8 @@ app.include_router(integrations.router)
 app.include_router(grocery.router)
 app.include_router(home_maintenance.router)
 app.include_router(push.router)
+app.include_router(projects.router)
+app.include_router(project_templates.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
 app.include_router(storage.router)

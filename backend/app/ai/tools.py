@@ -49,6 +49,9 @@ CONFIRMATION_REQUIRED = {
     # with ONE confirmation card rather than a cascade of individual
     # confirms.
     "apply_weekly_plan_bundle",
+    # Phase 3 expansion: project writes are shared-write, confirmation-required.
+    "create_project_from_template",
+    "add_project_task",
 }
 
 
@@ -193,6 +196,8 @@ class ToolExecutor:
 # ============================================================================
 
 def _get_today_context(executor: ToolExecutor, args: dict) -> dict:
+    from app.services import project_aggregation as _project_aggregation
+
     today = date.today()
     members = family_service.list_members(executor.db, executor.family_id)
     tasks = task_instance_service.list_task_instances(
@@ -206,6 +211,12 @@ def _get_today_context(executor: ToolExecutor, args: dict) -> dict:
     meals = meals_service.list_meals(executor.db, executor.family_id, meal_date=today)
     bills = finance_service.list_unpaid_bills(executor.db, executor.family_id)
 
+    project_tasks_today = _project_aggregation.list_due_project_tasks_for_today(
+        executor.db,
+        family_member_id=executor.actor_member_id,
+        family_id=executor.family_id,
+    )
+
     return {
         "date": today.isoformat(),
         "family_members": _serialize(members),
@@ -213,6 +224,7 @@ def _get_today_context(executor: ToolExecutor, args: dict) -> dict:
         "events_today": _serialize(events),
         "meals_today": _serialize(meals),
         "unpaid_bills_count": len(bills),
+        "project_tasks_today": _serialize(project_tasks_today),
     }
 
 
@@ -1054,6 +1066,90 @@ def _apply_weekly_plan_bundle(executor: ToolExecutor, args: dict) -> dict:
     }
 
 
+def _create_project_from_template(executor: ToolExecutor, args: dict) -> dict:
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from app.services import project_service
+
+    tpl_raw = args.get("project_template_id")
+    start_raw = args.get("start_date")
+    name_override = args.get("name_override")
+    if not tpl_raw or not start_raw:
+        return {"error": "project_template_id and start_date are required"}
+    try:
+        tpl_id = _uuid.UUID(str(tpl_raw))
+        start = _date.fromisoformat(str(start_raw))
+    except (TypeError, ValueError):
+        return {"error": "invalid project_template_id or start_date"}
+    try:
+        project = project_service.create_from_template(
+            executor.db,
+            family_id=executor.family_id,
+            created_by_family_member_id=executor.actor_member_id,
+            project_template_id=tpl_id,
+            start_date=start,
+            name_override=name_override,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    return {
+        "status": "created",
+        "project_id": str(project.id),
+        "name": project.name,
+        "start_date": project.start_date.isoformat(),
+    }
+
+
+def _add_project_task(executor: ToolExecutor, args: dict) -> dict:
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from app.models.projects import Project
+    from app.services import project_service
+
+    project_raw = args.get("project_id")
+    title = (args.get("title") or "").strip()
+    if not project_raw or not title:
+        return {"error": "project_id and title are required"}
+    try:
+        project_id = _uuid.UUID(str(project_raw))
+    except (TypeError, ValueError):
+        return {"error": "invalid project_id"}
+
+    project = executor.db.get(Project, project_id)
+    if project is None or project.family_id != executor.family_id:
+        return {"error": "project not found in your family"}
+
+    due = None
+    if args.get("due_date"):
+        try:
+            due = _date.fromisoformat(str(args["due_date"]))
+        except ValueError:
+            return {"error": "invalid due_date"}
+
+    owner = None
+    if args.get("owner_family_member_id"):
+        try:
+            owner = _uuid.UUID(str(args["owner_family_member_id"]))
+        except ValueError:
+            return {"error": "invalid owner_family_member_id"}
+
+    task = project_service.add_task(
+        executor.db,
+        project_id=project.id,
+        title=title,
+        due_date=due,
+        owner_family_member_id=owner,
+    )
+    return {
+        "status": "created",
+        "project_task_id": str(task.id),
+        "project_id": str(project.id),
+        "title": task.title,
+    }
+
+
 _TOOL_HANDLERS: dict[str, Any] = {
     "get_today_context": _get_today_context,
     "list_tasks": _list_tasks,
@@ -1086,6 +1182,8 @@ _TOOL_HANDLERS: dict[str, Any] = {
     "get_meal_review_summary": _get_meal_review_summary,
     "get_weather": _get_weather,
     "apply_weekly_plan_bundle": _apply_weekly_plan_bundle,
+    "create_project_from_template": _create_project_from_template,
+    "add_project_task": _add_project_task,
 }
 
 
@@ -1563,6 +1661,43 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
                 },
             },
             "required": ["summary"],
+        },
+    ),
+    "create_project_from_template": ToolDefinition(
+        name="create_project_from_template",
+        description=(
+            "Instantiate a new family project from an existing template. "
+            "Confirmation required. Copies every template task into the "
+            "new project with due dates computed from `start_date` + the "
+            "task's `relative_day_offset`."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "project_template_id": {"type": "string"},
+                "start_date": {"type": "string", "description": "ISO YYYY-MM-DD"},
+                "name_override": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["project_template_id", "start_date"],
+        },
+    ),
+    "add_project_task": ToolDefinition(
+        name="add_project_task",
+        description=(
+            "Add a task to an existing family project. Confirmation "
+            "required. Owner and due date are optional."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "title": {"type": "string"},
+                "due_date": {"type": "string"},
+                "owner_family_member_id": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "required": ["project_id", "title"],
         },
     ),
 }
