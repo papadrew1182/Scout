@@ -1,13 +1,59 @@
 """AI provider abstraction. Anthropic-first with clean interface for swapping."""
 
 import json
+import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import anthropic
 
 from app.config import settings
+
+_logger = logging.getLogger("scout.ai.provider")
+
+# Single retry + fixed 500ms backoff. Upstream 5xx tends to either
+# clear in under a second or persist for minutes — a multi-step
+# exponential budget costs TTFT without materially better outcomes.
+_RETRY_BACKOFF_SECONDS = 0.5
+
+_T = TypeVar("_T")
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """True for transient upstream failures worth retrying once.
+
+    Covers the three categories that empirically recover within 500ms:
+      - connection failures (DNS, TCP reset)
+      - request timeouts
+      - any 5xx + 529 overloaded from Anthropic
+    """
+    if isinstance(exc, (anthropic.APIConnectionError, anthropic.APITimeoutError)):
+        return True
+    if isinstance(exc, anthropic.APIStatusError):
+        status = getattr(exc, "status_code", 0) or 0
+        return status >= 500 or status == 529
+    return False
+
+
+def _call_with_one_retry(fn: Callable[..., _T], *args, **kwargs) -> _T:
+    """Invoke ``fn`` once; on a transient upstream failure, sleep and
+    retry exactly once. A second failure re-raises the second error so
+    the caller sees the latest upstream state.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        if not _is_retryable(exc):
+            raise
+        _logger.warning(
+            "anthropic_retrying err=%s:%s",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        time.sleep(_RETRY_BACKOFF_SECONDS)
+        return fn(*args, **kwargs)
 
 
 @dataclass
@@ -99,7 +145,7 @@ class AnthropicProvider:
                 for t in tools
             ]
 
-        response = self._client.messages.create(**kwargs)
+        response = _call_with_one_retry(self._client.messages.create, **kwargs)
 
         content_text = ""
         tool_calls = []
@@ -170,17 +216,38 @@ class AnthropicProvider:
                 for t in tools
             ]
 
-        try:
-            with self._client.messages.stream(**kwargs) as stream:
-                for event in stream.text_stream:
-                    if event:
-                        yield {"type": "text_delta", "text": event}
+        final = None
+        for attempt in range(2):
+            any_yielded = False
+            try:
+                with self._client.messages.stream(**kwargs) as stream:
+                    for event in stream.text_stream:
+                        if event:
+                            any_yielded = True
+                            yield {"type": "text_delta", "text": event}
 
-                # After the text stream finishes, the final message is
-                # available with the full accumulated content and stop reason.
-                final = stream.get_final_message()
-        except Exception as e:  # Anthropic API errors, network, etc.
-            yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+                    # After the text stream finishes, the final message is
+                    # available with the full accumulated content and stop reason.
+                    final = stream.get_final_message()
+                break  # success
+            except Exception as e:  # Anthropic API errors, network, etc.
+                # Retry once on transient upstream failures — but only if
+                # nothing has been yielded yet. If text is already in the
+                # client's buffer, a retry would double-emit.
+                if attempt == 0 and _is_retryable(e) and not any_yielded:
+                    _logger.warning(
+                        "anthropic_stream_retrying err=%s:%s",
+                        type(e).__name__,
+                        str(e)[:200],
+                    )
+                    time.sleep(_RETRY_BACKOFF_SECONDS)
+                    continue
+                yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+                return
+
+        if final is None:
+            # Defensive: loop exhausted without break. Treat as error.
+            yield {"type": "error", "message": "stream_setup_failed"}
             return
 
         content_text = ""
