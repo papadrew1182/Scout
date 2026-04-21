@@ -64,8 +64,12 @@ test.describe("Scout AI capability toggles", () => {
 
     // Flip "Allow general chat" — the switch renders with
     // accessibilityLabel="Allow general chat" which web shows as
-    // aria-label, matching getByRole("switch", {name: "..."}).
-    const generalSwitch = page.getByRole("switch", { name: "Allow general chat" });
+    // aria-label. react-native-web's Switch composes a wrapper + an
+    // <input type="checkbox">, both with the aria-label, so we grab
+    // the first match (the interactive wrapper).
+    const generalSwitch = page
+      .getByRole("switch", { name: "Allow general chat" })
+      .first();
     await expect(generalSwitch).toBeVisible({ timeout: 5000 });
     await generalSwitch.click();
 
@@ -80,7 +84,9 @@ test.describe("Scout AI capability toggles", () => {
         r.url().includes("/admin/config/family/scout_ai.toggles"),
       { timeout: 10000 },
     );
-    const homeworkSwitch = page.getByRole("switch", { name: "Homework help (kids)" });
+    const homeworkSwitch = page
+      .getByRole("switch", { name: "Homework help (kids)" })
+      .first();
     await homeworkSwitch.click();
     const req2 = await secondPut;
     const body2 = JSON.parse(req2.postData() || "{}");
