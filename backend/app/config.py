@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # want to optimize cost can set SCOUT_AI_CLASSIFICATION_MODEL to a
     # real haiku variant the account has access to.
     ai_classification_model: str = "claude-sonnet-4-20250514"
+
+    # Nudge composer (Sprint 05 Phase 3). Short, cheap, stylized
+    # generation bounded to ~80 output tokens with a 3 second hard
+    # timeout at the call site. Haiku 4.5 is the default; override via
+    # SCOUT_AI_NUDGE_MODEL if a different model is preferred.
+    ai_nudge_model: str = "claude-haiku-4-5-20251001"
     ai_max_tokens: int = 2048
     ai_temperature: float = 0.3
     ai_request_timeout: int = 60
