@@ -17,6 +17,8 @@
  *     so a crash-looping page can't DoS the backend.
  */
 
+import { Platform } from "react-native";
+
 import { API_BASE_URL } from "./config";
 
 export type ErrorSource =
@@ -99,11 +101,18 @@ export function report(r: ErrorReport): void {
  * Install global handlers for unhandled promise rejections and
  * window.onerror. Safe to call multiple times; subsequent calls are
  * no-ops.
+ *
+ * Web-only. On native (iOS / Android) React Native polyfills
+ * `window` as a global object but does not provide
+ * `window.addEventListener`, so the calls below would throw on
+ * launch. Gate on `Platform.OS === "web"` rather than `typeof
+ * window` — the latter is true on native and was the cause of the
+ * iOS SIGABRT crash on launch.
  */
 let _installed = false;
 export function installGlobalHandlers(): void {
   if (_installed) return;
-  if (typeof window === "undefined") return;
+  if (Platform.OS !== "web") return;
   _installed = true;
 
   window.addEventListener("unhandledrejection", (event) => {
