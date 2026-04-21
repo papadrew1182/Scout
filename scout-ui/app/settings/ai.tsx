@@ -13,6 +13,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -25,7 +26,26 @@ import {
   type Conversation,
   type ConversationStats,
 } from "../../lib/ai-conversations";
+import {
+  getMyPersonality,
+  patchMyPersonality,
+  type PersonalityConfig,
+  type PersonalityResponse,
+  type Tone,
+  type VocabularyLevel,
+  type Formality,
+  type Humor,
+  type Proactivity,
+  type Verbosity,
+} from "../../lib/ai-personality";
 import { colors, fonts, shared } from "../../lib/styles";
+
+const TONES: Tone[] = ["warm", "direct", "playful", "professional"];
+const VOCABS: VocabularyLevel[] = ["simple", "standard", "advanced"];
+const FORMALITIES: Formality[] = ["casual", "neutral", "formal"];
+const HUMORS: Humor[] = ["none", "light", "dry"];
+const PROACTIVITIES: Proactivity[] = ["quiet", "balanced", "forthcoming"];
+const VERBOSITIES: Verbosity[] = ["short", "standard", "detailed"];
 
 function formatRelative(iso: string | null): string {
   if (!iso) return "";
@@ -54,6 +74,9 @@ export default function AISettings() {
   const [conversations, setConversations] = useState<Conversation[] | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [personality, setPersonality] = useState<PersonalityResponse | null>(null);
+  const [personalitySaving, setPersonalitySaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<number | null>(null);
   const [archiveResult, setArchiveResult] = useState<
@@ -78,6 +101,22 @@ export default function AISettings() {
   useEffect(() => {
     load();
   }, [includeArchived]);
+
+  useEffect(() => {
+    getMyPersonality()
+      .then(setPersonality)
+      .catch(() => setPersonality(null));
+  }, []);
+
+  const savePersonalityPartial = async (patch: Partial<PersonalityConfig>) => {
+    setPersonalitySaving(true);
+    try {
+      const updated = await patchMyPersonality(patch);
+      setPersonality(updated);
+    } finally {
+      setPersonalitySaving(false);
+    }
+  };
 
   const togglePin = async (c: Conversation) => {
     setRowBusy(c.id);
@@ -284,7 +323,171 @@ export default function AISettings() {
           ))
         )}
       </View>
+
+      <View style={shared.card}>
+        <Text style={shared.cardTitle}>Personality</Text>
+        <Text style={styles.sectionBlurb}>
+          Tune Scout's voice for your own conversations. Changes take effect
+          on the next chat turn.
+        </Text>
+
+        {personality === null ? (
+          <ActivityIndicator color={colors.muted} style={{ marginTop: 6 }} />
+        ) : (
+          <>
+            <PersonalityChips
+              label="Tone"
+              values={TONES}
+              current={personality.resolved.tone}
+              onSelect={(v) => savePersonalityPartial({ tone: v })}
+            />
+            <PersonalityChips
+              label="Vocabulary"
+              values={VOCABS}
+              current={personality.resolved.vocabulary_level}
+              onSelect={(v) => savePersonalityPartial({ vocabulary_level: v })}
+            />
+            <PersonalityChips
+              label="Formality"
+              values={FORMALITIES}
+              current={personality.resolved.formality}
+              onSelect={(v) => savePersonalityPartial({ formality: v })}
+            />
+            <PersonalityChips
+              label="Humor"
+              values={HUMORS}
+              current={personality.resolved.humor}
+              onSelect={(v) => savePersonalityPartial({ humor: v })}
+            />
+            <PersonalityChips
+              label="Verbosity"
+              values={VERBOSITIES}
+              current={personality.resolved.verbosity}
+              onSelect={(v) => savePersonalityPartial({ verbosity: v })}
+            />
+            <PersonalityChips
+              label="Proactivity"
+              values={PROACTIVITIES}
+              current={personality.resolved.proactivity}
+              onSelect={(v) => savePersonalityPartial({ proactivity: v })}
+            />
+            <Text style={styles.proactivityNote}>
+              Proactivity takes effect when proactive nudges ship in Sprint 05.
+            </Text>
+
+            <PersonalityFreeText
+              label="Notes to Scout"
+              limit={500}
+              initialValue={personality.resolved.notes_to_self}
+              onSave={(v) => savePersonalityPartial({ notes_to_self: v })}
+            />
+            <PersonalityFreeText
+              label="Role context"
+              limit={200}
+              initialValue={personality.resolved.role_hints}
+              onSave={(v) => savePersonalityPartial({ role_hints: v })}
+            />
+
+            {personalitySaving && (
+              <Text style={styles.savingText}>Saving…</Text>
+            )}
+
+            <Pressable
+              onPress={() => setPreviewOpen((v) => !v)}
+              style={styles.previewBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Toggle preamble preview"
+            >
+              <Text style={styles.previewBtnText}>
+                {previewOpen ? "Hide preview" : "Preview preamble"}
+              </Text>
+            </Pressable>
+
+            {previewOpen && (
+              <View style={styles.previewBox}>
+                <Text style={styles.previewText}>{personality.preamble}</Text>
+              </View>
+            )}
+          </>
+        )}
+      </View>
     </ScrollView>
+  );
+}
+
+function PersonalityChips<T extends string>({
+  label,
+  values,
+  current,
+  onSelect,
+}: {
+  label: string;
+  values: readonly T[];
+  current: T;
+  onSelect: (v: T) => void;
+}) {
+  return (
+    <View style={styles.enumRow}>
+      <Text style={styles.enumLabel}>{label}</Text>
+      <View style={styles.enumChips}>
+        {values.map((v) => (
+          <Pressable
+            key={v}
+            onPress={() => onSelect(v)}
+            style={[styles.chip, current === v && styles.chipActive]}
+            accessibilityRole="button"
+            accessibilityLabel={`Set ${label} to ${v}`}
+          >
+            <Text
+              style={[
+                styles.chipText,
+                current === v && styles.chipTextActive,
+              ]}
+            >
+              {v}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function PersonalityFreeText({
+  label,
+  limit,
+  initialValue,
+  onSave,
+}: {
+  label: string;
+  limit: number;
+  initialValue: string;
+  onSave: (v: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+  return (
+    <View style={styles.freeText}>
+      <View style={styles.freeTextHeader}>
+        <Text style={styles.enumLabel}>{label}</Text>
+        <Text style={styles.counter}>
+          {value.length}/{limit}
+        </Text>
+      </View>
+      <TextInput
+        style={styles.textInput}
+        multiline
+        value={value}
+        maxLength={limit}
+        onChangeText={setValue}
+        onBlur={() => {
+          if (value !== initialValue) onSave(value);
+        }}
+        accessibilityLabel={label}
+      />
+    </View>
   );
 }
 
@@ -428,5 +631,83 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 12,
     fontFamily: fonts.body,
+  },
+  enumRow: { marginTop: 10 },
+  enumLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  enumChips: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: "#f3f4f6",
+  },
+  chipActive: { backgroundColor: "#1f2937" },
+  chipText: { color: colors.text, fontSize: 12, fontFamily: fonts.body },
+  chipTextActive: { color: "#ffffff" },
+  proactivityNote: {
+    color: colors.muted,
+    fontSize: 11,
+    fontFamily: fonts.body,
+    marginTop: 2,
+  },
+  freeText: { marginTop: 14 },
+  freeTextHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  counter: {
+    fontSize: 11,
+    color: colors.muted,
+    fontFamily: fonts.body,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 8,
+    padding: 8,
+    minHeight: 60,
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.body,
+  },
+  savingText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontFamily: fonts.body,
+    marginTop: 8,
+  },
+  previewBtn: {
+    marginTop: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: "#f3f4f6",
+    alignSelf: "flex-start",
+  },
+  previewBtnText: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.body,
+  },
+  previewBox: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  previewText: {
+    fontFamily: "monospace",
+    fontSize: 12,
+    color: colors.text,
+    lineHeight: 18,
   },
 });

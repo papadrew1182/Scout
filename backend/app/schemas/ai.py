@@ -138,6 +138,46 @@ class ArchiveOlderRequest(BaseModel):
     days: int = Field(ge=1, le=365)
 
 
+class PersonalityConfig(BaseModel):
+    """Merged personality view returned by GET routes. All keys populated
+    from tier defaults even when the member has no member_config row."""
+
+    tone: str
+    vocabulary_level: str
+    formality: str
+    humor: str
+    proactivity: str
+    verbosity: str
+    notes_to_self: str = ""
+    role_hints: str = ""
+
+
+class PersonalityPatchRequest(BaseModel):
+    """PATCH body. All fields optional; omitted ones are left alone.
+    Unknown keys rejected server-side (see ai_personality_service.validate_payload)."""
+
+    tone: str | None = None
+    vocabulary_level: str | None = None
+    formality: str | None = None
+    humor: str | None = None
+    proactivity: str | None = None
+    verbosity: str | None = None
+    notes_to_self: str | None = None
+    role_hints: str | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class PersonalityResponse(BaseModel):
+    """GET response shape. Includes stored (raw member_config value or
+    None), resolved (stored overlaid on tier defaults), and a
+    backend-composed preamble preview the UI can render verbatim."""
+
+    stored: dict | None
+    resolved: PersonalityConfig
+    preamble: str
+
+
 class ResumableConversation(BaseModel):
     """Envelope returned by GET /api/ai/conversations/resumable.
 
