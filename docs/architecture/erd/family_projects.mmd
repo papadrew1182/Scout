@@ -1,0 +1,98 @@
+erDiagram
+    families               ||--o{ project_templates      : "has (family-local)"
+    families               ||--o{ projects                : "has"
+    family_members         ||--o{ project_templates       : "created by"
+    family_members         ||--o{ projects                : "created by"
+    family_members         ||--o{ projects                : "primary owner"
+    family_members         ||--o{ project_tasks           : "assigned"
+    family_members         ||--o{ project_budget_entries  : "recorded by"
+    project_templates      ||--o{ project_template_tasks  : "defines"
+    project_templates      ||--o{ projects                : "instantiated"
+    projects               ||--o{ project_tasks           : "contains"
+    projects               ||--o{ project_milestones      : "marks"
+    projects               ||--o{ project_budget_entries  : "tracks"
+    project_tasks          ||--o{ project_budget_entries  : "tagged"
+    project_tasks          ||--o| personal_tasks          : "promoted to"
+
+    project_templates {
+        uuid id PK
+        uuid family_id FK
+        text name
+        text category
+        int estimated_duration_days
+        int default_lead_time_days
+        int default_budget_cents
+        uuid created_by_family_member_id FK
+        bool is_active
+        bool is_builtin
+    }
+
+    project_template_tasks {
+        uuid id PK
+        uuid project_template_id FK
+        text title
+        int order_index
+        int relative_day_offset
+        text default_owner_role
+        int estimated_duration_minutes
+        bool has_budget_impact
+        bool has_grocery_impact
+    }
+
+    projects {
+        uuid id PK
+        uuid family_id FK
+        uuid project_template_id FK
+        text name
+        text category
+        text status
+        date start_date
+        date target_end_date
+        date actual_end_date
+        int budget_cents
+        int actual_spent_cents
+        uuid primary_owner_family_member_id FK
+        uuid created_by_family_member_id FK
+    }
+
+    project_tasks {
+        uuid id PK
+        uuid project_id FK
+        text title
+        text status
+        uuid owner_family_member_id FK
+        date due_date
+        int estimated_duration_minutes
+        int actual_duration_minutes
+        int budget_cents
+        int spent_cents
+        uuid depends_on_project_task_id FK
+    }
+
+    project_milestones {
+        uuid id PK
+        uuid project_id FK
+        text name
+        date target_date
+        bool is_complete
+        timestamptz completed_at
+        int order_index
+    }
+
+    project_budget_entries {
+        uuid id PK
+        uuid project_id FK
+        uuid project_task_id FK
+        int amount_cents
+        text kind
+        text vendor
+        timestamptz recorded_at
+        uuid recorded_by_family_member_id FK
+    }
+
+    personal_tasks {
+        uuid id PK
+        uuid family_id FK
+        uuid assigned_to FK
+        uuid source_project_task_id FK
+    }

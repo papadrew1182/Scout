@@ -281,3 +281,67 @@ a phase complete.
 ### Smoke tests
 
 - [ ] `npx playwright test tests/push-notifications.spec.ts` passes
+
+---
+
+## Expansion Phase 3 — Family projects engine
+
+### Backend tests
+
+- [ ] `py -m pytest backend/tests/test_family_projects.py` — 7 tests
+      covering template instantiation, route permission denial, today
+      aggregation without promotion, promotion idempotency, AI tool
+      registry, and health summary completion math.
+- [ ] Full suite green at or above prior passing count.
+
+### Migration
+
+- [ ] `046_push_notifications.sql` applied on Railway (from Phase 1)
+- [ ] `047_family_projects.sql` applied on Railway
+- [ ] `SELECT COUNT(*) FROM scout.permissions WHERE permission_key LIKE 'projects.%' OR permission_key LIKE 'project_templates.%' OR permission_key LIKE 'project_tasks.%'` returns 7
+
+### User surface
+
+- [ ] `/projects` renders active projects for the family
+- [ ] Admin / parent_peer see every active project; kid-tier only sees
+      projects they own or are assigned to
+- [ ] `/projects/new` renders the create form with a template chip row
+      and all seven categories
+- [ ] Creating a blank project navigates into detail
+- [ ] `/projects/[id]` shows Tasks / Milestones / Budget / Info tabs
+- [ ] Adding a task on the Tasks tab appears in the list
+- [ ] Marking a task done updates the health header's completion percent
+- [ ] Adding a milestone lands with the expected target date
+- [ ] Adding a budget entry updates the "Spent $X" summary line
+
+### Admin surface
+
+- [ ] `/admin/projects` is reachable from `/admin`
+- [ ] Non-admin lands in a 403-style message (no projects.manage_any)
+- [ ] Admin tab `All projects` shows every project in the family
+- [ ] Admin tab `Family templates` lists any created template
+
+### Today integration
+
+- [ ] Project task due today (assigned to current actor) appears in the
+      Projects today card on `/today` **without** promotion
+- [ ] Tap on a Today project row routes to the project detail
+
+### Task-level permissions
+
+- [ ] Kid-tier actor can update `status` or `notes` on a task assigned
+      to them (via `project_tasks.update_assigned`)
+- [ ] Kid-tier actor cannot reassign owner or change budget even on
+      their own task (requires `projects.manage_own`/`projects.manage_any`)
+
+### AI tools
+
+- [ ] `create_project_from_template` appears in the registry and is
+      gated by CONFIRMATION_REQUIRED
+- [ ] `add_project_task` appears in the registry and is gated by
+      CONFIRMATION_REQUIRED
+- [ ] AI tool count increased by exactly 2 over the pre-Phase-3 count
+
+### Smoke tests
+
+- [ ] `npx playwright test tests/projects.spec.ts` passes
