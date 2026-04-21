@@ -45,6 +45,56 @@ No open items.
 
 ---
 
+## Right now — PR #37 (Sprint 04 Phase 1, AI conversation resume) — MERGED + DEPLOYED
+
+Branch: `sprint/sprint-04-ai-conversation-resume` (remote deleted)
+PR: https://github.com/papadrew1182/Scout/pull/37
+Merge commit: `1cff7681`
+
+### Status
+- [x] CI green on branch after a fix pass (type errors in ScoutSidebar
+      + settings/ai; `adults["sally"]` → `adults["megan"]`; tz-aware
+      comparisons in orchestrator hook tests)
+- [x] PR #37 squash-merged to main 2026-04-21T15:16:50Z
+- [x] Migration 046 applied on Railway via the public proxy URL
+      (pattern from PR #38's handoff); also re-applied 045 as a no-op
+      (idempotent ADD COLUMN IF NOT EXISTS)
+- [x] Two new permission keys verified:
+      `ai.manage_own_conversations`, `ai.clear_own_history`
+- [x] Three new columns verified on `ai_conversations`:
+      `title`, `last_active_at`, `is_pinned`
+- [x] Post-merge CI on main: success (backend-tests, frontend-types,
+      smoke-web all green; arch-check fails continue-on-error only)
+- [x] Railway backend `/health` returns `{"status":"ok"}` post-merge
+- [x] Vercel production deploy: success
+
+### Minor cleanup still on Andrew's plate
+- [ ] In your main repo run `git checkout main && git pull` to pull
+      the squashed merge
+- [ ] `git branch -d sprint/sprint-04-ai-conversation-resume` (local)
+- [ ] Migration filename collision on `046_*` is cosmetic debt only
+      (`046_push_notifications.sql` from PR #35 and
+      `046_ai_conversation_resume.sql` from PR #37 coexist because
+      migrate.py tracks by full filename). Consider renaming one in
+      a follow-up if the numbering bothers you.
+
+### Remote cron trigger
+- [x] `trig_0195PNvY6e1djeKsdJz6cbZj` remains disabled. Delete it at
+      https://claude.ai/code/scheduled if you want it gone entirely
+      — the RemoteTrigger API does not support deletion.
+
+### Follow-ups flagged during execution
+- Recent conversations drawer UI (list with per-row rename / pin /
+  archive). API is ready.
+- `SAMPLE_THREAD` mock data in `ScoutSheet.tsx` + `ScoutSidebar.tsx`
+  still shows when no resumable conversation exists. Replace with a
+  blank state.
+- Permission-denial test for `ai.manage_own_conversations` is
+  currently `pytest.skip`d — no tier denies it today. Wire up if a
+  `READ_ONLY` or similar tier gets added.
+
+---
+
 ## Right now — PR #35 (Phase 1 push notifications) — MERGED
 
 - [x] Wait for backend-tests + frontend-types CI to go green
