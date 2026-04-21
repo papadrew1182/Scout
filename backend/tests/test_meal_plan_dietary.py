@@ -24,12 +24,10 @@ from app.services import weekly_meal_plan_service
 
 
 def _next_monday() -> date:
+    """Strictly-future Monday. ``weekday()`` returns Mon=0..Sun=6."""
     today = date.today()
-    # Monday is isoweekday() == 1. Find next Monday strictly > today.
-    days_until = (7 - today.isoweekday()) % 7
-    if days_until == 0:
-        days_until = 7
-    return today + timedelta(days=days_until)
+    days_ahead = (7 - today.weekday()) % 7
+    return today + timedelta(days=days_ahead or 7)
 
 
 def _fake_plan_payload() -> dict:
