@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
 import {
@@ -165,15 +165,20 @@ export function ScoutSidebar({ surface }: Props) {
         <Text style={styles.disabledSub}>Checking availability…</Text>
       ) : (
         <>
-          {/* Hidden file input for web attachment picking */}
-          {/* @ts-ignore */}
-          <input
-            type="file"
-            accept="image/*,application/pdf"
-            style={{ display: "none" }}
-            ref={fileInputRef as any}
-            onChange={handleFileSelected as any}
-          />
+          {/* Hidden file input — web only. Native renders null because
+              RN has no `input` component; file picking on iOS/Android
+              will move to expo-image-picker / expo-document-picker in
+              a separate feature. */}
+          {Platform.OS === "web" && (
+            // @ts-ignore — lowercase `input` is HTML-only; guard above keeps it web-only
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              style={{ display: "none" }}
+              ref={fileInputRef as any}
+              onChange={handleFileSelected as any}
+            />
+          )}
 
           <ScrollView style={styles.thread} contentContainerStyle={{ gap: 4 }}>
             {thread.map((t, i) => (
