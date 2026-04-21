@@ -4,6 +4,42 @@
 **Last reconciliation:** 2026-04-15 (post-Session-2 canonical household + Session-3 operating surface consolidation)
 **Initial launch commit:** `549723b` (2026-04-12)
 
+## Deployed smoke (manual)
+
+The `smoke-deployed` job in `.github/workflows/ci.yml` runs the
+Playwright suite against the real Vercel + Railway deploy rather than
+a localhost stack. It is **manual-only** (`workflow_dispatch`) today
+because the production dataset is a real family's data — running
+write-path tests against prod would pollute the ledger. Flip it onto
+`push: branches: [main]` once a dedicated smoke-user family is
+provisioned in prod.
+
+### One-time setup
+
+Add these secrets under **Settings → Secrets and variables → Actions**:
+
+- `SCOUT_SMOKE_ADULT_EMAIL` — login email for a prod-safe adult account
+- `SCOUT_SMOKE_PASSWORD` — that account's password
+- `SCOUT_SMOKE_CHILD_EMAIL` — (optional) login for a prod-safe child
+  account used by the child-surface tests
+
+### Running a deployed smoke
+
+Trigger via **Actions → Scout CI → Run workflow** and (optionally)
+override the inputs:
+
+- `test_files` — space-separated Playwright spec paths. Default is the
+  read-only set: `auth`, `surfaces`, `responsive`, `dev-mode`. Add
+  `write-paths` etc. only with a dedicated smoke family.
+- `web_url` — default `https://scout-ui-gamma.vercel.app`
+- `api_url` — default `https://scout-backend-production-9991.up.railway.app`
+
+### Recording results
+
+Successful run: append a one-liner under this section with the date +
+commit on main that was tested + test file set. Failure: link the
+`deployed-smoke-report` artifact and note the failing spec.
+
 ## Current Verification Results (2026-04-13 against `4e8d2e9`)
 
 ### Backend Tests
