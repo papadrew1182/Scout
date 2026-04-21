@@ -154,6 +154,20 @@ export default function Settings() {
             <Text style={styles.adminLinkCta}>Open Notifications &rarr;</Text>
           </Pressable>
 
+          {/* AI & Conversations — per-user, always shown (Sprint 04 Phase 1) */}
+          <Pressable
+            style={[shared.card, styles.adminLinkCard]}
+            onPress={() => router.push("/settings/ai" as any)}
+            accessibilityRole="link"
+            accessibilityLabel="Open AI and conversations settings"
+          >
+            <Text style={styles.adminLinkTitle}>AI &amp; Conversations</Text>
+            <Text style={styles.adminLinkDesc}>
+              Review your Scout conversation history and archive older threads.
+            </Text>
+            <Text style={styles.adminLinkCta}>Open AI settings &rarr;</Text>
+          </Pressable>
+
           {/* Accounts & Access — per-user, admin-only */}
           {canManageAccounts && (
             <View style={shared.card}>

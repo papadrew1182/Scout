@@ -3,7 +3,8 @@ import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View 
 
 import { colors, fonts } from "../lib/styles";
 import { SAMPLE_THREAD, QUICK_ACTIONS_BY_SURFACE, type ScoutSurface } from "../lib/mockScout";
-import { fetchReady, sendChatMessageStream, uploadAttachment } from "../lib/api";
+import { fetchReady, fetchResumableConversation, sendChatMessageStream, uploadAttachment } from "../lib/api";
+import { fetchConversationMessagesPaginated } from "../lib/ai-conversations";
 
 interface Turn {
   role: "user" | "assistant";
@@ -35,6 +36,10 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
   const [readyState, setReadyState] = useState<"checking" | "ok" | "disabled">("checking");
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Sprint 04 Phase 1: track conversation id so turns continue the thread
+  // across panel opens. Null on a fresh session; set from resume hydration
+  // or from the orchestrator's "done" event on the first turn.
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastSentRef = useRef<string | null>(null);
 
@@ -50,6 +55,43 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
       .catch(() => {
         if (cancelled) return;
         setReadyState("disabled");
+      });
+    return () => { cancelled = true; };
+  }, [visible]);
+
+  // Sprint 04 Phase 1: resume the most recent in-flight conversation
+  // when the sheet opens. Uses the existing /resumable endpoint (30-min
+  // freshness + pending-confirmation / moderation safety gates). If
+  // none is eligible, the sheet stays in its existing blank / sample
+  // state.
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    fetchResumableConversation("personal")
+      .then(async (resume) => {
+        if (cancelled || !resume.conversation_id) return;
+        setConversationId(resume.conversation_id);
+        try {
+          const page = await fetchConversationMessagesPaginated(
+            resume.conversation_id,
+            { limit: 50 },
+          );
+          if (cancelled) return;
+          const hydrated: Turn[] = page.messages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content ?? "",
+            }));
+          if (hydrated.length > 0) {
+            setThread(hydrated);
+          }
+        } catch {
+          // Resume hydration failed — stay on current thread state
+        }
+      })
+      .catch(() => {
+        // No resumable conversation; blank-state UX
       });
     return () => { cancelled = true; };
   }, [visible]);
@@ -103,7 +145,7 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
     setThread((prev) => [...prev, { role: "assistant", content: "..." }]);
     await sendChatMessageStream(
       trimmed || "What do you see in this image?",
-      { surface, attachmentPath: attachPath },
+      { surface, attachmentPath: attachPath, conversationId: conversationId ?? undefined },
       {
         onEvent: (event) => {
           if (event.type === "text") {
@@ -113,6 +155,12 @@ export function ScoutSheet({ visible, onClose, surface, initialPrompt }: Props) 
               copy[copy.length - 1] = { role: "assistant", content: accumulated };
               return copy;
             });
+          } else if (event.type === "done") {
+            // Capture the backend's conversation id so subsequent turns
+            // continue the same thread.
+            if (event.conversation_id && !conversationId) {
+              setConversationId(event.conversation_id);
+            }
           } else if (event.type === "error") {
             setThread((prev) => {
               const copy = [...prev];

@@ -52,7 +52,7 @@ function _handleUnauthorized() {
 // Base helpers
 // ---------------------------------------------------------------------------
 
-async function get<T>(url: string): Promise<T> {
+export async function get<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders() });
   if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
   if (!res.ok) {
@@ -63,7 +63,7 @@ async function get<T>(url: string): Promise<T> {
   return await res.json();
 }
 
-async function post<T>(url: string, body?: unknown): Promise<T> {
+export async function post<T>(url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
@@ -78,7 +78,7 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return await res.json();
 }
 
-async function patch<T>(url: string, body: unknown): Promise<T> {
+export async function patch<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "PATCH",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
@@ -870,9 +870,16 @@ export function fetchResumableConversation(
   );
 }
 
-export function fetchConversationMessages(
+/**
+ * Legacy helper retained for compatibility. The endpoint response shape
+ * changed in Sprint 04 Phase 1 from a bare array to {messages, has_more}.
+ * This helper unwraps the new shape so existing callers continue to see
+ * an array. New code should prefer
+ * `fetchConversationMessagesPaginated` in `lib/ai-conversations.ts`.
+ */
+export async function fetchConversationMessages(
   conversationId: string,
-  familyId: string,
+  _familyId: string,
 ): Promise<Array<{
   id: string;
   role: string;
@@ -882,9 +889,19 @@ export function fetchConversationMessages(
   model: string | null;
   created_at: string;
 }>> {
-  return get(
-    `${API_BASE_URL}/api/ai/conversations/${conversationId}/messages?family_id=${familyId}`,
-  );
+  const page = await get<{
+    messages: Array<{
+      id: string;
+      role: string;
+      content: string | null;
+      tool_calls: unknown;
+      tool_results: unknown;
+      model: string | null;
+      created_at: string;
+    }>;
+    has_more: boolean;
+  }>(`${API_BASE_URL}/api/ai/conversations/${conversationId}/messages?limit=200`);
+  return page.messages;
 }
 
 export function endConversation(conversationId: string): Promise<{ conversation_id: string; status: string }> {

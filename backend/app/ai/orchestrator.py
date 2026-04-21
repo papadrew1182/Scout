@@ -150,6 +150,19 @@ def _persist_message(
     )
     db.add(msg)
     db.flush()
+
+    # Sprint 04 Phase 1: bump last_active_at on every user/assistant
+    # turn (tool rows are internal, don't count as activity). Upgrade
+    # a placeholder title on the first real user message.
+    if role in ("user", "assistant"):
+        from app.services import ai_conversation_service
+
+        ai_conversation_service.bump_last_active(db, conversation_id)
+        if role == "user" and content:
+            ai_conversation_service.maybe_upgrade_title(
+                db, conversation_id, content
+            )
+
     return msg
 
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +18,12 @@ class AIConversation(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     conversation_kind: Mapped[str] = mapped_column(
         String(20), nullable=False, default="chat", server_default="chat"
+    )
+    # Sprint 04 Phase 1 fields (migration 046)
+    title: Mapped[str | None] = mapped_column(Text)
+    last_active_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())

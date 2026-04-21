@@ -108,10 +108,34 @@ class ConversationRead(BaseModel):
     surface: str
     status: str
     conversation_kind: str = "chat"
+    # Sprint 04 Phase 1 (migration 046)
+    title: str | None = None
+    last_active_at: datetime | None = None
+    is_pinned: bool = False
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ConversationStats(BaseModel):
+    total_count: int
+    active_count: int
+    archived_count: int
+
+
+class ConversationCreateRequest(BaseModel):
+    first_message: str | None = Field(default=None, max_length=4000)
+
+
+class ConversationPatchRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    status: str | None = Field(default=None, pattern="^(active|archived)$")
+    is_pinned: bool | None = None
+
+
+class ArchiveOlderRequest(BaseModel):
+    days: int = Field(ge=1, le=365)
 
 
 class ResumableConversation(BaseModel):
@@ -144,6 +168,17 @@ class MessageRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class MessagePage(BaseModel):
+    """Paginated response for GET /api/ai/conversations/{id}/messages.
+
+    Returns the newest ``limit`` messages before ``before_message_id``,
+    ordered oldest-first for chronological rendering. ``has_more`` is
+    true when older messages exist beyond the returned window."""
+
+    messages: list[MessageRead]
+    has_more: bool
 
 
 class ToolAuditRead(BaseModel):
