@@ -677,6 +677,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.body,
   },
+  savingText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontFamily: fonts.body,
+    marginTop: 8,
+  },
   previewBtn: {
     marginTop: 14,
     paddingVertical: 8,

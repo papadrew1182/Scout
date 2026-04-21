@@ -22,7 +22,8 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 
-import { fetchMembers, type FamilyMember } from "../../../lib/api";
+import { fetchMembers } from "../../../lib/api";
+import type { FamilyMember } from "../../../lib/types";
 import {
   getMemberPersonality,
   patchMemberPersonality,
