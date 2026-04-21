@@ -20,6 +20,7 @@ const ADMIN_SECTIONS: AdminLink[] = [
   { label: "Affirmations", description: "Library, rotation rules, targeting, engagement analytics", href: "/admin/affirmations", permission: "affirmations.manage_config" },
   { label: "Projects", description: "All family projects, templates, health", href: "/admin/projects", permission: "projects.manage_any" },
   { label: "Scout AI", description: "Capability toggles, moderation tiers, usage caps", href: "/admin/scout-ai", permission: "scout_ai.manage_toggles" },
+  { label: "AI Personalities", description: "Edit per-member AI voice (tone, vocabulary, verbosity, notes)", href: "/admin/ai/personalities", permission: "ai.edit_any_personality" },
   { label: "Family Members", description: "Add/remove/edit family members and their accounts", href: "/admin/family", permission: "family.manage_members" },
   { label: "Permissions", description: "Role tiers and per-member permission overrides", href: "/admin/permissions", permission: "admin.manage_permissions" },
 ];
@@ -39,6 +40,7 @@ export default function AdminHome() {
     "admin.manage_permissions": useHasPermission("admin.manage_permissions"),
     "affirmations.manage_config": useHasPermission("affirmations.manage_config"),
     "projects.manage_any": useHasPermission("projects.manage_any"),
+    "ai.edit_any_personality": useHasPermission("ai.edit_any_personality"),
   };
 
   const visible = ADMIN_SECTIONS.filter((section) => perms[section.permission as keyof typeof perms]);
