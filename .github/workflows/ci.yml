@@ -5,6 +5,24 @@ on:
     branches: [main, "release-*", "release/**"]
   pull_request:
     branches: [main]
+  # Manual trigger for the deployed-smoke job. Kept off the push path
+  # because prod currently holds a real family's data — running write
+  # tests would pollute the ledger. Wire into push when a dedicated
+  # smoke-user family is provisioned.
+  workflow_dispatch:
+    inputs:
+      test_files:
+        description: "Space-separated Playwright test files"
+        required: false
+        default: "tests/auth.spec.ts tests/surfaces.spec.ts tests/responsive.spec.ts tests/dev-mode.spec.ts"
+      web_url:
+        description: "Deployed frontend URL"
+        required: false
+        default: "https://scout-ui-gamma.vercel.app"
+      api_url:
+        description: "Deployed backend URL"
+        required: false
+        default: "https://scout-backend-production-9991.up.railway.app"
 
 jobs:
   backend-tests:
@@ -128,3 +146,42 @@ jobs:
             smoke-tests/playwright-report/
             smoke-tests/test-results/
           retention-days: 7
+
+  smoke-deployed:
+    # Manual-only today; see `workflow_dispatch` block at top. Runs
+    # Playwright against the real Vercel + Railway deploy.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      SCOUT_WEB_URL: ${{ github.event.inputs.web_url }}
+      SCOUT_API_URL: ${{ github.event.inputs.api_url }}
+      SMOKE_ADULT_EMAIL: ${{ secrets.SCOUT_SMOKE_ADULT_EMAIL }}
+      SMOKE_PASSWORD: ${{ secrets.SCOUT_SMOKE_PASSWORD }}
+      SMOKE_CHILD_EMAIL: ${{ secrets.SCOUT_SMOKE_CHILD_EMAIL }}
+    steps:
+      - name: Verify smoke credentials are configured
+        run: |
+          if [ -z "$SMOKE_ADULT_EMAIL" ] || [ -z "$SMOKE_PASSWORD" ]; then
+            echo "::error::Missing SCOUT_SMOKE_ADULT_EMAIL or SCOUT_SMOKE_PASSWORD secret."
+            echo "See docs/release_candidate_report.md > Deployed smoke (manual) for setup."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: cd smoke-tests && npm ci
+      - run: cd smoke-tests && npx playwright install chromium --with-deps
+
+      - name: Run Playwright against deployed URLs
+        run: cd smoke-tests && npx playwright test ${{ github.event.inputs.test_files }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployed-smoke-report
+          path: |
+            smoke-tests/playwright-report/
+            smoke-tests/test-results/
+          retention-days: 30
