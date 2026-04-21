@@ -1,3 +1,7 @@
+> **Implementation plan:** `docs/plans/2026-04-21-sprint-05-plan.md`
+> (revised after external review; supersedes the original Phase 1 plan).
+
+---
 # Scout Sprint 05 — Proactive Nudges Engine
 
 **Ref commit:** latest `main` at time of execution (post-Sprint 04 P2 merge `16325d3f`).
