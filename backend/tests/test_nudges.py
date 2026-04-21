@@ -7,9 +7,12 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.action_items import ParentActionItem
 from app.models.calendar import Event, EventAttendee
 from app.models.life_management import ChoreTemplate, Routine, TaskInstance
+from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.personal_tasks import PersonalTask
+from app.models.push import PushDelivery, PushDevice
 from app.services import ai_personality_service, nudges_service
 
 
@@ -641,3 +644,206 @@ class TestScannerStampsOccurrence:
         proposals = nudges_service.scan_missed_routines(db, now)
         assert len(proposals) == 1
         assert "occurrence_at_utc" in proposals[0].context
+
+
+class TestDispatchWithItems:
+    def _base_proposal(self, andrew_id, occurrence, scheduled=None, kind="overdue_task", entity_id=None):
+        return nudges_service.NudgeProposal(
+            family_member_id=andrew_id,
+            trigger_kind=kind,
+            trigger_entity_kind="personal_task" if kind == "overdue_task" else ("event" if kind == "upcoming_event" else "task_instance"),
+            trigger_entity_id=entity_id or __import__("uuid").uuid4(),
+            scheduled_for=scheduled or occurrence,
+            severity="normal" if kind != "missed_routine" else "low",
+            context={
+                "title": "Take out bins",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+
+    def test_writes_parent_child_and_inbox_rows(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        now = _utcnow()
+        occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
+        prop = self._base_proposal(andrew.id, occurrence)
+
+        # No push device => no push; test the Inbox path clean
+        written = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+
+        assert written == 1
+        parents = list(db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).all())
+        children = list(db.query(NudgeDispatchItem).filter_by(family_member_id=andrew.id).all())
+        assert len(parents) == 1
+        assert len(children) == 1
+        assert children[0].dispatch_id == parents[0].id
+        assert parents[0].parent_action_item_id is not None
+        assert "inbox" in parents[0].delivered_channels
+        assert "push" not in parents[0].delivered_channels
+        inbox = db.get(ParentActionItem, parents[0].parent_action_item_id)
+        assert inbox is not None
+        # action_type falls back to 'general' until chk_parent_action_items_action_type
+        # is widened (migration pending). entity_type carries the trigger kind.
+        assert inbox.action_type == "general"
+        assert inbox.entity_type == "personal_task"
+        assert "Take out bins" in inbox.title or "Take out bins" in (inbox.detail or "")
+
+    def test_dedupe_on_repeat(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        now = _utcnow()
+        occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
+        entity_id = __import__("uuid").uuid4()
+        prop = self._base_proposal(andrew.id, occurrence, entity_id=entity_id)
+
+        first = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+        second = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+
+        assert first == 1
+        assert second == 0
+        count = db.query(NudgeDispatchItem).filter_by(family_member_id=andrew.id).count()
+        assert count == 1
+
+    def test_push_sent_when_active_device_exists(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        device = PushDevice(
+            family_member_id=andrew.id,
+            expo_push_token="ExponentPushToken[fake]",
+            device_label="iPhone",
+            platform="ios",
+            is_active=True,
+            last_registered_at=now,
+        )
+        db.add(device)
+        db.commit()
+
+        sent: list[dict] = []
+
+        # The fake writes a real PushDelivery so that the FK from
+        # nudge_dispatches.push_delivery_id -> scout.push_deliveries.id
+        # resolves. dispatch_with_items records the first delivery id
+        # on the parent row.
+        def fake_send_push(db_arg, **kwargs):
+            sent.append(kwargs)
+            group_id = __import__("uuid").uuid4()
+            delivery = PushDelivery(
+                notification_group_id=group_id,
+                family_member_id=andrew.id,
+                push_device_id=device.id,
+                provider="expo",
+                category=kwargs["category"],
+                title=kwargs["title"],
+                body=kwargs["body"],
+                data=kwargs.get("data") or {},
+                trigger_source=kwargs["trigger_source"],
+                status="provider_accepted",
+            )
+            db_arg.add(delivery)
+            db_arg.flush()
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                delivery_ids=[delivery.id],
+                accepted_count=1,
+                error_count=0,
+                notification_group_id=group_id,
+            )
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        occurrence = now - timedelta(hours=1)
+        prop = self._base_proposal(andrew.id, occurrence)
+        nudges_service.dispatch_with_items(db, [prop], now)
+
+        assert len(sent) == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert "push" in parent.delivered_channels
+        assert parent.push_delivery_id is not None
+
+    def test_no_push_when_no_active_device(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        def fake_send_push(db_arg, **kwargs):
+            raise AssertionError("should not be called")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        occurrence = now - timedelta(hours=1)
+        prop = self._base_proposal(andrew.id, occurrence)
+        nudges_service.dispatch_with_items(db, [prop], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.push_delivery_id is None
+        assert "push" not in parent.delivered_channels
+        assert "inbox" in parent.delivered_channels
+
+    def test_push_error_does_not_poison_inbox(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """If push_service.send_push raises, the Inbox row + parent +
+        child rows are still written. delivered_channels reflects reality."""
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        db.add(
+            PushDevice(
+                family_member_id=andrew.id,
+                expo_push_token="ExponentPushToken[fake]",
+                device_label="iPhone",
+                platform="ios",
+                is_active=True,
+                last_registered_at=now,
+            )
+        )
+        db.commit()
+
+        def fake_send_push(db_arg, **kwargs):
+            raise RuntimeError("expo is down")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        occurrence = now - timedelta(hours=1)
+        prop = self._base_proposal(andrew.id, occurrence)
+        written = nudges_service.dispatch_with_items(db, [prop], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert "inbox" in parent.delivered_channels
+        assert "push" not in parent.delivered_channels
+        assert parent.push_delivery_id is None
+
+    def test_one_proposal_dedupe_does_not_undo_siblings(
+        self, db: Session, family, adults
+    ):
+        """Two proposals in one call. First succeeds, second has a
+        pre-existing dedupe row (simulated by dispatching it first).
+        Per-proposal SAVEPOINT ensures the first stays committed."""
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        e1 = __import__("uuid").uuid4()
+        e2 = __import__("uuid").uuid4()
+        occurrence = now - timedelta(hours=1)
+
+        prop_first = self._base_proposal(andrew.id, occurrence, entity_id=e1)
+        prop_second = self._base_proposal(andrew.id, occurrence, entity_id=e2)
+
+        # Pre-seed dedupe for prop_second
+        nudges_service.dispatch_with_items(db, [prop_second], now)
+        assert db.query(NudgeDispatchItem).count() == 1
+
+        written = nudges_service.dispatch_with_items(
+            db, [prop_first, prop_second], now
+        )
+
+        # First is new (+1), second is deduped (no change)
+        assert written == 1
+        assert db.query(NudgeDispatchItem).count() == 2

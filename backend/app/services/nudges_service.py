@@ -34,9 +34,13 @@ from typing import Any
 
 import pytz
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.services import ai_personality_service
+from app.models.action_items import ParentActionItem
+from app.models.nudges import NudgeDispatch, NudgeDispatchItem
+from app.models.push import PushDevice
+from app.services import ai_personality_service, push_service
 
 logger = logging.getLogger("scout.nudges")
 
@@ -208,6 +212,56 @@ _FORTHCOMING_SHIFT_MINUTES = {
 }
 
 
+# Fixed Phase 1 copy. Phase 3 swaps these for AI-composed per-member copy.
+_BODY_TEMPLATES = {
+    "overdue_task":    "Reminder: {title} was due at {due_time}.",
+    "upcoming_event":  "Heads up: {title} at {start_time}.",
+    "missed_routine":  "{name} hasn't been checked off yet (was due at {due_time}).",
+}
+
+_INBOX_TITLE_PREFIX = {
+    "overdue_task":    "Overdue",
+    "upcoming_event":  "Starting soon",
+    "missed_routine":  "Routine check",
+}
+
+
+def _render_body(proposal: "NudgeProposal") -> str:
+    template = _BODY_TEMPLATES.get(proposal.trigger_kind, "Scout nudge")
+    try:
+        return template.format(**proposal.context)
+    except KeyError as e:
+        logger.warning(
+            "nudge body template missing key=%s for trigger_kind=%s; using raw template",
+            e, proposal.trigger_kind,
+        )
+        return template
+
+
+def _render_inbox_title(proposal: "NudgeProposal") -> str:
+    prefix = _INBOX_TITLE_PREFIX.get(proposal.trigger_kind, "Scout")
+    source = proposal.context.get("title") or proposal.context.get("name") or ""
+    return f"{prefix}: {source}" if source else prefix
+
+
+def _family_id_for_member(db: Session, member_id: uuid.UUID) -> uuid.UUID:
+    row = db.execute(
+        text("SELECT family_id FROM family_members WHERE id = :mid"),
+        {"mid": member_id},
+    ).first()
+    if row is None:
+        raise ValueError(f"family_members row missing for {member_id}")
+    return row[0]
+
+
+def _route_hint(proposal: "NudgeProposal") -> str:
+    if proposal.trigger_kind == "overdue_task" and proposal.trigger_entity_id:
+        return f"/today?task={proposal.trigger_entity_id}"
+    if proposal.trigger_kind == "upcoming_event" and proposal.trigger_entity_id:
+        return f"/calendar?event={proposal.trigger_entity_id}"
+    return "/today"
+
+
 def apply_proactivity(
     db: Session, proposals: list[NudgeProposal], now_utc: datetime
 ) -> list[NudgeProposal]:
@@ -335,11 +389,127 @@ def resolve_occurrence_fields(
 def dispatch_with_items(
     db: Session, proposals: list[NudgeProposal], now_utc: datetime
 ) -> int:
-    """Write parent nudge_dispatches + child nudge_dispatch_items rows,
-    call push_service.send_push when the member has an active device,
-    write a parent_action_items row. Returns the count of newly-written
-    parent dispatches. Implemented in Task 9."""
-    return 0
+    """Per-proposal: resolve occurrence -> pre-check dedupe -> SAVEPOINT
+    -> parent dispatch + child item + Inbox row + optional push ->
+    commit savepoint. Push errors are logged and swallowed so Inbox
+    remains authoritative. UNIQUE (source_dedupe_key) is the
+    authoritative dedupe boundary; IntegrityError inside the savepoint
+    rolls back that proposal alone.
+
+    Never calls db.commit() -- the caller (scheduler tick or test
+    fixture) owns transaction boundaries."""
+    written = 0
+    for proposal in proposals:
+        try:
+            fields = resolve_occurrence_fields(db, proposal)
+        except ValueError as e:
+            logger.warning("dispatch skipped: %s", e)
+            continue
+
+        existing = (
+            db.query(NudgeDispatchItem)
+            .filter_by(source_dedupe_key=fields.source_dedupe_key)
+            .first()
+        )
+        if existing is not None:
+            continue
+
+        try:
+            with db.begin_nested():
+                body = _render_body(proposal)
+                short_title = _render_inbox_title(proposal)
+
+                parent = NudgeDispatch(
+                    family_member_id=proposal.family_member_id,
+                    status="pending",
+                    severity=proposal.severity,
+                    deliver_after_utc=proposal.scheduled_for,
+                    source_count=1,
+                    body=body,
+                    delivered_channels=[],
+                )
+                db.add(parent)
+                db.flush()
+
+                source_metadata = {
+                    k: (v.isoformat() if isinstance(v, (datetime, date)) else str(v))
+                    for k, v in proposal.context.items()
+                    if k != "occurrence_at_utc"
+                }
+                child = NudgeDispatchItem(
+                    dispatch_id=parent.id,
+                    family_member_id=proposal.family_member_id,
+                    trigger_kind=proposal.trigger_kind,
+                    trigger_entity_kind=proposal.trigger_entity_kind,
+                    trigger_entity_id=proposal.trigger_entity_id,
+                    occurrence_at_utc=fields.occurrence_at_utc,
+                    occurrence_local_date=fields.occurrence_local_date,
+                    source_dedupe_key=fields.source_dedupe_key,
+                    source_metadata=source_metadata,
+                )
+                db.add(child)
+                db.flush()  # IntegrityError fires here on UNIQUE race
+
+                family_id = _family_id_for_member(db, proposal.family_member_id)
+                # Note: action_type is constrained by DB CHECK
+                # chk_parent_action_items_action_type which does not yet
+                # include 'nudge.*' values. We store the intended logical
+                # type in entity_type and fall back to 'general' here; a
+                # follow-up migration can widen the CHECK + update this.
+                inbox = ParentActionItem(
+                    family_id=family_id,
+                    created_by_member_id=proposal.family_member_id,
+                    action_type="general",
+                    title=short_title,
+                    detail=body,
+                    entity_type=proposal.trigger_entity_kind,
+                    entity_id=proposal.trigger_entity_id,
+                    status="pending",
+                )
+                db.add(inbox)
+                db.flush()
+                parent.parent_action_item_id = inbox.id
+
+                delivered: list[str] = ["inbox"]
+                active_device = (
+                    db.query(PushDevice)
+                    .filter(
+                        PushDevice.family_member_id == proposal.family_member_id,
+                        PushDevice.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if active_device is not None:
+                    try:
+                        result = push_service.send_push(
+                            db,
+                            family_member_id=proposal.family_member_id,
+                            category=f"nudge.{proposal.trigger_kind}",
+                            title=short_title,
+                            body=body,
+                            data={
+                                "route_hint": _route_hint(proposal),
+                                "trigger_kind": proposal.trigger_kind,
+                            },
+                            trigger_source="nudge_scan",
+                        )
+                        if getattr(result, "delivery_ids", None):
+                            parent.push_delivery_id = result.delivery_ids[0]
+                            delivered.append("push")
+                    except Exception as push_err:
+                        logger.exception(
+                            "nudge push failed member=%s err=%s",
+                            proposal.family_member_id, push_err,
+                        )
+
+                parent.delivered_channels = delivered
+                parent.status = "delivered"
+                parent.delivered_at_utc = now_utc
+            written += 1
+        except IntegrityError:
+            # Race: UNIQUE on source_dedupe_key won. Savepoint auto-rolled back.
+            continue
+    return written
 
 
 # ---------------------------------------------------------------------------
