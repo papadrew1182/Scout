@@ -6,7 +6,12 @@ import { DMMono_400Regular, DMMono_500Medium } from "@expo-google-fonts/dm-mono"
 
 import { AuthProvider, useAuth } from "../lib/auth";
 import { setApiToken, setApiFamilyId, uploadAttachment } from "../lib/api";
+import { installGlobalHandlers } from "../lib/errorReporter";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+
+// One-shot install at module load — covers every route in the app
+// and every tab. The handler dedupes and no-ops in non-browser envs.
+installGlobalHandlers();
 import { LoginScreen } from "../components/LoginScreen";
 import { NavBar } from "../components/NavBar";
 import { ScoutBar } from "../components/ScoutBar";

@@ -15,6 +15,7 @@ from app.routes import (
     calendar,
     canonical,
     chores,
+    client_errors,
     daily_wins,
     dashboard,
     families,
@@ -108,6 +109,7 @@ app.include_router(push.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
 app.include_router(storage.router)
+app.include_router(client_errors.router)
 app.include_router(memory_routes.router)
 app.include_router(mcp_http.router)
 app.include_router(canonical.router)

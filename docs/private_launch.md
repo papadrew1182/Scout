@@ -179,3 +179,40 @@ After each deploy, an operator can re-verify the production AI path
 end-to-end by following `docs/AI_OPERATOR_VERIFICATION.md`. The
 standing credentials live in Railway env vars; no password needs to
 leave the Railway vault.
+
+## Production error reporting
+
+Every JS crash on the frontend — `ErrorBoundary.componentDidCatch`,
+unhandled promise rejections, and `window.onerror` events — POSTs to
+`/api/client-errors`, which emits one structured `client_error` log
+line per report. No external provider is wired up (Sentry etc.), on
+purpose: Scout has one operator, and reusing Railway's log pipeline
+keeps the on-call surface to one place.
+
+### Watching for crashes
+
+```bash
+# Tail for new crashes
+railway logs --service scout-backend | grep client_error
+
+# Rollup across the latest deploy (uses jq)
+railway logs --deployment | grep client_error | jq -s '
+  group_by(.source) |
+  map({source: .[0].source, count: length})
+'
+```
+
+Each line carries `message`, `stack` (capped at 2 KB), `url`,
+`user_agent`, `source` (`error_boundary` /
+`unhandled_rejection` / `window_error` / `manual`), an optional
+`release`, and — when the crashing session is signed in — the
+actor's `family_id` + `member_id` for attribution.
+
+### Swapping to an external provider
+
+If crash volume or team size grows beyond one operator, replace the
+body of `scout-ui/lib/errorReporter.ts#report()` with a call into
+`@sentry/react` (or similar). The `ErrorBoundary` call site, the
+`unhandledrejection` + `window.onerror` handlers, and the log-line
+shape were all designed to survive that swap without touching
+anything else.
