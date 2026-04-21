@@ -49,7 +49,7 @@ def _fake_plan_payload() -> dict:
             ],
             "timeline": [{"block": "0:00-0:30", "items": ["chop"]}],
         },
-        "grocery_plan": {
+        "grocery_list": {
             "stores": [
                 {
                     "name": "Costco",
@@ -57,7 +57,7 @@ def _fake_plan_payload() -> dict:
                 }
             ]
         },
-        "plan_summary": "nut-free test plan",
+        "summary": "nut-free test plan",
     }
 
 
