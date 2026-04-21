@@ -140,6 +140,20 @@ export default function Settings() {
 
           <AffirmationPreferences />
 
+          {/* Notifications — per-user, always shown */}
+          <Pressable
+            style={[shared.card, styles.adminLinkCard]}
+            onPress={() => router.push("/settings/notifications" as any)}
+            accessibilityRole="link"
+            accessibilityLabel="Open notifications settings"
+          >
+            <Text style={styles.adminLinkTitle}>Notifications</Text>
+            <Text style={styles.adminLinkDesc}>
+              Manage push notifications, registered devices, and the delivery log.
+            </Text>
+            <Text style={styles.adminLinkCta}>Open Notifications &rarr;</Text>
+          </Pressable>
+
           {/* Accounts & Access — per-user, admin-only */}
           {canManageAccounts && (
             <View style={shared.card}>
