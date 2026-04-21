@@ -37,24 +37,27 @@ test.describe("Family projects", () => {
 
     const projectName = `Smoke project ${Date.now()}`;
     await page.fill('input[placeholder="Project name"]', projectName);
-    await page.getByText("Weekend reset", { exact: true }).click();
-    await page.click("text=Create project");
+    // "Weekend reset" is the category chip — use the aria-label to avoid
+    // matching the label text elsewhere on the page.
+    await page.locator('[aria-label="Category Weekend reset"]').click();
+    await page.locator('[aria-label="Create project"]').click();
 
-    // Land on detail page
-    await expect(page.getByText(projectName, { exact: true })).toBeVisible({ timeout: 8000 });
+    // Wait for navigation onto the detail route.
+    await page.waitForURL(/\/projects\/[0-9a-f-]{36}/, { timeout: 10000 });
+    await expect(page.getByText(projectName, { exact: true })).toBeVisible({ timeout: 10000 });
 
-    // Add a task on the Tasks tab
+    // Add a task on the Tasks tab. Use the aria-label so we don't click
+    // the "Add task" card-title Text instead of the Pressable button.
     await page.fill('input[placeholder="Task title"]', "Smoke task");
-    await page.click("text=Add task");
-    await expect(page.getByText("Smoke task", { exact: true })).toBeVisible({ timeout: 5000 });
+    await page.locator('[aria-label="Add task"]').click();
+    await expect(page.getByText("Smoke task", { exact: true })).toBeVisible({ timeout: 8000 });
 
-    // Mark it complete
-    await page.click('text="Mark complete"');
+    // Mark it complete.
+    await page.locator('[aria-label^="Mark Smoke task complete"]').click();
     await page.waitForTimeout(1500);
 
-    // Health summary should now report at least 1 task done
-    const headerRegion = page.locator("text=tasks complete");
-    await expect(headerRegion).toBeVisible({ timeout: 5000 });
+    // Health summary should now report at least 1 task done.
+    await expect(page.locator("text=tasks complete")).toBeVisible({ timeout: 5000 });
   });
 
   test("admin can access /admin/projects", async ({ page }) => {
