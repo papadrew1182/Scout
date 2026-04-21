@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, fonts } from "../lib/styles";
 
@@ -32,15 +32,20 @@ export function ScoutBar({ placeholder = "Ask Scout anything about your family..
 
   return (
     <View style={styles.bar}>
-      {/* Hidden file input (web) */}
-      {/* @ts-ignore */}
-      <input
-        type="file"
-        accept="image/*,application/pdf"
-        style={{ display: "none" }}
-        ref={fileInputRef as any}
-        onChange={handleFileSelected as any}
-      />
+      {/* Hidden file input — web only. Native renders null because RN
+          has no `input` component registered; file picking on iOS/
+          Android will move to expo-image-picker / expo-document-picker
+          in a separate feature. */}
+      {Platform.OS === "web" && (
+        // @ts-ignore — lowercase `input` is HTML-only; guard above keeps it web-only
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          style={{ display: "none" }}
+          ref={fileInputRef as any}
+          onChange={handleFileSelected as any}
+        />
+      )}
       <View style={styles.inputRow}>
         <View style={styles.dot} />
         {pendingAttachment ? (
