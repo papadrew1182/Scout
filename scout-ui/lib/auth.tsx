@@ -8,6 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { API_BASE_URL } from "./config";
 import { setApiToken, setApiFamilyId, setOnUnauthorized } from "./api";
+import { setSessionBearer } from "../features/lib/realClient";
 
 export interface AuthMember {
   member_id: string;
@@ -38,6 +39,7 @@ const AuthContext = createContext<AuthState>({
 });
 
 const TOKEN_KEY = "scout_session_token";
+const FAMILY_KEY = "scout_family_id";
 
 function getStoredToken(): string | null {
   try {
@@ -61,9 +63,32 @@ function setStoredToken(token: string | null) {
   }
 }
 
+function setStoredFamilyId(familyId: string | null) {
+  try {
+    if (typeof window !== "undefined") {
+      if (familyId) {
+        localStorage.setItem(FAMILY_KEY, familyId);
+      } else {
+        localStorage.removeItem(FAMILY_KEY);
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
 function syncApi(t: string | null, m: AuthMember | null) {
   setApiToken(t);
   setApiFamilyId(m?.family_id ?? null);
+  // Several admin forms read scout_family_id directly from localStorage
+  // (/admin/home, /admin/meals/staples/new, etc.) — mirror the family
+  // there so those forms can authenticate their POSTs without having
+  // to round-trip through useAuth().
+  setStoredFamilyId(m?.family_id ?? null);
+  // Session 3 ScoutClient (realClient) reads its bearer token from a
+  // module-level variable; mirror the token here so /api/me and the
+  // other canonical endpoints authenticate as the logged-in actor.
+  setSessionBearer(t);
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -85,6 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const stored = getStoredToken();
     if (!stored) { setLoading(false); return; }
     setApiToken(stored);
+    setSessionBearer(stored);
     fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${stored}` },
     })
@@ -115,6 +141,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(data.token);
     setStoredToken(data.token);
     setApiToken(data.token);
+    setSessionBearer(data.token);
     const me = await fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${data.token}` },
     });

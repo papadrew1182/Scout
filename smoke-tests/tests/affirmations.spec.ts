@@ -23,11 +23,6 @@ async function login(page: Page, email: string, password: string) {
 }
 
 test.describe("Affirmation user surface", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test("affirmation card visible on /today", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/today");
@@ -55,19 +50,19 @@ test.describe("Affirmation user surface", () => {
 });
 
 test.describe("Affirmation admin surface", () => {
-  test.beforeEach(async ({ page }) => {
-    // Skip in CI environments without Session 3 frontend
-    if (!process.env.SMOKE_SESSION3) test.skip();
-  });
-
   test("admin can access affirmation library", async ({ page }) => {
     await login(page, ADULT_EMAIL, PASSWORD);
     await page.goto("/admin/affirmations");
     await page.waitForTimeout(2000);
 
-    // Admin affirmations page should render with tabs
-    const pageContent = page.locator('[accessibilityRole="button"]').first();
-    await expect(pageContent).toBeVisible({ timeout: 5000 });
+    // Admin affirmations page renders an "Affirmations" heading + 4 tabs.
+    // Assert on the heading rather than any random button.
+    const heading = page.getByText("Affirmations", { exact: true }).first();
+    await expect(heading).toBeVisible({ timeout: 5000 });
+
+    // Sanity: the Library tab is rendered (role=tab from accessibilityRole).
+    const libraryTab = page.locator('[role="tab"]', { hasText: "Library" });
+    await expect(libraryTab).toBeVisible({ timeout: 3000 });
   });
 
   test("child cannot access admin affirmations", async ({ page }) => {
