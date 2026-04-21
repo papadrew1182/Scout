@@ -58,11 +58,17 @@ def log_ai_call(
     duration_ms: int,
     input_tokens: int,
     output_tokens: int,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
 ) -> None:
     """Emit a single structured JSON line describing one AI provider round.
 
     Never raises: observability must not break the caller. Malformed
     inputs fall back to empty strings / zero ints.
+
+    Cache metrics default to zero for call sites that don't pass them
+    (e.g. pre-Phase-10 paths), so the log format stays backward
+    compatible.
     """
     try:
         payload = {
@@ -75,6 +81,8 @@ def log_ai_call(
             "duration_ms": int(duration_ms),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
+            "cache_creation_input_tokens": int(cache_creation_input_tokens or 0),
+            "cache_read_input_tokens": int(cache_read_input_tokens or 0),
             "cost_usd": round(
                 estimate_cost_usd(model, int(input_tokens or 0), int(output_tokens or 0)),
                 6,
