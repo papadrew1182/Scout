@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS scout.nudge_dispatches (
     deliver_after_utc       timestamptz NOT NULL,
     delivered_at_utc        timestamptz,
     parent_action_item_id   uuid        REFERENCES public.parent_action_items (id) ON DELETE SET NULL,
-    push_delivery_id        uuid,
+    push_delivery_id        uuid REFERENCES scout.push_deliveries(id) ON DELETE SET NULL,
     delivered_channels      jsonb       NOT NULL DEFAULT '[]'::jsonb,
     source_count            integer     NOT NULL DEFAULT 1,
     body                    text,
@@ -53,6 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_nudge_dispatches_pending
     ON scout.nudge_dispatches (deliver_after_utc)
     WHERE delivered_at_utc IS NULL;
 
+DROP TRIGGER IF EXISTS trg_nudge_dispatches_updated_at ON scout.nudge_dispatches;
 CREATE TRIGGER trg_nudge_dispatches_updated_at
     BEFORE UPDATE ON scout.nudge_dispatches
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
@@ -98,7 +99,7 @@ ON CONFLICT (permission_key) DO NOTHING;
 -- nudges.view_own: all user tiers
 INSERT INTO scout.role_tier_permissions (role_tier_id, permission_id)
 SELECT rt.id, p.id
-FROM role_tiers rt
+FROM public.role_tiers rt
 CROSS JOIN scout.permissions p
 WHERE rt.name IN ('YOUNG_CHILD', 'CHILD', 'TEEN', 'PARENT', 'PRIMARY_PARENT')
   AND p.permission_key = 'nudges.view_own'
