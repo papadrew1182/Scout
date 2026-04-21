@@ -51,6 +51,37 @@ export function ScoutSidebar({ surface }: Props) {
     return () => { cancelled = true; };
   }, []);
 
+  // Sprint 04 Phase 1: resume most recent in-flight conversation on
+  // mount. Silently no-ops if none is eligible.
+  useEffect(() => {
+    let cancelled = false;
+    fetchResumableConversation("personal")
+      .then(async (resume) => {
+        if (cancelled || !resume.conversation_id) return;
+        setConversationId(resume.conversation_id);
+        try {
+          const page = await fetchConversationMessagesPaginated(
+            resume.conversation_id,
+            { limit: 50 },
+          );
+          if (cancelled) return;
+          const hydrated: Turn[] = page.messages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content ?? "",
+            }));
+          if (hydrated.length > 0) {
+            setThread(hydrated);
+          }
+        } catch {
+          /* hydration failed — keep blank / sample state */
+        }
+      })
+      .catch(() => { /* no resumable thread */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -85,7 +116,7 @@ export function ScoutSidebar({ surface }: Props) {
     setThread((prev) => [...prev, { role: "assistant", content: "..." }]);
     await sendChatMessageStream(
       trimmed || "What do you see in this image?",
-      { surface, attachmentPath: attachPath },
+      { surface, attachmentPath: attachPath, conversationId: conversationId ?? undefined },
       {
         onEvent: (event) => {
           if (event.type === "text") {
@@ -95,6 +126,10 @@ export function ScoutSidebar({ surface }: Props) {
               copy[copy.length - 1] = { role: "assistant", content: accumulated };
               return copy;
             });
+          } else if (event.type === "done") {
+            if (event.conversation_id && !conversationId) {
+              setConversationId(event.conversation_id);
+            }
           } else if (event.type === "error") {
             setThread((prev) => {
               const copy = [...prev];
