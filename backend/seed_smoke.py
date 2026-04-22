@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models.access import RoleTier, RoleTierOverride
 from app.models.foundation import Family, FamilyMember, UserAccount, Session
 from app.models.grocery import GroceryItem, PurchaseRequest
+from app.models.home_maintenance import HomeZone
 from app.models.life_management import ChoreTemplate, TaskInstance
 from app.models.meals import WeeklyMealPlan
 from app.models.action_items import ParentActionItem
@@ -325,6 +326,51 @@ def seed_smoke():
         print(f"  Created task instance for Sadie today: {task.id}")
     else:
         print(f"  Task instance already exists for Sadie today: {existing_task.id}")
+
+    # --- Roberts family zone pack (Batch-1 PR 3) ---
+    #
+    # Seeds 6 zones into scout.home_zones so the home-maintenance UI
+    # has a realistic starter set. Zones are intentionally generic;
+    # maintenance templates + home_assets can be layered on later by
+    # the family (zone_id FK points here).
+    ROBERTS_ZONES = [
+        {"name": "Kitchen", "zone_type": "room", "sort_order": 10,
+         "notes": "Cooking, food storage, dishwashing."},
+        {"name": "Living Room", "zone_type": "room", "sort_order": 20,
+         "notes": "Main family gathering space, TV, couches."},
+        {"name": "Master Bedroom", "zone_type": "room", "sort_order": 30,
+         "notes": "Andrew and Sally's room."},
+        {"name": "Hall Bathroom", "zone_type": "room", "sort_order": 40,
+         "notes": "Shared kid bathroom; the one that matters for guests."},
+        {"name": "Laundry Room", "zone_type": "room", "sort_order": 50,
+         "notes": "Washer, dryer, cleaning-supplies storage."},
+        {"name": "Outdoor", "zone_type": "exterior", "sort_order": 60,
+         "notes": "Yard, driveway, exterior doors, HVAC condenser."},
+    ]
+
+    def ensure_zone(spec: dict) -> HomeZone:
+        existing = db.scalars(
+            select(HomeZone)
+            .where(HomeZone.family_id == family.id)
+            .where(HomeZone.name == spec["name"])
+        ).first()
+        if existing:
+            return existing
+        zone = HomeZone(
+            family_id=family.id,
+            name=spec["name"],
+            zone_type=spec["zone_type"],
+            sort_order=spec["sort_order"],
+            notes=spec["notes"],
+        )
+        db.add(zone)
+        db.flush()
+        print(f"  Created zone: {zone.name}")
+        return zone
+
+    for spec in ROBERTS_ZONES:
+        ensure_zone(spec)
+    db.commit()
 
     db.commit()
     db.close()
