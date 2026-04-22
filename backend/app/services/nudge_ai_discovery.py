@@ -68,11 +68,15 @@ def _is_throttled(family_id: uuid.UUID, now_utc: datetime) -> bool:
     """Pure check: has this family run discovery within the rate window?
 
     Read-only. Does not mutate _last_ai_discovery_run_utc.
+    Normalizes now_utc to naive-UTC to stay symmetric with
+    build_family_state_digest and _mark_discovery_ran; mixing naive
+    with aware would raise TypeError on the subtraction below.
     """
+    now_naive = _strip_tz(now_utc)
     last = _last_ai_discovery_run_utc.get(family_id)
-    if last is None:
+    if last is None or now_naive is None:
         return False
-    elapsed = (now_utc - last).total_seconds()
+    elapsed = (now_naive - last).total_seconds()
     return elapsed < _RATE_LIMIT_SECONDS
 
 
@@ -81,8 +85,12 @@ def _mark_discovery_ran(family_id: uuid.UUID, now_utc: datetime) -> None:
 
     Call this AFTER a successful orchestrator.propose_nudges_from_digest
     round trip, so a failed AI call does not consume the hour.
+    Normalizes now_utc to naive-UTC for symmetry with _is_throttled.
     """
-    _last_ai_discovery_run_utc[family_id] = now_utc
+    now_naive = _strip_tz(now_utc)
+    if now_naive is None:
+        return
+    _last_ai_discovery_run_utc[family_id] = now_naive
 
 
 # ---------------------------------------------------------------------------
