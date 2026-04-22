@@ -390,23 +390,25 @@ class TestOrchestratorHooks:
 
 
 class TestPermissionGates:
+    @pytest.mark.skip(
+        reason=(
+            "ai.manage_own_conversations is currently granted to every "
+            "user tier (YOUNG_CHILD, CHILD, TEEN, PARENT, PRIMARY_PARENT) "
+            "by migration 046, so no real-world actor can be denied the "
+            "permission. Unskip when a future tier (e.g. READ_ONLY) is "
+            "introduced that legitimately lacks the permission. The "
+            "ownership-denial tests in the next class cover the "
+            "cross-member access path for this route today."
+        )
+    )
     def test_post_conversations_denies_without_permission(
         self, db: Session, family, adults, children, client
     ):
-        """DISPLAY_ONLY tier (if present) lacks ai.manage_own_conversations.
-        We use young_child/kid as a proxy — in practice all user tiers DO
-        have the permission per migration 046, so this documents the
-        wiring rather than asserting a real-world denial. The acceptance
-        criterion is satisfied by the 404 ownership test below."""
-        # Skip unless we can construct a denied actor.
-        # Per migration 046 permissions are granted to all user tiers
-        # (YOUNG_CHILD/CHILD/TEEN/PARENT/PRIMARY_PARENT). There is no
-        # current tier that is denied ai.manage_own_conversations. This
-        # test documents the wiring rather than exercising a denial.
-        pytest.skip(
-            "No current tier is denied ai.manage_own_conversations. "
-            "See ownership-denial test for access control coverage."
-        )
+        """Permission-denial test for ai.manage_own_conversations.
+
+        Placeholder: unskip when a tier exists that lacks the perm.
+        """
+        pass
 
     def test_archive_older_is_self_scoped_via_actor(
         self, db: Session, family, adults, client
