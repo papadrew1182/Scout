@@ -2278,3 +2278,333 @@ class TestDispatchUsesComposeBody:
             family_member_id=andrew.id
         ).one()
         assert parent.body == "Reminder: Dishes was due at 08:00 AM."
+
+
+class TestProcessPendingDispatches:
+    def test_returns_zero_when_no_pending_eligible(
+        self, db: Session, family, adults
+    ):
+        now = _utcnow().replace(tzinfo=None)
+        written = nudges_service.process_pending_dispatches(db, now)
+        assert written == 0
+
+    def test_surfaces_eligible_held_dispatch(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """A held dispatch whose deliver_after_utc has arrived gets
+        an Inbox row, push call, status='delivered'."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        _force_compose_fallback(monkeypatch)
+
+        # Tick 1: 06:00 UTC inside quiet window -> held
+        t1 = datetime(2026, 4, 21, 6, 0)
+        occurrence = t1 - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=t1,
+            severity="normal",
+            context={
+                "title": "Trash",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], t1)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "pending"
+        # TIMESTAMPTZ hydrates aware in session TZ; compare the UTC moment.
+        expected_hold_utc = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+        actual_after = parent.deliver_after_utc
+        if actual_after.tzinfo is None:
+            actual_after = actual_after.replace(tzinfo=timezone.utc)
+        assert actual_after.astimezone(timezone.utc) == expected_hold_utc
+        assert parent.parent_action_item_id is None
+
+        # Tick 2: 12:30 UTC past the window end
+        fake_delivery_id = __import__("uuid").uuid4()
+
+        # Seed active device so push fires
+        from app.models.push import PushDevice
+        device = PushDevice(
+            family_member_id=andrew.id,
+            expo_push_token="ExponentPushToken[fake]",
+            device_label="iPhone",
+            platform="ios",
+            is_active=True,
+            last_registered_at=t1,
+        )
+        db.add(device)
+        db.commit()
+
+        device_id = device.id
+
+        def fake_send_push(db_arg, **kwargs):
+            pd = __import__("app.models.push", fromlist=["PushDelivery"]).PushDelivery(
+                family_member_id=kwargs["family_member_id"],
+                push_device_id=device_id,
+                category=kwargs["category"],
+                title=kwargs["title"],
+                body=kwargs["body"],
+                data=kwargs.get("data") or {},
+                trigger_source=kwargs.get("trigger_source", "nudge_deliver_pending"),
+                status="provider_accepted",
+                provider="expo",
+                notification_group_id=__import__("uuid").uuid4(),
+            )
+            db_arg.add(pd)
+            db_arg.flush()
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                delivery_ids=[pd.id],
+                accepted_count=1,
+                error_count=0,
+                notification_group_id=pd.notification_group_id,
+            )
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        t2 = datetime(2026, 4, 21, 12, 30)
+        written = nudges_service.process_pending_dispatches(db, t2)
+        assert written == 1
+
+        db.refresh(parent)
+        assert parent.status == "delivered"
+        # TIMESTAMPTZ hydrates aware in session TZ; compare UTC moment.
+        actual_delivered = parent.delivered_at_utc
+        if actual_delivered.tzinfo is None:
+            actual_delivered = actual_delivered.replace(tzinfo=timezone.utc)
+        assert actual_delivered.astimezone(timezone.utc) == t2.replace(
+            tzinfo=timezone.utc
+        )
+        assert parent.parent_action_item_id is not None
+        assert "inbox" in parent.delivered_channels
+        assert "push" in parent.delivered_channels
+
+    def test_not_yet_eligible_held_is_skipped(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """deliver_after_utc is in the future -> do nothing."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        _force_compose_fallback(monkeypatch)
+
+        t1 = datetime(2026, 4, 21, 6, 0)
+        occurrence = t1 - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=t1,
+            severity="normal",
+            context={
+                "title": "T",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], t1)
+
+        # Tick at 08:00 UTC -- still before 12:00 UTC window end
+        written = nudges_service.process_pending_dispatches(db, datetime(2026, 4, 21, 8, 0))
+        assert written == 0
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "pending"
+
+    def test_delivered_rows_are_not_reprocessed(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+
+        _force_compose_fallback(monkeypatch)
+
+        def fake_send_push(db_arg, **kwargs):
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                delivery_ids=[],
+                accepted_count=0,
+                error_count=0,
+                notification_group_id=__import__("uuid").uuid4(),
+            )
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        # Fresh dispatch at "deliver" path -> status='delivered' already
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "title": "T",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "delivered"
+        original_inbox_id = parent.parent_action_item_id
+
+        # Now call process_pending_dispatches -- the delivered row must not
+        # be touched.
+        written = nudges_service.process_pending_dispatches(db, now + timedelta(hours=1))
+        assert written == 0
+
+        db.refresh(parent)
+        assert parent.parent_action_item_id == original_inbox_id
+        inbox_count = db.query(ParentActionItem).filter_by(
+            entity_id=prop.trigger_entity_id
+        ).count()
+        assert inbox_count == 1  # no duplicate
+
+    def test_suppressed_rows_are_not_processed(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """status='suppressed' (low severity inside quiet window) stays
+        suppressed; no Inbox row is ever written for it."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        _force_compose_fallback(monkeypatch)
+
+        t1 = datetime(2026, 4, 21, 6, 0)
+        occurrence = t1 - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=t1,
+            severity="low",
+            context={
+                "name": "Morning",
+                "due_time": "01:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], t1)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "suppressed"
+
+        # Call the worker WAY later
+        written = nudges_service.process_pending_dispatches(db, t1 + timedelta(days=7))
+        assert written == 0
+
+        db.refresh(parent)
+        assert parent.status == "suppressed"
+        assert parent.parent_action_item_id is None
+
+    def test_push_error_does_not_poison_inbox_write(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """If push raises, the Inbox still lands and status goes to
+        'delivered' with delivered_channels = ['inbox'] only."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        _force_compose_fallback(monkeypatch)
+
+        t1 = datetime(2026, 4, 21, 6, 0)
+        occurrence = t1 - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=t1,
+            severity="normal",
+            context={
+                "title": "T",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], t1)
+
+        from app.models.push import PushDevice
+        db.add(
+            PushDevice(
+                family_member_id=andrew.id,
+                expo_push_token="ExponentPushToken[fake]",
+                device_label="iPhone",
+                platform="ios",
+                is_active=True,
+                last_registered_at=t1,
+            )
+        )
+        db.commit()
+
+        def raising(db_arg, **kwargs):
+            raise RuntimeError("expo is down")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", raising)
+
+        t2 = datetime(2026, 4, 21, 12, 30)
+        written = nudges_service.process_pending_dispatches(db, t2)
+        assert written == 1
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "delivered"
+        assert parent.parent_action_item_id is not None
+        assert parent.delivered_channels == ["inbox"]
+        assert parent.push_delivery_id is None

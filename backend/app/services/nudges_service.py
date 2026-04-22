@@ -988,3 +988,141 @@ def run_nudge_scan_tick(db: Session, now_utc: datetime) -> None:
     broadly here."""
     count = run_nudge_scan(db, now_utc=now_utc)
     logger.info("nudge_scan_tick count=%s", count)
+
+
+def _proposal_from_child(child: NudgeDispatchItem) -> NudgeProposal:
+    """Rebuild a surrogate NudgeProposal from a stored child row so the
+    existing _render_inbox_title / _render_bundle_inbox_title helpers
+    can be reused without a second code path. source_metadata was
+    stringified at dispatch-time; we pass it through as-is since only
+    'title' / 'name' are consulted for titles."""
+    context: dict[str, Any] = dict(child.source_metadata or {})
+    context["occurrence_at_utc"] = child.occurrence_at_utc
+    return NudgeProposal(
+        family_member_id=child.family_member_id,
+        trigger_kind=child.trigger_kind,
+        trigger_entity_kind=child.trigger_entity_kind,
+        trigger_entity_id=child.trigger_entity_id,
+        scheduled_for=child.occurrence_at_utc,
+        severity="normal",
+        context=context,
+    )
+
+
+def process_pending_dispatches(
+    db: Session, now_utc: datetime
+) -> int:
+    """Surface held NudgeDispatch rows whose deliver_after_utc has
+    arrived. Writes the ParentActionItem row, attempts push, flips
+    status to 'delivered'. Per-row SAVEPOINT for isolation.
+
+    Called on each scheduler tick after run_nudge_scan (Task 5 wires
+    this in). Never composes bodies -- dispatch_with_items already
+    did that at the time of dispatch. This function is the "deliver
+    later" part of the hold path.
+
+    Excludes: non-pending status (already delivered or suppressed),
+    future deliver_after_utc, rows that somehow already have a
+    parent_action_item_id.
+
+    Returns: count of rows successfully transitioned to 'delivered'.
+    """
+    now_naive = now_utc.replace(tzinfo=None) if now_utc.tzinfo is not None else now_utc
+    rows = (
+        db.query(NudgeDispatch)
+        .filter(
+            NudgeDispatch.status == "pending",
+            NudgeDispatch.deliver_after_utc <= _as_utc_aware(now_naive),
+            NudgeDispatch.parent_action_item_id.is_(None),
+        )
+        .order_by(NudgeDispatch.created_at.desc())
+        .all()
+    )
+
+    delivered_count = 0
+    for dispatch in rows:
+        try:
+            with db.begin_nested():
+                children = list(dispatch.items)
+                if not children:
+                    # Defensive: a pending dispatch without children is
+                    # malformed. Skip without flipping status so it is
+                    # visible in reports.
+                    logger.warning(
+                        "process_pending_dispatches: dispatch=%s has no "
+                        "children; skipping", dispatch.id,
+                    )
+                    continue
+
+                surrogates = [_proposal_from_child(c) for c in children]
+                first_child = children[0]
+                short_title = _render_bundle_inbox_title(surrogates)
+
+                family_id = _family_id_for_member(
+                    db, dispatch.family_member_id
+                )
+                inbox = ParentActionItem(
+                    family_id=family_id,
+                    created_by_member_id=dispatch.family_member_id,
+                    action_type=f"nudge.{first_child.trigger_kind}",
+                    title=short_title,
+                    detail=dispatch.body,
+                    entity_type=first_child.trigger_entity_kind,
+                    entity_id=first_child.trigger_entity_id,
+                    status="pending",
+                )
+                db.add(inbox)
+                db.flush()
+                dispatch.parent_action_item_id = inbox.id
+
+                delivered_channels: list[str] = ["inbox"]
+                push_delivery_id: uuid.UUID | None = None
+                active_device = (
+                    db.query(PushDevice)
+                    .filter(
+                        PushDevice.family_member_id
+                        == dispatch.family_member_id,
+                        PushDevice.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if active_device is not None:
+                    try:
+                        result = push_service.send_push(
+                            db,
+                            family_member_id=dispatch.family_member_id,
+                            category=f"nudge.{first_child.trigger_kind}",
+                            title=short_title,
+                            body=dispatch.body or "",
+                            data={
+                                "route_hint": _route_hint(surrogates[0]),
+                                "trigger_kind": first_child.trigger_kind,
+                            },
+                            trigger_source="nudge_deliver_pending",
+                        )
+                        if getattr(result, "delivery_ids", None):
+                            push_delivery_id = result.delivery_ids[0]
+                            delivered_channels.append("push")
+                    except Exception as push_err:
+                        logger.exception(
+                            "nudge deliver-pending push failed "
+                            "dispatch=%s member=%s err=%s",
+                            dispatch.id,
+                            dispatch.family_member_id,
+                            push_err,
+                        )
+
+                dispatch.status = "delivered"
+                dispatch.delivered_at_utc = _as_utc_aware(now_naive)
+                dispatch.delivered_channels = delivered_channels
+                dispatch.push_delivery_id = push_delivery_id
+            delivered_count += 1
+        except Exception as e:
+            # Savepoint auto-rolled back; log and move on so sibling
+            # rows on the same tick remain processable.
+            logger.exception(
+                "process_pending_dispatches: dispatch=%s failed err=%s",
+                dispatch.id, e,
+            )
+            continue
+    return delivered_count
