@@ -286,6 +286,126 @@ def _render_bundle_inbox_title(proposals: list["NudgeProposal"]) -> str:
     return f"You have {len(proposals)} nudges"
 
 
+def compose_body(
+    db: Session,
+    family_id: uuid.UUID,
+    proposals: list[NudgeProposal],
+    now_utc: datetime,
+) -> str:
+    """Compose a personalized nudge body. Falls back to fixed templates
+    on any of four failure conditions per revised plan Section 5:
+
+      1. ``settings.ai_available`` is False (no key / flag off).
+      2. Weekly AI soft cap has been reached for this family.
+      3. Composer raised ``RuntimeError`` (moderation / refusal / empty
+         response - Task 1 surfaces these as RuntimeError).
+      4. Composer raised anything else (timeout, network, provider
+         SDK error) - broad catch for resilience.
+
+    Each fallback logs one INFO line tagged with the reason so post-hoc
+    debugging by ``grep compose_body fallback`` is easy.
+
+    Single-proposal bundles fall back to ``_render_body(proposals[0])``;
+    multi-proposal bundles fall back to ``_render_bundle_body(proposals)``.
+    The composer receives a summary of all proposals in both cases.
+
+    ``family_id`` is needed for the soft-cap usage report. ``proposals``
+    is the same list that dispatch_with_items will write as child items.
+    Task 3 will wire this into dispatch_with_items.
+    """
+    if not proposals:
+        return ""
+
+    def _fallback() -> str:
+        if len(proposals) == 1:
+            return _render_body(proposals[0])
+        return _render_bundle_body(proposals)
+
+    # Gate 1: AI globally available?
+    from app.config import settings
+    if not settings.ai_available:
+        logger.info(
+            "compose_body fallback reason=ai_unavailable member=%s count=%s",
+            proposals[0].family_member_id, len(proposals),
+        )
+        return _fallback()
+
+    # Gate 2: weekly soft cap
+    try:
+        from app.ai.pricing import build_usage_report
+        # All-kwargs call so tests can monkeypatch with ``lambda **kwargs``.
+        report = build_usage_report(
+            db=db,
+            family_id=family_id,
+            days=7,
+            soft_cap_usd=settings.ai_weekly_soft_cap_usd,
+        )
+        if report.get("cap_warning"):
+            logger.info(
+                "compose_body fallback reason=soft_cap member=%s count=%s",
+                proposals[0].family_member_id, len(proposals),
+            )
+            return _fallback()
+    except Exception as e:
+        # If the usage report itself blows up, degrade gracefully and
+        # continue to the AI call attempt. Log for later review.
+        logger.warning(
+            "compose_body soft_cap_check_failed err=%s", e
+        )
+
+    # Resolve the per-member personality preamble. Failure here should
+    # not block the composer call; we just send an empty preamble.
+    try:
+        resolved = ai_personality_service.get_resolved_config(
+            db, proposals[0].family_member_id
+        )
+        preamble = ai_personality_service.build_personality_preamble(resolved)
+    except Exception as e:
+        logger.warning(
+            "compose_body preamble_lookup_failed err=%s", e
+        )
+        preamble = ""
+
+    # Build summaries for generate_nudge_body. The composer is format-
+    # agnostic; it only needs trigger_kind, title, and time_label.
+    proposal_summaries: list[dict[str, Any]] = []
+    for p in proposals:
+        title = p.context.get("title") or p.context.get("name") or "(untitled)"
+        time_label = (
+            p.context.get("due_time")
+            or p.context.get("start_time")
+            or ""
+        )
+        proposal_summaries.append({
+            "trigger_kind": p.trigger_kind,
+            "title": title,
+            "time_label": time_label,
+        })
+
+    # Call the composer. Broad except so ANY failure path falls back.
+    # Gates 3 (moderation/refusal = RuntimeError) and 4 (timeout / any
+    # other provider error) both land here; the type name goes to the
+    # log so operators can distinguish them post-hoc.
+    try:
+        from app.ai import orchestrator
+        body = orchestrator.generate_nudge_body(
+            family_member_id=proposals[0].family_member_id,
+            proposal_summaries=proposal_summaries,
+            personality_preamble=preamble,
+            timeout_seconds=3.0,
+        )
+        if not body or not body.strip():
+            raise RuntimeError("empty composer response")
+        return body.strip()
+    except Exception as e:
+        logger.info(
+            "compose_body fallback reason=composer_error err=%s "
+            "member=%s count=%s",
+            type(e).__name__, proposals[0].family_member_id, len(proposals),
+        )
+        return _fallback()
+
+
 _SEVERITY_ORDER = {"low": 0, "normal": 1, "high": 2}
 
 
@@ -711,7 +831,14 @@ def dispatch_with_items(
         try:
             with db.begin_nested():
                 proposals_only = [p for p, _ in resolved_pairs]
-                body = _render_bundle_body(proposals_only)
+                body = compose_body(
+                    db,
+                    family_id=_family_id_for_member(
+                        db, bundle.family_member_id
+                    ),
+                    proposals=proposals_only,
+                    now_utc=now_utc,
+                )
                 short_title = _render_bundle_inbox_title(proposals_only)
                 first_kind = resolved_pairs[0][0].trigger_kind
 
@@ -861,3 +988,152 @@ def run_nudge_scan_tick(db: Session, now_utc: datetime) -> None:
     broadly here."""
     count = run_nudge_scan(db, now_utc=now_utc)
     logger.info("nudge_scan_tick count=%s", count)
+
+
+def process_pending_dispatches_tick(
+    db: Session, now_utc: datetime
+) -> None:
+    """Scheduler tick entry point for held-dispatch surfacing.
+    Exceptions propagate to the scheduler's outer try/except/rollback
+    so one failure cannot poison neighbouring runners on the same tick.
+    Never catch broadly here."""
+    count = process_pending_dispatches(db, now_utc=now_utc)
+    logger.info("nudge_deliver_pending_tick count=%s", count)
+
+
+def _proposal_from_child(child: NudgeDispatchItem) -> NudgeProposal:
+    """Rebuild a surrogate NudgeProposal from a stored child row so the
+    existing _render_inbox_title / _render_bundle_inbox_title helpers
+    can be reused without a second code path. source_metadata was
+    stringified at dispatch-time; we pass it through as-is since only
+    'title' / 'name' are consulted for titles."""
+    context: dict[str, Any] = dict(child.source_metadata or {})
+    context["occurrence_at_utc"] = child.occurrence_at_utc
+    return NudgeProposal(
+        family_member_id=child.family_member_id,
+        trigger_kind=child.trigger_kind,
+        trigger_entity_kind=child.trigger_entity_kind,
+        trigger_entity_id=child.trigger_entity_id,
+        scheduled_for=child.occurrence_at_utc,
+        severity="normal",
+        context=context,
+    )
+
+
+def process_pending_dispatches(
+    db: Session, now_utc: datetime
+) -> int:
+    """Surface held NudgeDispatch rows whose deliver_after_utc has
+    arrived. Writes the ParentActionItem row, attempts push, flips
+    status to 'delivered'. Per-row SAVEPOINT for isolation.
+
+    Called on each scheduler tick after run_nudge_scan (Task 5 wires
+    this in). Never composes bodies -- dispatch_with_items already
+    did that at the time of dispatch. This function is the "deliver
+    later" part of the hold path.
+
+    Excludes: non-pending status (already delivered or suppressed),
+    future deliver_after_utc, rows that somehow already have a
+    parent_action_item_id.
+
+    Returns: count of rows successfully transitioned to 'delivered'.
+    """
+    now_naive = now_utc.replace(tzinfo=None) if now_utc.tzinfo is not None else now_utc
+    rows = (
+        db.query(NudgeDispatch)
+        .filter(
+            NudgeDispatch.status == "pending",
+            NudgeDispatch.deliver_after_utc <= _as_utc_aware(now_naive),
+            NudgeDispatch.parent_action_item_id.is_(None),
+        )
+        .order_by(NudgeDispatch.created_at.desc())
+        .all()
+    )
+
+    delivered_count = 0
+    for dispatch in rows:
+        try:
+            with db.begin_nested():
+                children = list(dispatch.items)
+                if not children:
+                    # Defensive: a pending dispatch without children is
+                    # malformed. Skip without flipping status so it is
+                    # visible in reports.
+                    logger.warning(
+                        "process_pending_dispatches: dispatch=%s has no "
+                        "children; skipping", dispatch.id,
+                    )
+                    continue
+
+                surrogates = [_proposal_from_child(c) for c in children]
+                first_child = children[0]
+                short_title = _render_bundle_inbox_title(surrogates)
+
+                family_id = _family_id_for_member(
+                    db, dispatch.family_member_id
+                )
+                inbox = ParentActionItem(
+                    family_id=family_id,
+                    created_by_member_id=dispatch.family_member_id,
+                    action_type=f"nudge.{first_child.trigger_kind}",
+                    title=short_title,
+                    detail=dispatch.body,
+                    entity_type=first_child.trigger_entity_kind,
+                    entity_id=first_child.trigger_entity_id,
+                    status="pending",
+                )
+                db.add(inbox)
+                db.flush()
+                dispatch.parent_action_item_id = inbox.id
+
+                delivered_channels: list[str] = ["inbox"]
+                push_delivery_id: uuid.UUID | None = None
+                active_device = (
+                    db.query(PushDevice)
+                    .filter(
+                        PushDevice.family_member_id
+                        == dispatch.family_member_id,
+                        PushDevice.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if active_device is not None:
+                    try:
+                        result = push_service.send_push(
+                            db,
+                            family_member_id=dispatch.family_member_id,
+                            category=f"nudge.{first_child.trigger_kind}",
+                            title=short_title,
+                            body=dispatch.body or "",
+                            data={
+                                "route_hint": _route_hint(surrogates[0]),
+                                "trigger_kind": first_child.trigger_kind,
+                            },
+                            trigger_source="nudge_deliver_pending",
+                        )
+                        if getattr(result, "delivery_ids", None):
+                            push_delivery_id = result.delivery_ids[0]
+                            delivered_channels.append("push")
+                    except Exception as push_err:
+                        logger.exception(
+                            "nudge deliver-pending push failed "
+                            "dispatch=%s member=%s err=%s",
+                            dispatch.id,
+                            dispatch.family_member_id,
+                            push_err,
+                        )
+
+                dispatch.status = "delivered"
+                dispatch.delivered_at_utc = _as_utc_aware(now_naive)
+                dispatch.delivered_channels = delivered_channels
+                dispatch.push_delivery_id = push_delivery_id
+            delivered_count += 1
+        except Exception as e:
+            # Savepoint auto-rolled back; log and move on so sibling
+            # rows on the same tick remain processable.
+            logger.exception(
+                "process_pending_dispatches: dispatch=%s failed err=%s",
+                dispatch.id, e,
+            )
+            continue
+    return delivered_count

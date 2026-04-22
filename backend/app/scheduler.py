@@ -197,6 +197,16 @@ def _tick(db_factory: Callable[[], Session]) -> None:
                 logger.exception("nudge_scan_tick_failed: %s", e)
             finally:
                 db.close()
+
+            db = db_factory()
+            try:
+                nudges_service.process_pending_dispatches_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("nudge_deliver_pending_tick_failed: %s", e)
+            finally:
+                db.close()
         finally:
             # Release the advisory lock on the SAME connection we
             # acquired it on — advisory locks are session-scoped.
