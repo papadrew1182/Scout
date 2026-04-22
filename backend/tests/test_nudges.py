@@ -1129,3 +1129,100 @@ class TestQuietHoursGate:
         deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
         assert reason is None
         assert deliver_after == __import__("datetime").datetime(2026, 4, 21, 12, 0)
+
+
+class TestBatchProposals:
+    def _mk(self, member_id, scheduled_offset_seconds, kind="overdue_task", entity_id=None):
+        """Helper: proposal at now + offset seconds."""
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind=kind,
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=entity_id or __import__("uuid").uuid4(),
+            scheduled_for=datetime(2026, 4, 21, 12, 0) + timedelta(seconds=scheduled_offset_seconds),
+            severity="normal",
+            context={},
+        )
+
+    def test_empty_list_returns_empty(self):
+        assert nudges_service.batch_proposals([]) == []
+
+    def test_single_proposal_becomes_singleton_bundle(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p = self._mk(andrew.id, 0)
+        bundles = nudges_service.batch_proposals([p])
+        assert len(bundles) == 1
+        assert bundles[0].family_member_id == andrew.id
+        assert len(bundles[0].proposals) == 1
+
+    def test_two_proposals_within_window_collapse(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 120)  # +2 min
+        bundles = nudges_service.batch_proposals([p1, p2], window_minutes=10)
+        assert len(bundles) == 1
+        assert len(bundles[0].proposals) == 2
+
+    def test_two_proposals_outside_window_stay_separate(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 15 * 60)  # +15 min, outside 10-min window
+        bundles = nudges_service.batch_proposals([p1, p2], window_minutes=10)
+        assert len(bundles) == 2
+
+    def test_different_members_never_collapse(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(megan.id, 30)  # same time, different member
+        bundles = nudges_service.batch_proposals([p1, p2])
+        assert len(bundles) == 2
+        assert {b.family_member_id for b in bundles} == {andrew.id, megan.id}
+
+    def test_three_proposals_all_within_anchor_window(
+        self, db: Session, family, adults
+    ):
+        """Anchor is the first proposal's scheduled_for. Second and
+        third both measure against it."""
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 4 * 60)
+        p3 = self._mk(andrew.id, 8 * 60)
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 1
+        assert len(bundles[0].proposals) == 3
+
+    def test_chain_that_would_drift_is_broken_at_anchor_window(
+        self, db: Session, family, adults
+    ):
+        """Anchor semantics: p1 at 0, p2 at 8min, p3 at 15min. p2 is
+        within 10 of p1 (anchor=p1). p3 is 15 from anchor p1 -- outside
+        window. New cluster starts at p3. Prevents indefinite drift
+        from greedy neighbor-linking."""
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 8 * 60)
+        p3 = self._mk(andrew.id, 15 * 60)
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 2
+        assert len(bundles[0].proposals) == 2
+        assert len(bundles[1].proposals) == 1
+
+    def test_effective_deliver_after_is_earliest_in_bundle(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 120)   # +2 min
+        p2 = self._mk(andrew.id, 0)     # baseline
+        p3 = self._mk(andrew.id, 300)   # +5 min
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 1
+        assert bundles[0].effective_deliver_after == datetime(2026, 4, 21, 12, 0)

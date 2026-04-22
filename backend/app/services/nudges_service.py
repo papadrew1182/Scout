@@ -78,6 +78,21 @@ class OccurrenceFields:
     source_dedupe_key: str
 
 
+@dataclass
+class ProposalBundle:
+    """A group of NudgeProposals for the SAME family_member_id whose
+    effective deliver_after times are within a small window. One
+    parent NudgeDispatch is written per bundle; proposals become
+    child nudge_dispatch_items. Singletons are also bundles (size 1)."""
+
+    family_member_id: uuid.UUID
+    proposals: list[NudgeProposal]
+
+    @property
+    def effective_deliver_after(self) -> datetime:
+        return min(p.scheduled_for for p in self.proposals)
+
+
 # ---------------------------------------------------------------------------
 # Stubs. Each fills in via TDD in a later task (Tasks 4-9).
 # ---------------------------------------------------------------------------
@@ -311,6 +326,48 @@ def apply_proactivity(
             )
         )
     return out
+
+
+def batch_proposals(
+    proposals: list[NudgeProposal], window_minutes: int = 10
+) -> list[ProposalBundle]:
+    """Group proposals per member; cluster each member's list into
+    bundles where every member of a cluster is within window_minutes
+    of the cluster's anchor (first proposal sorted by scheduled_for).
+
+    Anchor semantics (not nearest-neighbor) prevent a chain like
+    [0min, 8min, 15min, 22min] from collapsing into a single 22-min-wide
+    bundle. The first cluster holds 0 and 8; 15 starts a new cluster
+    because it is outside window_minutes of the 0-min anchor.
+    """
+    if not proposals:
+        return []
+
+    # Stable grouping by member (insertion order preserved)
+    per_member: dict[uuid.UUID, list[NudgeProposal]] = {}
+    for p in proposals:
+        per_member.setdefault(p.family_member_id, []).append(p)
+
+    bundles: list[ProposalBundle] = []
+    window = timedelta(minutes=window_minutes)
+    for member_id, items in per_member.items():
+        items_sorted = sorted(items, key=lambda p: p.scheduled_for)
+        cluster: list[NudgeProposal] = []
+        anchor: datetime | None = None
+        for p in items_sorted:
+            if not cluster:
+                cluster = [p]
+                anchor = p.scheduled_for
+                continue
+            if (p.scheduled_for - anchor) <= window:
+                cluster.append(p)
+            else:
+                bundles.append(ProposalBundle(member_id, cluster))
+                cluster = [p]
+                anchor = p.scheduled_for
+        if cluster:
+            bundles.append(ProposalBundle(member_id, cluster))
+    return bundles
 
 
 def _is_minute_in_window(current: int, start: int, end: int) -> bool:
