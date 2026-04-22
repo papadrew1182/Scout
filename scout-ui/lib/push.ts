@@ -19,6 +19,24 @@ import { router } from "expo-router";
 import { API_BASE_URL } from "./config";
 import { authHeaders } from "./api";
 
+// Module-level so the handler is registered before any notification
+// can arrive — expo-notifications keeps the last-set handler and will
+// consult it synchronously on delivery. Without this, iOS suppresses
+// visual display while the app is in the foreground (Apple default).
+//
+// `shouldShowAlert` is the legacy SDK ≤52 name; `shouldShowBanner` +
+// `shouldShowList` are the SDK 52+ split. Both are safe to set — the
+// SDK reads whichever it recognizes and ignores the other.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
+
 export type PushPermissionStatus =
   | "undetermined"
   | "granted"
