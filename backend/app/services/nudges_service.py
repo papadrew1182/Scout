@@ -990,6 +990,17 @@ def run_nudge_scan_tick(db: Session, now_utc: datetime) -> None:
     logger.info("nudge_scan_tick count=%s", count)
 
 
+def process_pending_dispatches_tick(
+    db: Session, now_utc: datetime
+) -> None:
+    """Scheduler tick entry point for held-dispatch surfacing.
+    Exceptions propagate to the scheduler's outer try/except/rollback
+    so one failure cannot poison neighbouring runners on the same tick.
+    Never catch broadly here."""
+    count = process_pending_dispatches(db, now_utc=now_utc)
+    logger.info("nudge_deliver_pending_tick count=%s", count)
+
+
 def _proposal_from_child(child: NudgeDispatchItem) -> NudgeProposal:
     """Rebuild a surrogate NudgeProposal from a stored child row so the
     existing _render_inbox_title / _render_bundle_inbox_title helpers

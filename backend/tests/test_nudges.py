@@ -2608,3 +2608,100 @@ class TestProcessPendingDispatches:
         assert parent.parent_action_item_id is not None
         assert parent.delivered_channels == ["inbox"]
         assert parent.push_delivery_id is None
+
+
+class TestProcessPendingDispatchesTick:
+    def test_end_to_end_tick_surfaces_held_dispatch(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Simulated two-tick flow without the real scheduler:
+        - tick 1: run_nudge_scan writes a held dispatch (in window)
+        - tick 2: process_pending_dispatches surfaces it (after window)
+        Verifies the functions chain correctly as the scheduler will
+        call them on the same 5-min tick."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        _force_compose_fallback(monkeypatch)
+
+        # Seed active device so push path fires post-window
+        db.add(
+            PushDevice(
+                family_member_id=andrew.id,
+                expo_push_token="ExponentPushToken[fake]",
+                device_label="iPhone",
+                platform="ios",
+                is_active=True,
+                last_registered_at=datetime(2026, 4, 20, 12, 0),
+            )
+        )
+
+        # Create an overdue task
+        t1 = datetime(2026, 4, 21, 6, 0)
+        db.add(
+            PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title="T",
+                status="pending",
+                due_at=t1 - timedelta(hours=1),
+            )
+        )
+        db.commit()
+
+        def fake_send_push(db_arg, **kwargs):
+            device = db_arg.query(PushDevice).filter_by(
+                family_member_id=kwargs["family_member_id"],
+                is_active=True,
+            ).first()
+            assert device is not None
+            pd = __import__("app.models.push", fromlist=["PushDelivery"]).PushDelivery(
+                family_member_id=kwargs["family_member_id"],
+                push_device_id=device.id,
+                category=kwargs["category"],
+                title=kwargs["title"],
+                body=kwargs["body"],
+                data=kwargs.get("data") or {},
+                trigger_source=kwargs.get("trigger_source", "nudge"),
+                status="provider_accepted",
+                provider="expo",
+                notification_group_id=__import__("uuid").uuid4(),
+            )
+            db_arg.add(pd)
+            db_arg.flush()
+            from types import SimpleNamespace
+            return SimpleNamespace(
+                delivery_ids=[pd.id],
+                accepted_count=1,
+                error_count=0,
+                notification_group_id=pd.notification_group_id,
+            )
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", fake_send_push)
+
+        # Tick 1: in quiet window -> dispatch is held
+        written = nudges_service.run_nudge_scan(db, now_utc=t1)
+        assert written >= 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "pending"
+        assert parent.parent_action_item_id is None
+
+        # Tick 2 at window end: process_pending_dispatches_tick surfaces it
+        t2 = datetime(2026, 4, 21, 12, 30)
+        nudges_service.process_pending_dispatches_tick(db, now_utc=t2)
+        db.commit()
+
+        db.refresh(parent)
+        assert parent.status == "delivered"
+        assert parent.parent_action_item_id is not None
+        assert "inbox" in parent.delivered_channels
+        assert "push" in parent.delivered_channels
