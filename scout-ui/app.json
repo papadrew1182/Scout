@@ -29,8 +29,30 @@
     "owner": "papadrew1182",
     "ios": {
       "bundleIdentifier": "com.papadrew.scout",
+      "entitlements": {
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.access": [],
+        "com.apple.developer.applesignin": ["Default"],
+        "com.apple.developer.associated-domains": [],
+        "com.apple.security.application-groups": ["group.com.papadrew.scout"],
+        "com.apple.developer.siri": true,
+        "com.apple.developer.weatherkit": true,
+        "keychain-access-groups": ["$(AppIdentifierPrefix)com.papadrew.scout"]
+      },
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification", "fetch"],
+        "NSHealthShareUsageDescription": "Scout reads your Apple Health data to show fitness trends, sync workouts with family activities, and help Scout AI give better health-aware suggestions.",
+        "NSHealthUpdateUsageDescription": "Scout writes nutrition and activity data to Apple Health so your stats stay in one place.",
+        "NSSiriUsageDescription": "Scout uses Siri so you can ask Scout AI hands-free — like checking the family calendar or adding a chore.",
+        "NSPhotoLibraryUsageDescription": "Scout uses your photos to let you attach images to chores, meals, and family memories.",
+        "NSPhotoLibraryAddUsageDescription": "Scout saves photos you generate or download to your library.",
+        "NSCameraUsageDescription": "Scout uses the camera to let you capture photos of chore completions, receipts, and family moments.",
+        "NSLocationWhenInUseUsageDescription": "Scout uses your location to show nearby errands, suggest timing for pickups and activities, and keep family coordination accurate.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Scout uses your location in the background to support location-based reminders and family coordination features you opt into.",
+        "NSCalendarsUsageDescription": "Scout reads and writes your iOS Calendar so family events stay in sync between Scout, iCal, and shared displays.",
+        "NSRemindersUsageDescription": "Scout reads and writes your iOS Reminders so tasks and chores stay in sync across your devices.",
+        "NSFaceIDUsageDescription": "Scout uses Face ID so you can unlock sensitive actions like approving allowance payouts or changing family settings."
       }
     }
   }
