@@ -355,6 +355,7 @@ def _convert_proposal(dp: DiscoveryProposal) -> NudgeProposal:
         context={
             "body": dp.body,
             "ai_generated": True,
+            "occurrence_at_utc": dp.scheduled_for,
         },
     )
 
@@ -492,16 +493,8 @@ def nudge_ai_discovery_tick(db: Session, now_utc: datetime) -> int:
                 )
                 continue
 
-            # resolve_occurrence_fields reads context['occurrence_at_utc']
-            # as the source timestamp for dedupe_key generation. Built-in
-            # scanners stamp this in scan_*; for AI-suggested proposals
-            # the discovery service stamps it here from scheduled_for
-            # (the AI's intended delivery time) so the existing dispatch
-            # pipeline can consume these proposals unchanged.
-            for p in proposals:
-                if "occurrence_at_utc" not in p.context:
-                    p.context["occurrence_at_utc"] = p.scheduled_for
-
+            # Dispatch pipeline (apply_proactivity -> batch_proposals ->
+            # dispatch_with_items) is shared with the P1 scanners.
             gated = nudges_service.apply_proactivity(db, proposals, now_utc)
             bundles = nudges_service.batch_proposals(gated)
             dispatched = nudges_service.dispatch_with_items(

@@ -363,6 +363,32 @@ def test_propose_nudges_converts_discovery_to_nudge_proposal(
     assert np.context["ai_generated"] is True
 
 
+def test_convert_proposal_stamps_occurrence_at_utc():
+    """_convert_proposal must stamp occurrence_at_utc so proposals
+    returned by propose_nudges are directly usable by
+    resolve_occurrence_fields. Regression test for a Task 4 layering
+    smell where the stamp originally lived in the tick.
+    """
+    from app.services.nudge_ai_discovery import _convert_proposal
+    from app.schemas.nudge_discovery import DiscoveryProposal
+    import uuid
+    from datetime import datetime
+
+    dp = DiscoveryProposal(
+        member_id=uuid.uuid4(),
+        trigger_entity_kind="personal_task",
+        trigger_entity_id=uuid.uuid4(),
+        scheduled_for=datetime(2026, 4, 22, 14, 30),
+        severity="normal",
+        body="Remember to water the plants.",
+    )
+    np = _convert_proposal(dp)
+    assert np.context["occurrence_at_utc"] == dp.scheduled_for
+    assert np.context["body"] == dp.body
+    assert np.context["ai_generated"] is True
+    assert np.trigger_kind == "ai_suggested"
+
+
 def test_propose_nudges_maps_general_kind_to_ai_discovery(
     monkeypatch, db: Session, family: Family, adults: dict
 ):
