@@ -2,23 +2,79 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime, time, timedelta, timezone
 
 import pytest
+import pytz
 from sqlalchemy.orm import Session
 
 from app.models.action_items import ParentActionItem
 from app.models.calendar import Event, EventAttendee
+from app.models.foundation import Session as SessionModel, UserAccount
 from app.models.life_management import ChoreTemplate, Routine, TaskInstance
 from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.personal_tasks import PersonalTask
 from app.models.push import PushDelivery, PushDevice
+from app.models.quiet_hours import QuietHoursFamily
 from app.services import ai_personality_service, nudges_service
+from app.services.auth_service import hash_password
 
 
 def _utcnow() -> datetime:
     # tz-aware; compare-safe against Postgres-hydrated timestamptz values
     return datetime.now(timezone.utc)
+
+
+def _make_account_and_token(db: Session, member_id, email: str) -> str:
+    """Create a UserAccount + Session and return the bearer token.
+
+    Lifted from test_ai_conversation_resume.py (Sprint 04 Phase 1) so
+    HTTP tests in this file can authenticate without depending on
+    that module's fixture.
+    """
+    account = UserAccount(
+        id=uuid.uuid4(),
+        family_member_id=member_id,
+        email=email,
+        auth_provider="email",
+        password_hash=hash_password("x" * 12),
+        is_primary=True,
+        is_active=True,
+    )
+    db.add(account)
+    db.flush()
+    token = f"tok-{uuid.uuid4().hex}"
+    db.add(
+        SessionModel(
+            user_account_id=account.id,
+            token=token,
+            expires_at=datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    return token
+
+
+@pytest.fixture
+def client(db):
+    """TestClient with the request-scoped db session overridden so the
+    route sees the same data the test seeds."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    c = TestClient(app)
+    try:
+        yield c
+    finally:
+        app.dependency_overrides.clear()
 
 
 class TestScanOverdueTasks:
@@ -670,9 +726,12 @@ class TestDispatchWithItems:
         now = _utcnow()
         occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
 
         # No push device => no push; test the Inbox path clean
-        written = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+        written = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
 
         assert written == 1
         parents = list(db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).all())
@@ -685,9 +744,9 @@ class TestDispatchWithItems:
         assert "push" not in parents[0].delivered_channels
         inbox = db.get(ParentActionItem, parents[0].parent_action_item_id)
         assert inbox is not None
-        # action_type falls back to 'general' until chk_parent_action_items_action_type
-        # is widened (migration pending). entity_type carries the trigger kind.
-        assert inbox.action_type == "general"
+        # Phase 2 + migration 050: chk_parent_action_items_action_type now
+        # allows nudge.* values. action_type reflects the trigger_kind.
+        assert inbox.action_type == "nudge.overdue_task"
         assert inbox.entity_type == "personal_task"
         assert "Take out bins" in inbox.title or "Take out bins" in (inbox.detail or "")
 
@@ -697,9 +756,12 @@ class TestDispatchWithItems:
         occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
         entity_id = __import__("uuid").uuid4()
         prop = self._base_proposal(andrew.id, occurrence, entity_id=entity_id)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
 
-        first = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
-        second = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+        first = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
+        second = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
 
         assert first == 1
         assert second == 0
@@ -758,7 +820,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        nudges_service.dispatch_with_items(db, [bundle], now)
 
         assert len(sent) == 1
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
@@ -779,7 +844,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        nudges_service.dispatch_with_items(db, [bundle], now)
 
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
         assert parent.push_delivery_id is None
@@ -813,7 +881,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        written = nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
 
         assert written == 1
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
@@ -824,9 +895,10 @@ class TestDispatchWithItems:
     def test_one_proposal_dedupe_does_not_undo_siblings(
         self, db: Session, family, adults
     ):
-        """Two proposals in one call. First succeeds, second has a
-        pre-existing dedupe row (simulated by dispatching it first).
-        Per-proposal SAVEPOINT ensures the first stays committed."""
+        """Two proposals (as separate bundles) in one call. First
+        succeeds, second has a pre-existing dedupe row (simulated by
+        dispatching it first). Per-bundle SAVEPOINT ensures the first
+        stays committed."""
         andrew = adults["robert"]
         now = _utcnow().replace(tzinfo=None)
         e1 = __import__("uuid").uuid4()
@@ -835,13 +907,19 @@ class TestDispatchWithItems:
 
         prop_first = self._base_proposal(andrew.id, occurrence, entity_id=e1)
         prop_second = self._base_proposal(andrew.id, occurrence, entity_id=e2)
+        bundle_first = nudges_service.ProposalBundle(
+            family_member_id=prop_first.family_member_id, proposals=[prop_first]
+        )
+        bundle_second = nudges_service.ProposalBundle(
+            family_member_id=prop_second.family_member_id, proposals=[prop_second]
+        )
 
         # Pre-seed dedupe for prop_second
-        nudges_service.dispatch_with_items(db, [prop_second], now)
+        nudges_service.dispatch_with_items(db, [bundle_second], now)
         assert db.query(NudgeDispatchItem).count() == 1
 
         written = nudges_service.dispatch_with_items(
-            db, [prop_first, prop_second], now
+            db, [bundle_first, bundle_second], now
         )
 
         # First is new (+1), second is deduped (no change)
@@ -924,6 +1002,840 @@ class TestTickBenchmark:
         written = nudges_service.run_nudge_scan(db, now_utc=now)
         elapsed = _time.monotonic() - t0
 
-        # Everyone defaults to balanced proactivity, so 70 proposals should dispatch
-        assert written >= 50, f"expected >=50 dispatches, got {written}"
+        # Phase 2: run_nudge_scan now batches per member, so 70 proposals
+        # collapse into a handful of bundles (4 members with overdue +
+        # upcoming within 10-min anchors). Benchmark asserts the tick
+        # produced something and stayed under budget. Per-child item
+        # counts are covered in dedicated dispatch + batch tests.
+        assert written >= 1, f"expected >=1 bundle dispatched, got {written}"
+        child_count = db.query(NudgeDispatchItem).count()
+        assert child_count >= 50, (
+            f"expected >=50 child items written, got {child_count}"
+        )
         assert elapsed < 10.0, f"tick took {elapsed:.2f}s (budget 10.0s)"
+
+
+class TestQuietHoursGate:
+    def _set_family_quiet_hours(self, db, family, start_minute, end_minute):
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=start_minute,
+                end_local_minute=end_minute,
+            )
+        )
+        db.commit()
+
+    def _set_member_override(self, db, member_id, start_minute, end_minute):
+        from sqlalchemy import text as _t
+        db.execute(
+            _t(
+                """
+                INSERT INTO member_config (family_member_id, key, value)
+                VALUES (:mid, 'nudges.quiet_hours', CAST(:v AS JSONB))
+                ON CONFLICT (family_member_id, key)
+                DO UPDATE SET value = EXCLUDED.value
+                """
+            ),
+            {
+                "mid": member_id,
+                "v": json.dumps(
+                    {
+                        "start_local_minute": start_minute,
+                        "end_local_minute": end_minute,
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+    def test_no_quiet_hours_configured_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        now = _utcnow().replace(tzinfo=None)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_outside_window_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        # 14:00 UTC on 2026-04-21 is 09:00 CDT (UTC-5, DST). Window 22-07.
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 14, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_inside_window_low_severity_drops(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        # 06:00 UTC on 2026-04-21 = 01:00 CDT -- inside window
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "low", now
+        )
+        assert decision == "drop"
+        assert hold is None
+
+    def test_inside_window_high_severity_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "high", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_inside_window_normal_holds_until_window_end(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        # 06:00 UTC 2026-04-21 = 01:00 CDT -> hold until 07:00 CDT = 12:00 UTC same day
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "hold"
+        assert hold is not None
+        # End-of-window is 07:00 local = 12:00 UTC (CDT = UTC-5)
+        assert hold == __import__("datetime").datetime(2026, 4, 21, 12, 0)
+
+    def test_member_override_beats_family_default(
+        self, db: Session, family, adults
+    ):
+        """Family says 22-07; Andrew overrides to 23-05. At 06:00 CDT
+        (= 11:00 UTC), family rule says 'inside' but Andrew's override
+        says 'outside'. Override wins."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        self._set_member_override(db, andrew.id, 23 * 60, 5 * 60)
+        # 11:00 UTC = 06:00 CDT. Family window (22-07) would include it.
+        # Andrew's window (23-05) does not.
+        now = __import__("datetime").datetime(2026, 4, 21, 11, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+
+    def test_resolve_deliver_after_passes_through_when_deliver(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        now = __import__("datetime").datetime(2026, 4, 21, 14, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert deliver_after == now
+        assert reason is None
+
+    def test_resolve_deliver_after_returns_suppressed_reason_on_drop(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="low",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert reason == "quiet_hours"
+
+    def test_resolve_deliver_after_pushes_hold_across_midnight(
+        self, db: Session, family, adults
+    ):
+        """normal-severity proposal at 01:00 local on 2026-04-21 holds
+        to 07:00 local same morning (12:00 UTC)."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert reason is None
+        assert deliver_after == __import__("datetime").datetime(2026, 4, 21, 12, 0)
+
+
+class TestBatchProposals:
+    def _mk(self, member_id, scheduled_offset_seconds, kind="overdue_task", entity_id=None):
+        """Helper: proposal at now + offset seconds."""
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind=kind,
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=entity_id or __import__("uuid").uuid4(),
+            scheduled_for=datetime(2026, 4, 21, 12, 0) + timedelta(seconds=scheduled_offset_seconds),
+            severity="normal",
+            context={},
+        )
+
+    def test_empty_list_returns_empty(self):
+        assert nudges_service.batch_proposals([]) == []
+
+    def test_single_proposal_becomes_singleton_bundle(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p = self._mk(andrew.id, 0)
+        bundles = nudges_service.batch_proposals([p])
+        assert len(bundles) == 1
+        assert bundles[0].family_member_id == andrew.id
+        assert len(bundles[0].proposals) == 1
+
+    def test_two_proposals_within_window_collapse(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 120)  # +2 min
+        bundles = nudges_service.batch_proposals([p1, p2], window_minutes=10)
+        assert len(bundles) == 1
+        assert len(bundles[0].proposals) == 2
+
+    def test_two_proposals_outside_window_stay_separate(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 15 * 60)  # +15 min, outside 10-min window
+        bundles = nudges_service.batch_proposals([p1, p2], window_minutes=10)
+        assert len(bundles) == 2
+
+    def test_different_members_never_collapse(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(megan.id, 30)  # same time, different member
+        bundles = nudges_service.batch_proposals([p1, p2])
+        assert len(bundles) == 2
+        assert {b.family_member_id for b in bundles} == {andrew.id, megan.id}
+
+    def test_three_proposals_all_within_anchor_window(
+        self, db: Session, family, adults
+    ):
+        """Anchor is the first proposal's scheduled_for. Second and
+        third both measure against it."""
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 4 * 60)
+        p3 = self._mk(andrew.id, 8 * 60)
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 1
+        assert len(bundles[0].proposals) == 3
+
+    def test_chain_that_would_drift_is_broken_at_anchor_window(
+        self, db: Session, family, adults
+    ):
+        """Anchor semantics: p1 at 0, p2 at 8min, p3 at 15min. p2 is
+        within 10 of p1 (anchor=p1). p3 is 15 from anchor p1 -- outside
+        window. New cluster starts at p3. Prevents indefinite drift
+        from greedy neighbor-linking."""
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 0)
+        p2 = self._mk(andrew.id, 8 * 60)
+        p3 = self._mk(andrew.id, 15 * 60)
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 2
+        assert len(bundles[0].proposals) == 2
+        assert len(bundles[1].proposals) == 1
+
+    def test_effective_deliver_after_is_earliest_in_bundle(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        p1 = self._mk(andrew.id, 120)   # +2 min
+        p2 = self._mk(andrew.id, 0)     # baseline
+        p3 = self._mk(andrew.id, 300)   # +5 min
+        bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
+        assert len(bundles) == 1
+        assert bundles[0].effective_deliver_after == datetime(2026, 4, 21, 12, 0)
+
+
+class TestDispatchBundles:
+    def test_single_item_bundle_matches_phase_1_shape(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "Trash",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.source_count == 1
+        assert parent.status == "delivered"
+        assert parent.body == "Reminder: Trash was due at 08:00 AM."
+        assert parent.parent_action_item_id is not None
+        inbox = db.get(ParentActionItem, parent.parent_action_item_id)
+        assert inbox.action_type == "nudge.overdue_task"
+
+    def test_multi_item_bundle_writes_composite(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        props = [
+            nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=__import__("uuid").uuid4(),
+                scheduled_for=occurrence + timedelta(seconds=i * 30),
+                severity="normal",
+                context={
+                    "title": f"Task {i}",
+                    "due_time": "08:00 AM",
+                    "occurrence_at_utc": occurrence + timedelta(seconds=i * 30),
+                    "proactivity": "balanced",
+                },
+            )
+            for i in range(3)
+        ]
+        bundle = nudges_service.ProposalBundle(andrew.id, props)
+
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.source_count == 3
+        assert "3 items to check" in parent.body
+        assert "Task 0" in parent.body and "Task 1" in parent.body
+        assert "1 more" in parent.body
+        children = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).all()
+        assert len(children) == 3
+        inbox = db.get(ParentActionItem, parent.parent_action_item_id)
+        assert inbox.title == "You have 3 nudges"
+
+    def test_hold_path_writes_pending_no_inbox(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during hold")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        # 06:00 UTC 2026-04-21 = 01:00 CDT, inside quiet window
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "title": "t",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "pending"
+        assert parent.parent_action_item_id is None
+        assert parent.delivered_at_utc is None
+        assert parent.delivered_channels == []
+        # Held to window end: 07:00 local = 12:00 UTC. The column is
+        # TIMESTAMPTZ, so psycopg2 hydrates the row as tz-aware in the
+        # session's timezone; compare the UTC moment rather than the
+        # naive wall-clock to stay robust to the session TZ.
+        expected_hold_utc = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+        actual = parent.deliver_after_utc
+        if actual.tzinfo is None:
+            actual = actual.replace(tzinfo=timezone.utc)
+        assert actual.astimezone(timezone.utc) == expected_hold_utc
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).count()
+        assert child_count == 1
+
+    def test_drop_path_writes_suppressed_no_inbox(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Low severity inside window -> suppressed audit row, no Inbox."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during drop")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="low",
+            context={
+                "name": "Morning",
+                "due_time": "01:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "suppressed"
+        assert parent.suppressed_reason == "quiet_hours"
+        assert parent.parent_action_item_id is None
+        assert parent.delivered_channels == []
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).count()
+        assert child_count == 1
+
+    def test_high_severity_bypasses_quiet_hours(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="high",
+            context={
+                "title": "urgent",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "delivered"
+        assert parent.parent_action_item_id is not None
+
+
+class TestCrossMidnightDedupe:
+    def test_held_proposal_rescanned_does_not_double_dispatch(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Scanner emits the same proposal on two back-to-back ticks
+        while the first dispatch is held. Second tick's pre-check finds
+        the existing child item and skips. Only one parent + one child
+        exists at the end."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during hold")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        entity_id = __import__("uuid").uuid4()
+        def make_prop():
+            return nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=entity_id,
+                scheduled_for=now,
+                severity="normal",
+                context={
+                    "title": "t",
+                    "due_time": "05:00 AM",
+                    "occurrence_at_utc": occurrence,
+                    "proactivity": "balanced",
+                },
+            )
+
+        # Tick 1: held
+        bundle1 = nudges_service.ProposalBundle(andrew.id, [make_prop()])
+        nudges_service.dispatch_with_items(db, [bundle1], now)
+
+        # Tick 2 (5 min later, still inside window): scanner re-emits.
+        # Pre-check finds the existing child source_dedupe_key. Skip.
+        later = now + timedelta(minutes=5)
+        bundle2 = nudges_service.ProposalBundle(andrew.id, [make_prop()])
+        nudges_service.dispatch_with_items(db, [bundle2], later)
+
+        parent_count = db.query(NudgeDispatch).filter_by(
+            family_member_id=andrew.id
+        ).count()
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            family_member_id=andrew.id
+        ).count()
+        assert parent_count == 1
+        assert child_count == 1
+
+
+class TestNudgesMeRoute:
+    def test_returns_empty_list_when_no_dispatches(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_returns_callers_recent_dispatches(
+        self, db: Session, family, adults, client, monkeypatch
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "T",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], now)
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body) == 1
+        assert body[0]["status"] == "delivered"
+        assert body[0]["severity"] == "normal"
+        assert body[0]["source_count"] == 1
+        assert len(body[0]["items"]) == 1
+        assert body[0]["items"][0]["trigger_kind"] == "overdue_task"
+
+    def test_self_scoped_does_not_leak_other_members(
+        self, db: Session, family, adults, client
+    ):
+        """Andrew's call only sees Andrew's dispatches, never Megan's."""
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        token_andrew = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+
+        # Megan has a dispatch; Andrew does not.
+        megan_prop = nudges_service.NudgeProposal(
+            family_member_id=megan.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "M",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        nudges_service.dispatch_with_items(
+            db, [nudges_service.ProposalBundle(megan.id, [megan_prop])], now
+        )
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token_andrew}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_limit_query_param_respected(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+        now = _utcnow().replace(tzinfo=None)
+
+        for i in range(5):
+            occurrence = now - timedelta(hours=1 + i)
+            prop = nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=__import__("uuid").uuid4(),
+                scheduled_for=occurrence,
+                severity="normal",
+                context={
+                    "title": f"T{i}",
+                    "due_time": "08:00 AM",
+                    "occurrence_at_utc": occurrence,
+                    "proactivity": "balanced",
+                },
+            )
+            nudges_service.dispatch_with_items(
+                db, [nudges_service.ProposalBundle(andrew.id, [prop])], now
+            )
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me?limit=3",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert len(r.json()) == 3
+
+    def test_unauthenticated_returns_401(self, client):
+        r = client.get("/api/nudges/me")
+        assert r.status_code == 401
+
+
+class TestAdminQuietHoursRoute:
+    def test_get_returns_default_when_unset(
+        self, db: Session, family, adults, client
+    ):
+        """Family has no quiet_hours_family row -> default 22/07."""
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+
+        r = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["start_local_minute"] == 22 * 60
+        assert body["end_local_minute"] == 7 * 60
+        assert body["is_default"] is True
+
+    def test_put_creates_row_and_subsequent_get_returns_it(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 21 * 60, "end_local_minute": 6 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["start_local_minute"] == 21 * 60
+        assert body["end_local_minute"] == 6 * 60
+        assert body["is_default"] is False
+
+        r2 = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body2 = r2.json()
+        assert body2["start_local_minute"] == 21 * 60
+        assert body2["is_default"] is False
+
+    def test_put_updates_existing_row(
+        self, db: Session, family, adults, client
+    ):
+        """Calling PUT twice upserts -- second call wins, no duplicate rows."""
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 21 * 60, "end_local_minute": 6 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 23 * 60, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["start_local_minute"] == 23 * 60
+        count = db.query(QuietHoursFamily).filter_by(family_id=family.id).count()
+        assert count == 1
+
+    def test_put_rejects_equal_start_end(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 22 * 60, "end_local_minute": 22 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_put_rejects_out_of_range_minute(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 1500, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_non_admin_cannot_access(
+        self, db: Session, family, adults, children, client
+    ):
+        """A child-role member should NOT have quiet_hours.manage (only
+        PARENT + PRIMARY_PARENT got it from migration 050)."""
+        sadie = children["sadie"]
+        token = _make_account_and_token(db, sadie.id, "sadie-qh@test.app")
+
+        r = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 22 * 60, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403

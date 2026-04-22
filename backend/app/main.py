@@ -27,6 +27,7 @@ from app.routes import (
     meals,
     memory as memory_routes,
     notes,
+    nudges,
     personal_tasks,
     projects,
     project_templates,
@@ -42,6 +43,7 @@ from app.routes.admin import chores as admin_chores
 from app.routes.admin import allowance as admin_allowance
 from app.routes.admin import integrations as admin_integrations
 from app.routes.admin import affirmations as admin_affirmations
+from app.routes.admin import quiet_hours as admin_quiet_hours
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,6 +114,7 @@ app.include_router(projects.router)
 app.include_router(project_templates.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
+app.include_router(nudges.router)
 app.include_router(storage.router)
 app.include_router(client_errors.router)
 app.include_router(memory_routes.router)
@@ -124,6 +127,7 @@ app.include_router(admin_chores.router)
 app.include_router(admin_allowance.router)
 app.include_router(admin_integrations.router)
 app.include_router(admin_affirmations.router)
+app.include_router(admin_quiet_hours.router)
 
 
 @app.get("/health")

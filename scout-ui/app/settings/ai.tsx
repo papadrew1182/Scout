@@ -38,6 +38,10 @@ import {
   type Proactivity,
   type Verbosity,
 } from "../../lib/ai-personality";
+import {
+  listMyNudges,
+  type NudgeDispatch,
+} from "../../lib/nudges";
 import { colors, fonts, shared } from "../../lib/styles";
 
 const TONES: Tone[] = ["warm", "direct", "playful", "professional"];
@@ -77,6 +81,7 @@ export default function AISettings() {
   const [personality, setPersonality] = useState<PersonalityResponse | null>(null);
   const [personalitySaving, setPersonalitySaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [nudges, setNudges] = useState<NudgeDispatch[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState<number | null>(null);
   const [archiveResult, setArchiveResult] = useState<
@@ -106,6 +111,12 @@ export default function AISettings() {
     getMyPersonality()
       .then(setPersonality)
       .catch(() => setPersonality(null));
+  }, []);
+
+  useEffect(() => {
+    listMyNudges(20)
+      .then(setNudges)
+      .catch(() => setNudges([]));
   }, []);
 
   const savePersonalityPartial = async (patch: Partial<PersonalityConfig>) => {
@@ -411,6 +422,38 @@ export default function AISettings() {
           </>
         )}
       </View>
+
+      <View style={shared.card}>
+        <Text style={shared.cardTitle}>Recent nudges</Text>
+        <Text style={styles.sectionBlurb}>
+          Recent proactive nudges Scout has sent or held for you.
+        </Text>
+        {nudges === null && (
+          <ActivityIndicator color={colors.muted} style={{ marginTop: 8 }} />
+        )}
+        {nudges !== null && nudges.length === 0 && (
+          <Text style={styles.emptyText}>No nudges yet.</Text>
+        )}
+        {nudges !== null && nudges.length > 0 && (
+          <View>
+            {nudges.map((n) => (
+              <View key={n.id} style={styles.nudgeRow}>
+                <View style={styles.nudgeRowHeader}>
+                  <Text style={styles.nudgeStatus}>
+                    {n.status === "delivered" && "Delivered"}
+                    {n.status === "pending" && "Held (quiet hours)"}
+                    {n.status === "suppressed" && "Suppressed (quiet hours)"}
+                  </Text>
+                  <Text style={styles.nudgeTime}>
+                    {formatRelative(n.created_at)}
+                  </Text>
+                </View>
+                {n.body && <Text style={styles.nudgeBody}>{n.body}</Text>}
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -708,6 +751,34 @@ const styles = StyleSheet.create({
     fontFamily: "monospace",
     fontSize: 12,
     color: colors.text,
+    lineHeight: 18,
+  },
+  nudgeRow: {
+    marginTop: 10,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  nudgeRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  nudgeStatus: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    fontWeight: "500",
+  },
+  nudgeTime: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
+  },
+  nudgeBody: {
+    fontSize: 13,
+    color: colors.text,
+    fontFamily: fonts.body,
     lineHeight: 18,
   },
 });

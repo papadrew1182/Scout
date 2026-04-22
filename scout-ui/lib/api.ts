@@ -1152,7 +1152,7 @@ export function fetchAllMemberConfigForKey(key: string): Promise<MemberConfigRow
 // Internal PUT helper (used by the canonical admin endpoints below)
 // ---------------------------------------------------------------------------
 
-async function put<T>(url: string, body: unknown): Promise<T> {
+export async function put<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "PUT",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
