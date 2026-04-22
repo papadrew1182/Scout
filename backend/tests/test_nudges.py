@@ -1839,3 +1839,225 @@ class TestAdminQuietHoursRoute:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Sprint 05 Phase 3 Task 2 - compose_body four-fallback matrix
+# ---------------------------------------------------------------------------
+
+
+class TestComposeBody:
+    """compose_body wraps orchestrator.generate_nudge_body and falls back
+    to the fixed templates on any of four failure conditions per revised
+    plan Section 5:
+      1. ai_available is false
+      2. weekly soft cap hit
+      3. moderation / refusal from provider (RuntimeError)
+      4. timeout or any other composer exception
+
+    Each fallback logs at INFO with a reason tag. Note: ``ai_available``
+    is a read-only ``@property`` on Settings. We force it True in happy-
+    path tests by setting its inputs (enable_ai=True + anthropic_api_key
+    non-empty) and force it False by clearing enable_ai. This matches the
+    existing pattern in test_scheduler_tier1 + test_tier2 + test_tier5.
+    """
+
+    def _force_ai_available(self, monkeypatch) -> None:
+        from app.config import settings
+        monkeypatch.setattr(settings, "enable_ai", True)
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+
+    def test_empty_proposals_returns_empty_string(
+        self, db: Session, family, adults
+    ):
+        assert nudges_service.compose_body(db, family.id, [], _utcnow()) == ""
+
+    def test_happy_path_returns_composer_output(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "title": "Take out bins",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": now,
+            },
+        )
+
+        captured = {}
+
+        def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "Reminder: take out the trash, please."
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+        assert body == "Reminder: take out the trash, please."
+        assert captured["family_member_id"] == andrew.id
+        assert captured["proposal_summaries"][0]["trigger_kind"] == "overdue_task"
+        assert captured["proposal_summaries"][0]["title"] == "Take out bins"
+
+    def test_fallback_when_ai_unavailable(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Force ai_available=False by clearing enable_ai. The orchestrator
+        must not be invoked on this path."""
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "T", "due_time": "08:00 AM", "occurrence_at_utc": now},
+        )
+
+        from app.config import settings
+        monkeypatch.setattr(settings, "enable_ai", False)
+        monkeypatch.setattr(settings, "anthropic_api_key", "")
+
+        def fake_generate(**kwargs):
+            raise AssertionError(
+                "orchestrator should not be called when ai_available=False"
+            )
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+        assert body == "Reminder: T was due at 08:00 AM."
+
+    def test_fallback_when_soft_cap_hit(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "T", "due_time": "08:00 AM", "occurrence_at_utc": now},
+        )
+
+        from app.ai import pricing
+        monkeypatch.setattr(
+            pricing, "build_usage_report",
+            lambda **kwargs: {"cap_warning": True, "approx_cost_usd": 9999},
+        )
+
+        called = []
+
+        def fake_generate(**kwargs):
+            called.append(1)
+            return "should not be returned"
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+        assert body == "Reminder: T was due at 08:00 AM."
+        assert called == []
+
+    def test_fallback_on_composer_runtime_error_moderation(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """orchestrator raises RuntimeError when stop_reason is moderation
+        or refusal. compose_body falls back to the fixed template."""
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "T", "due_time": "08:00 AM", "occurrence_at_utc": now},
+        )
+
+        def raising(**kwargs):
+            raise RuntimeError("moderation rejected output")
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", raising)
+
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+        assert body == "Reminder: T was due at 08:00 AM."
+
+    def test_fallback_on_composer_timeout(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """A timeout (or any other exception) also routes to fallback."""
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "T", "due_time": "08:00 AM", "occurrence_at_utc": now},
+        )
+
+        def raising(**kwargs):
+            raise TimeoutError("deadline exceeded")
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", raising)
+
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+        assert body == "Reminder: T was due at 08:00 AM."
+
+    def test_multi_proposal_bundle_falls_back_to_composite_template(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """2 proposals + AI failure -> multi-item template, not single-item."""
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        props = [
+            nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=uuid.uuid4(),
+                scheduled_for=now,
+                severity="normal",
+                context={
+                    "title": f"Task {i}",
+                    "due_time": "08:00 AM",
+                    "occurrence_at_utc": now,
+                },
+            )
+            for i in range(2)
+        ]
+
+        def raising(**kwargs):
+            raise RuntimeError("composer down")
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", raising)
+
+        body = nudges_service.compose_body(db, family.id, props, now)
+        assert "2 items to check" in body
+        assert "Task 0" in body
+        assert "Task 1" in body

@@ -286,6 +286,126 @@ def _render_bundle_inbox_title(proposals: list["NudgeProposal"]) -> str:
     return f"You have {len(proposals)} nudges"
 
 
+def compose_body(
+    db: Session,
+    family_id: uuid.UUID,
+    proposals: list[NudgeProposal],
+    now_utc: datetime,
+) -> str:
+    """Compose a personalized nudge body. Falls back to fixed templates
+    on any of four failure conditions per revised plan Section 5:
+
+      1. ``settings.ai_available`` is False (no key / flag off).
+      2. Weekly AI soft cap has been reached for this family.
+      3. Composer raised ``RuntimeError`` (moderation / refusal / empty
+         response - Task 1 surfaces these as RuntimeError).
+      4. Composer raised anything else (timeout, network, provider
+         SDK error) - broad catch for resilience.
+
+    Each fallback logs one INFO line tagged with the reason so post-hoc
+    debugging by ``grep compose_body fallback`` is easy.
+
+    Single-proposal bundles fall back to ``_render_body(proposals[0])``;
+    multi-proposal bundles fall back to ``_render_bundle_body(proposals)``.
+    The composer receives a summary of all proposals in both cases.
+
+    ``family_id`` is needed for the soft-cap usage report. ``proposals``
+    is the same list that dispatch_with_items will write as child items.
+    Task 3 will wire this into dispatch_with_items.
+    """
+    if not proposals:
+        return ""
+
+    def _fallback() -> str:
+        if len(proposals) == 1:
+            return _render_body(proposals[0])
+        return _render_bundle_body(proposals)
+
+    # Gate 1: AI globally available?
+    from app.config import settings
+    if not settings.ai_available:
+        logger.info(
+            "compose_body fallback reason=ai_unavailable member=%s count=%s",
+            proposals[0].family_member_id, len(proposals),
+        )
+        return _fallback()
+
+    # Gate 2: weekly soft cap
+    try:
+        from app.ai.pricing import build_usage_report
+        # All-kwargs call so tests can monkeypatch with ``lambda **kwargs``.
+        report = build_usage_report(
+            db=db,
+            family_id=family_id,
+            days=7,
+            soft_cap_usd=settings.ai_weekly_soft_cap_usd,
+        )
+        if report.get("cap_warning"):
+            logger.info(
+                "compose_body fallback reason=soft_cap member=%s count=%s",
+                proposals[0].family_member_id, len(proposals),
+            )
+            return _fallback()
+    except Exception as e:
+        # If the usage report itself blows up, degrade gracefully and
+        # continue to the AI call attempt. Log for later review.
+        logger.warning(
+            "compose_body soft_cap_check_failed err=%s", e
+        )
+
+    # Resolve the per-member personality preamble. Failure here should
+    # not block the composer call; we just send an empty preamble.
+    try:
+        resolved = ai_personality_service.get_resolved_config(
+            db, proposals[0].family_member_id
+        )
+        preamble = ai_personality_service.build_personality_preamble(resolved)
+    except Exception as e:
+        logger.warning(
+            "compose_body preamble_lookup_failed err=%s", e
+        )
+        preamble = ""
+
+    # Build summaries for generate_nudge_body. The composer is format-
+    # agnostic; it only needs trigger_kind, title, and time_label.
+    proposal_summaries: list[dict[str, Any]] = []
+    for p in proposals:
+        title = p.context.get("title") or p.context.get("name") or "(untitled)"
+        time_label = (
+            p.context.get("due_time")
+            or p.context.get("start_time")
+            or ""
+        )
+        proposal_summaries.append({
+            "trigger_kind": p.trigger_kind,
+            "title": title,
+            "time_label": time_label,
+        })
+
+    # Call the composer. Broad except so ANY failure path falls back.
+    # Gates 3 (moderation/refusal = RuntimeError) and 4 (timeout / any
+    # other provider error) both land here; the type name goes to the
+    # log so operators can distinguish them post-hoc.
+    try:
+        from app.ai import orchestrator
+        body = orchestrator.generate_nudge_body(
+            family_member_id=proposals[0].family_member_id,
+            proposal_summaries=proposal_summaries,
+            personality_preamble=preamble,
+            timeout_seconds=3.0,
+        )
+        if not body or not body.strip():
+            raise RuntimeError("empty composer response")
+        return body.strip()
+    except Exception as e:
+        logger.info(
+            "compose_body fallback reason=composer_error err=%s "
+            "member=%s count=%s",
+            type(e).__name__, proposals[0].family_member_id, len(proposals),
+        )
+        return _fallback()
+
+
 _SEVERITY_ORDER = {"low": 0, "normal": 1, "high": 2}
 
 
