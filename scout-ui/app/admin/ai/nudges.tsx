@@ -2,15 +2,17 @@
  * Sprint 05 Phase 2 + Phase 4 - /admin/ai/nudges
  *
  * Admin surface for managing family-wide proactive-nudge quiet hours
- * (Phase 2) and custom nudge rules (Phase 4). Gated by
- * `quiet_hours.manage` (PARENT + PRIMARY_PARENT per migration 050).
+ * (Phase 2) and custom nudge rules (Phase 4). The page shell is gated
+ * by `quiet_hours.manage || nudges.configure`, and each tab has its
+ * own per-tab permission gate so that rescoping one permission does
+ * not silently surface a 403-throwing tab.
  *
- * Quiet hours tab: reads via GET /api/admin/family-config/quiet-hours
- *   and writes via PUT on the same path. Per-member overrides are not
- *   in scope for Phase 2.
- * Rules tab: lists/creates/patches/deletes rows in
- *   /api/admin/nudges/rules and can preview match counts via the
- *   /preview-count subresource (Phase 4).
+ * Quiet hours tab: gated by `quiet_hours.manage`. Reads via
+ *   GET /api/admin/family-config/quiet-hours and writes via PUT on
+ *   the same path. Per-member overrides are not in scope for Phase 2.
+ * Rules tab: gated by `nudges.configure`. Lists/creates/patches/deletes
+ *   rows in /api/admin/nudges/rules and can preview match counts via
+ *   the /preview-count subresource (Phase 4).
  */
 
 import { useEffect, useState } from "react";
@@ -60,20 +62,37 @@ type Tab = (typeof TABS)[number];
 
 export default function AdminNudges() {
   const router = useRouter();
-  const canManage = useHasPermission("quiet_hours.manage");
+  const canManageQuietHours = useHasPermission("quiet_hours.manage");
+  const canConfigureRules = useHasPermission("nudges.configure");
+  const canAccessPage = canManageQuietHours || canConfigureRules;
   const [tab, setTab] = useState<Tab>("quiet_hours");
 
-  if (!canManage) {
+  // If the currently-selected tab is one the user lacks permission for,
+  // default-select the one they do have. Runs when the permission hooks
+  // resolve (they start false and flip true once /me returns).
+  useEffect(() => {
+    if (tab === "quiet_hours" && !canManageQuietHours && canConfigureRules) {
+      setTab("rules");
+    } else if (tab === "rules" && !canConfigureRules && canManageQuietHours) {
+      setTab("quiet_hours");
+    }
+  }, [tab, canManageQuietHours, canConfigureRules]);
+
+  if (!canAccessPage) {
     return (
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.h1}>Not available</Text>
         <Text style={styles.blurb}>
           Nudges admin requires the
-          <Text style={styles.code}> quiet_hours.manage</Text> permission.
+          <Text style={styles.code}> quiet_hours.manage</Text> or
+          <Text style={styles.code}> nudges.configure</Text> permission.
         </Text>
       </ScrollView>
     );
   }
+
+  const showQuietHoursBody = tab === "quiet_hours" && canManageQuietHours;
+  const showRulesBody = tab === "rules" && canConfigureRules;
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
@@ -85,38 +104,45 @@ export default function AdminNudges() {
       </View>
 
       <View style={styles.tabBar}>
-        <Pressable
-          style={[styles.tabBtn, tab === "quiet_hours" && styles.tabBtnActive]}
-          onPress={() => setTab("quiet_hours")}
-          accessibilityRole="button"
-        >
-          <Text
-            style={[
-              styles.tabBtnText,
-              tab === "quiet_hours" && styles.tabBtnTextActive,
-            ]}
+        {canManageQuietHours && (
+          <Pressable
+            style={[styles.tabBtn, tab === "quiet_hours" && styles.tabBtnActive]}
+            onPress={() => setTab("quiet_hours")}
+            accessibilityRole="button"
           >
-            Quiet hours
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.tabBtn, tab === "rules" && styles.tabBtnActive]}
-          onPress={() => setTab("rules")}
-          accessibilityRole="button"
-        >
-          <Text
-            style={[
-              styles.tabBtnText,
-              tab === "rules" && styles.tabBtnTextActive,
-            ]}
+            <Text
+              style={[
+                styles.tabBtnText,
+                tab === "quiet_hours" && styles.tabBtnTextActive,
+              ]}
+            >
+              Quiet hours
+            </Text>
+          </Pressable>
+        )}
+        {canConfigureRules && (
+          <Pressable
+            style={[styles.tabBtn, tab === "rules" && styles.tabBtnActive]}
+            onPress={() => setTab("rules")}
+            accessibilityRole="button"
           >
-            Rules
-          </Text>
-        </Pressable>
+            <Text
+              style={[
+                styles.tabBtnText,
+                tab === "rules" && styles.tabBtnTextActive,
+              ]}
+            >
+              Rules
+            </Text>
+          </Pressable>
+        )}
       </View>
 
-      {tab === "quiet_hours" && <QuietHoursSection />}
-      {tab === "rules" && <RulesSection />}
+      {showQuietHoursBody && <QuietHoursSection />}
+      {showRulesBody && <RulesSection />}
+      {!showQuietHoursBody && !showRulesBody && (
+        <Text style={styles.blurb}>This tab is not available for your role.</Text>
+      )}
     </ScrollView>
   );
 }
