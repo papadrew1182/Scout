@@ -318,6 +318,20 @@ def compose_body(
     if not proposals:
         return ""
 
+    # AI-discovery path: the body was composed by
+    # orchestrator.propose_nudges_from_digest per _DISCOVERY_SYSTEM_PROMPT
+    # guardrails and already validated by DiscoveryProposal pydantic
+    # (max_length=280). Return it verbatim. Only applies when the bundle
+    # is a single AI-generated proposal; mixed bundles fall through to
+    # the standard composer.
+    if (
+        len(proposals) == 1
+        and proposals[0].context.get("ai_generated") is True
+    ):
+        body = proposals[0].context.get("body")
+        if isinstance(body, str) and body.strip():
+            return body.strip()
+
     def _fallback() -> str:
         if len(proposals) == 1:
             return _render_body(proposals[0])

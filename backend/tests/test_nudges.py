@@ -2443,6 +2443,74 @@ class TestComposeBody:
         assert "Task 0" in body
         assert "Task 1" in body
 
+    def test_compose_body_preserves_ai_generated_body(
+        self, db: Session, family, adults
+    ):
+        """AI-discovery proposals carry a pre-composed body in
+        context['body']. compose_body must return it verbatim instead of
+        re-running the P3 composer or falling to the '_render_body'
+        template (which has no 'ai_suggested' entry and would return
+        'Scout nudge').
+        """
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        p = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="ai_discovery",
+            trigger_entity_id=None,
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "body": "Sally has soccer at 4pm today; pack cleats.",
+                "ai_generated": True,
+                "occurrence_at_utc": now,
+            },
+        )
+        body = nudges_service.compose_body(db, family.id, [p], now)
+        assert body == "Sally has soccer at 4pm today; pack cleats."
+
+    def test_compose_body_skips_ai_shortcut_for_mixed_bundles(
+        self, db: Session, family, adults
+    ):
+        """When the bundle has more than one proposal (mixed AI +
+        scanner), the AI shortcut does NOT fire; the normal composer path
+        runs so multi-item nudges get summarized correctly.
+        """
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        p_ai = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="ai_discovery",
+            trigger_entity_id=None,
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "body": "AI body here",
+                "ai_generated": True,
+                "occurrence_at_utc": now,
+            },
+        )
+        p_scanner = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "trash", "occurrence_at_utc": now},
+        )
+        body = nudges_service.compose_body(
+            db, family.id, [p_ai, p_scanner], now
+        )
+        # Shortcut should NOT fire; either the composer runs or the
+        # template fallback - both acceptable. The only non-acceptable
+        # outcome is returning "AI body here" from the shortcut.
+        assert body != "AI body here"
+
 
 class TestPersonalitySubstringMatrix:
     """Per revised plan Section 8 acceptance criterion: >=3
