@@ -43,6 +43,7 @@ from app.routes.admin import chores as admin_chores
 from app.routes.admin import allowance as admin_allowance
 from app.routes.admin import integrations as admin_integrations
 from app.routes.admin import affirmations as admin_affirmations
+from app.routes.admin import quiet_hours as admin_quiet_hours
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +127,7 @@ app.include_router(admin_chores.router)
 app.include_router(admin_allowance.router)
 app.include_router(admin_integrations.router)
 app.include_router(admin_affirmations.router)
+app.include_router(admin_quiet_hours.router)
 
 
 @app.get("/health")

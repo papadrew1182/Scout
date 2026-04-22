@@ -1729,3 +1729,113 @@ class TestNudgesMeRoute:
     def test_unauthenticated_returns_401(self, client):
         r = client.get("/api/nudges/me")
         assert r.status_code == 401
+
+
+class TestAdminQuietHoursRoute:
+    def test_get_returns_default_when_unset(
+        self, db: Session, family, adults, client
+    ):
+        """Family has no quiet_hours_family row -> default 22/07."""
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+
+        r = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["start_local_minute"] == 22 * 60
+        assert body["end_local_minute"] == 7 * 60
+        assert body["is_default"] is True
+
+    def test_put_creates_row_and_subsequent_get_returns_it(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 21 * 60, "end_local_minute": 6 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["start_local_minute"] == 21 * 60
+        assert body["end_local_minute"] == 6 * 60
+        assert body["is_default"] is False
+
+        r2 = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        body2 = r2.json()
+        assert body2["start_local_minute"] == 21 * 60
+        assert body2["is_default"] is False
+
+    def test_put_updates_existing_row(
+        self, db: Session, family, adults, client
+    ):
+        """Calling PUT twice upserts -- second call wins, no duplicate rows."""
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 21 * 60, "end_local_minute": 6 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 23 * 60, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["start_local_minute"] == 23 * 60
+        count = db.query(QuietHoursFamily).filter_by(family_id=family.id).count()
+        assert count == 1
+
+    def test_put_rejects_equal_start_end(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 22 * 60, "end_local_minute": 22 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_put_rejects_out_of_range_minute(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-qh@test.app")
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 1500, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_non_admin_cannot_access(
+        self, db: Session, family, adults, children, client
+    ):
+        """A child-role member should NOT have quiet_hours.manage (only
+        PARENT + PRIMARY_PARENT got it from migration 050)."""
+        sadie = children["sadie"]
+        token = _make_account_and_token(db, sadie.id, "sadie-qh@test.app")
+
+        r = client.get(
+            "/api/admin/family-config/quiet-hours",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+        r = client.put(
+            "/api/admin/family-config/quiet-hours",
+            json={"start_local_minute": 22 * 60, "end_local_minute": 7 * 60},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
