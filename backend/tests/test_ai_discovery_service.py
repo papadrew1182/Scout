@@ -421,6 +421,66 @@ def test_propose_nudges_maps_general_kind_to_ai_discovery(
     assert out[0].trigger_entity_id is None
 
 
+def test_propose_nudges_drops_cross_family_member_ids(
+    monkeypatch, db: Session, family: Family, adults: dict
+):
+    """Safety: if the AI returns a member_id belonging to a different
+    family (prompt injection or hallucination), drop that proposal
+    before dispatch. Regression for a final-review cross-family leak.
+    """
+    robert = adults["robert"]
+    _seed_one_overdue(db, family, robert)
+
+    # Seed Family B with a member the AI will try to target.
+    other_family = Family(name="Outside", timezone="UTC")
+    db.add(other_family)
+    db.flush()
+    other_member = FamilyMember(
+        family_id=other_family.id,
+        first_name="Foreign",
+        last_name="Member",
+        role="adult",
+        birthdate=date(1990, 1, 1),
+    )
+    db.add(other_member)
+    db.flush()
+
+    def _fake_propose(**_kw):
+        return [
+            DiscoveryProposal(
+                member_id=robert.id,  # Family A - will survive
+                trigger_entity_kind="general",
+                trigger_entity_id=None,
+                scheduled_for=NOW + timedelta(minutes=10),
+                severity="normal",
+                body="Valid proposal for Family A member.",
+            ),
+            DiscoveryProposal(
+                member_id=other_member.id,  # Family B - must be dropped
+                trigger_entity_kind="general",
+                trigger_entity_id=None,
+                scheduled_for=NOW + timedelta(minutes=10),
+                severity="normal",
+                body="Malicious cross-family proposal.",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        nad.orchestrator, "propose_nudges_from_digest", _fake_propose
+    )
+    monkeypatch.setattr(
+        "app.ai.pricing.build_usage_report",
+        lambda **_kw: {"cap_warning": False},
+    )
+
+    result = nad.propose_nudges(db, family.id, NOW)
+
+    # Only the Family A proposal survives; the Family B one is filtered.
+    assert len(result) == 1
+    assert result[0].family_member_id == robert.id
+    assert all(p.family_member_id != other_member.id for p in result)
+
+
 # ---------------------------------------------------------------------------
 # Additional digest coverage (events + missed routines) - ensures query
 # shape matches production schema before wiring into scheduler in Task 3.

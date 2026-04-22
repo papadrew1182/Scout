@@ -440,6 +440,32 @@ def propose_nudges(
     # call; the hour budget is spent.
     _mark_discovery_ran(family_id, now_utc)
 
+    # Family-scope enforcement: AI might return a member_id belonging to
+    # a different family (prompt injection or hallucination). Drop any
+    # proposal whose member is not in this family. Mirror of the Phase 4
+    # filter_rule_rows_to_family pattern.
+    if discovery_proposals:
+        member_ids_in_proposals = {dp.member_id for dp in discovery_proposals}
+        in_family = set(db.scalars(
+            select(FamilyMember.id).where(
+                FamilyMember.id.in_(member_ids_in_proposals),
+                FamilyMember.family_id == family_id,
+            )
+        ).all())
+        filtered: list[DiscoveryProposal] = []
+        dropped = 0
+        for dp in discovery_proposals:
+            if dp.member_id in in_family:
+                filtered.append(dp)
+            else:
+                dropped += 1
+        if dropped:
+            logger.warning(
+                "nudge_ai_discovery cross_family_drop family=%s dropped=%s",
+                family_id, dropped,
+            )
+        discovery_proposals = filtered
+
     if not discovery_proposals:
         logger.info(
             "propose_nudges family_id=%s emitted=0 (AI returned nothing)",
