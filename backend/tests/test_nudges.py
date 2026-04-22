@@ -592,29 +592,6 @@ class TestResolveOccurrenceFields:
         fields = nudges_service.resolve_occurrence_fields(db, prop)
         assert fields.occurrence_local_date.isoformat() == "2026-04-20"
 
-    def test_null_trigger_entity_id_uses_null_literal_in_key(
-        self, db: Session, family, adults
-    ):
-        """AI-suggested proposals may have no entity id. The key uses
-        the string 'null' in that slot so it still stays stable
-        across ticks."""
-        andrew = adults["robert"]
-        family.timezone = "UTC"
-        db.commit()
-
-        prop = nudges_service.NudgeProposal(
-            family_member_id=andrew.id,
-            trigger_kind="ai_suggested",
-            trigger_entity_kind="family",
-            trigger_entity_id=None,
-            scheduled_for=datetime(2026, 4, 21, 12, 0),
-            severity="normal",
-            context={"occurrence_at_utc": datetime(2026, 4, 21, 12, 0)},
-        )
-
-        fields = nudges_service.resolve_occurrence_fields(db, prop)
-        assert fields.source_dedupe_key == f"{andrew.id}:ai_suggested:null:2026-04-21"
-
     def test_missing_occurrence_at_utc_raises_value_error(
         self, db: Session, family, adults
     ):
@@ -631,6 +608,394 @@ class TestResolveOccurrenceFields:
 
         with pytest.raises(ValueError, match="occurrence_at_utc"):
             nudges_service.resolve_occurrence_fields(db, prop)
+
+
+class TestAISuggestedDedupeKey:
+    """Sprint 05 Phase 5 Task 3 - dedupe_key for ai_suggested proposals
+    with no trigger_entity_id must be derived from the proposal body so
+    two distinct AI suggestions on the same day don't collapse to the
+    same literal 'null' slot and get dropped by the child-row UNIQUE
+    constraint."""
+
+    def _make_prop(
+        self,
+        member_id,
+        *,
+        trigger_kind: str = "ai_suggested",
+        trigger_entity_id=None,
+        context_extra: dict | None = None,
+    ) -> "nudges_service.NudgeProposal":
+        ctx: dict = {"occurrence_at_utc": datetime(2026, 4, 21, 12, 0)}
+        if context_extra:
+            ctx.update(context_extra)
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind=trigger_kind,
+            trigger_entity_kind="family",
+            trigger_entity_id=trigger_entity_id,
+            scheduled_for=datetime(2026, 4, 21, 12, 0),
+            severity="normal",
+            context=ctx,
+        )
+
+    def test_ai_suggested_with_none_entity_and_body_uses_body_hash(
+        self, db: Session, family, adults
+    ):
+        import hashlib as _hashlib
+
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        body = "Remember trash day"
+        prop = self._make_prop(andrew.id, context_extra={"body": body})
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+
+        assert ":ai:" in fields.source_dedupe_key
+        assert ":null:" not in fields.source_dedupe_key
+        expected_hash = _hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        assert expected_hash in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:ai_suggested:ai:{expected_hash}:2026-04-21"
+        )
+
+    def test_ai_suggested_different_bodies_get_different_keys(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        prop_a = self._make_prop(andrew.id, context_extra={"body": "Call the dentist"})
+        prop_b = self._make_prop(
+            andrew.id, context_extra={"body": "Pick up the dry cleaning"}
+        )
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert key_a != key_b
+
+    def test_ai_suggested_same_body_gets_same_key(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        body = "Top up the MetroCard"
+        prop_a = self._make_prop(andrew.id, context_extra={"body": body})
+        prop_b = self._make_prop(andrew.id, context_extra={"body": body})
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert key_a == key_b
+
+    def test_ai_suggested_with_none_entity_and_no_body_uses_context_hash(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        # No 'body' key in context, just an unrelated field.
+        prop_a = self._make_prop(andrew.id, context_extra={"foo": "bar"})
+        prop_b = self._make_prop(andrew.id, context_extra={"foo": "bar"})
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert ":null:" not in key_a
+        assert ":ai:" in key_a
+        # Stable: same context -> same key on repeat invocation.
+        assert key_a == key_b
+
+    def test_builtin_proposal_still_uses_null_for_none_entity(
+        self, db: Session, family, adults
+    ):
+        """Built-in P1 trigger kinds keep the 'null' literal so their
+        dedupe behavior is unchanged by the AI fix."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        prop = self._make_prop(
+            andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_id=None,
+            context_extra={},
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert ":null:" in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:overdue_task:null:2026-04-21"
+        )
+
+    def test_builtin_proposal_with_real_entity_unchanged(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        entity_id = uuid.uuid4()
+        prop = self._make_prop(
+            andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_id=entity_id,
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert str(entity_id) in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:overdue_task:{entity_id}:2026-04-21"
+        )
+
+
+class TestP1P5DedupeBoundary:
+    """Sprint 05 Phase 5 Task 5 - lock in the P1 vs P5 dedupe boundary.
+
+    P1 (built-in scanners) emit trigger_kind='overdue_task' (or
+    'upcoming_event' / 'missed_routine'). P5 (AI discovery) emits
+    trigger_kind='ai_suggested'. source_dedupe_key is
+    '{member}:{trigger_kind}:{entity_part}:{local_date}' -- trigger_kind
+    is part of the key, so a P1 and a P5 proposal for the SAME entity
+    on the SAME day for the SAME member produce DIFFERENT keys and BOTH
+    dispatch today. This is deliberate: cross-kind dedupe is NOT
+    enforced at the source_dedupe_key layer; the plan's mitigation is
+    that both paths share the UNIQUE (source_dedupe_key) constraint,
+    not that they dedupe across kinds.
+
+    These tests pin that contract so it becomes a conscious choice.
+    If the team later decides cross-kind dedupe should be enforced at
+    an upper layer (route_hint suppression, a composer-side guard,
+    etc.), test_dispatch_writes_both_p1_and_p5_for_same_task will fail
+    and force the design-change conversation.
+    """
+
+    def _make_p1(
+        self,
+        member_id,
+        *,
+        entity_id,
+        occurrence: datetime,
+    ) -> "nudges_service.NudgeProposal":
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=entity_id,
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "Trash",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+            },
+        )
+
+    def _make_p5(
+        self,
+        member_id,
+        *,
+        entity_id,
+        occurrence: datetime,
+        body: str = "Remember to take out the trash",
+    ) -> "nudges_service.NudgeProposal":
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=entity_id,
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "body": body,
+                "occurrence_at_utc": occurrence,
+            },
+        )
+
+    def test_p1_and_p5_same_entity_produce_different_keys_today(
+        self, db: Session, family, adults
+    ):
+        """Same member, same entity, same day, different trigger_kind.
+        Current behavior: keys differ because trigger_kind is in the
+        source_dedupe_key format. That means BOTH would dispatch today
+        and cross-kind dedupe is NOT enforced at this layer. This test
+        documents that contract.
+        """
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        occurrence = datetime(2026, 4, 21, 12, 0)
+        task_id = uuid.uuid4()
+        p1 = self._make_p1(andrew.id, entity_id=task_id, occurrence=occurrence)
+        p5 = self._make_p5(andrew.id, entity_id=task_id, occurrence=occurrence)
+
+        key_p1 = nudges_service.resolve_occurrence_fields(db, p1).source_dedupe_key
+        key_p5 = nudges_service.resolve_occurrence_fields(db, p5).source_dedupe_key
+
+        assert key_p1 != key_p5
+        # Shape check: only the trigger_kind segment differs.
+        assert key_p1 == f"{andrew.id}:overdue_task:{task_id}:2026-04-21"
+        assert key_p5 == f"{andrew.id}:ai_suggested:{task_id}:2026-04-21"
+
+    def test_p1_duplicate_same_day_dedupes(
+        self, db: Session, family, adults
+    ):
+        """Two P1 proposals for the same task + member + day collapse
+        to an identical source_dedupe_key. Proves same-kind dedupe
+        within P1 still works (and is not accidentally broken by the
+        P5 changes)."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        occurrence = datetime(2026, 4, 21, 12, 0)
+        task_id = uuid.uuid4()
+        p1_a = self._make_p1(andrew.id, entity_id=task_id, occurrence=occurrence)
+        p1_b = self._make_p1(andrew.id, entity_id=task_id, occurrence=occurrence)
+
+        key_a = nudges_service.resolve_occurrence_fields(db, p1_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, p1_b).source_dedupe_key
+
+        assert key_a == key_b
+
+    def test_p5_duplicate_same_day_dedupes(
+        self, db: Session, family, adults
+    ):
+        """Two P5 proposals with the same body + member + day (no
+        trigger_entity_id) collapse to an identical source_dedupe_key
+        via the body-hash entity_part. Proves the Task 3 body-hash
+        dedupe works."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        occurrence = datetime(2026, 4, 21, 12, 0)
+        body = "Remember to take out the trash"
+        p5_a = self._make_p5(
+            andrew.id, entity_id=None, occurrence=occurrence, body=body
+        )
+        p5_b = self._make_p5(
+            andrew.id, entity_id=None, occurrence=occurrence, body=body
+        )
+
+        key_a = nudges_service.resolve_occurrence_fields(db, p5_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, p5_b).source_dedupe_key
+
+        assert key_a == key_b
+
+    def test_p1_and_p5_different_entities_produce_different_keys(
+        self, db: Session, family, adults
+    ):
+        """P1 about task A and P5 about an unrelated task B should
+        produce different keys (sanity check -- the tests above focus
+        on same-entity cross-kind; this pins the easy case)."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        occurrence = datetime(2026, 4, 21, 12, 0)
+        task_a = uuid.uuid4()
+        task_b = uuid.uuid4()
+        p1 = self._make_p1(andrew.id, entity_id=task_a, occurrence=occurrence)
+        p5 = self._make_p5(andrew.id, entity_id=task_b, occurrence=occurrence)
+
+        key_p1 = nudges_service.resolve_occurrence_fields(db, p1).source_dedupe_key
+        key_p5 = nudges_service.resolve_occurrence_fields(db, p5).source_dedupe_key
+
+        assert key_p1 != key_p5
+
+    def test_dispatch_writes_both_p1_and_p5_for_same_task(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """End-to-end: seed a pending PersonalTask overdue by 1 hour.
+        scan_overdue_tasks emits a P1 proposal. Separately build a P5
+        proposal for the same task. Run both through apply_proactivity
+        -> batch_proposals -> dispatch_with_items. Assert TWO rows in
+        nudge_dispatch_items for this task (one per trigger_kind).
+
+        This test pins the documented behavior that cross-kind dedupe
+        is not enforced at the dispatch layer. If an upper layer (e.g.
+        route_hint suppression in the composer) is added later to block
+        double-fires, this test will fail and force a deliberate change.
+        """
+        _force_compose_fallback(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        due = now - timedelta(hours=1)
+
+        task = PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="Take out the trash",
+            status="pending",
+            due_at=due,
+        )
+        db.add(task)
+        db.commit()
+
+        # P1: from the scanner.
+        p1_props = nudges_service.scan_overdue_tasks(db, now)
+        assert len(p1_props) == 1
+        assert p1_props[0].trigger_kind == "overdue_task"
+        assert p1_props[0].trigger_entity_id == task.id
+
+        # P5: AI discovery proposal for the SAME task.
+        p5_prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=task.id,
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "body": "Heads up: trash is still waiting on you.",
+                "occurrence_at_utc": due,
+            },
+        )
+
+        combined = list(p1_props) + [p5_prop]
+        # Normalize scheduled_for to naive-UTC across both proposal paths
+        # so batch_proposals' sort doesn't mix tz-aware (timestamptz from
+        # DB via scan_overdue_tasks) with naive (constructed in-test).
+        # Mirrors run_nudge_scan's normalization step.
+        for p in combined:
+            if p.scheduled_for is not None and p.scheduled_for.tzinfo is not None:
+                p.scheduled_for = p.scheduled_for.astimezone(
+                    timezone.utc
+                ).replace(tzinfo=None)
+        gated = nudges_service.apply_proactivity(db, combined, now)
+        bundles = nudges_service.batch_proposals(gated)
+        written = nudges_service.dispatch_with_items(db, bundles, now)
+
+        # Both proposals survive dedupe and dispatch. May be 1 bundle
+        # (same member within batching window) or 2 bundles; either
+        # way, two child rows must exist.
+        assert written >= 1
+
+        children = (
+            db.query(NudgeDispatchItem)
+            .filter_by(trigger_entity_id=task.id, family_member_id=andrew.id)
+            .all()
+        )
+        trigger_kinds = sorted(c.trigger_kind for c in children)
+        assert trigger_kinds == ["ai_suggested", "overdue_task"], (
+            "Expected BOTH P1 (overdue_task) and P5 (ai_suggested) child rows "
+            "for the same task. If only one is present, cross-kind dedupe "
+            "has been added at an upper layer -- update this test and the "
+            "plan docs to reflect the new contract."
+        )
+
+        # Both rows reference the same member + entity; only the
+        # trigger_kind (and hence source_dedupe_key) differ.
+        dedupe_keys = {c.source_dedupe_key for c in children}
+        assert len(dedupe_keys) == 2
 
 
 class TestScannerStampsOccurrence:
@@ -2077,6 +2442,74 @@ class TestComposeBody:
         assert "2 items to check" in body
         assert "Task 0" in body
         assert "Task 1" in body
+
+    def test_compose_body_preserves_ai_generated_body(
+        self, db: Session, family, adults
+    ):
+        """AI-discovery proposals carry a pre-composed body in
+        context['body']. compose_body must return it verbatim instead of
+        re-running the P3 composer or falling to the '_render_body'
+        template (which has no 'ai_suggested' entry and would return
+        'Scout nudge').
+        """
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        p = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="ai_discovery",
+            trigger_entity_id=None,
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "body": "Sally has soccer at 4pm today; pack cleats.",
+                "ai_generated": True,
+                "occurrence_at_utc": now,
+            },
+        )
+        body = nudges_service.compose_body(db, family.id, [p], now)
+        assert body == "Sally has soccer at 4pm today; pack cleats."
+
+    def test_compose_body_skips_ai_shortcut_for_mixed_bundles(
+        self, db: Session, family, adults
+    ):
+        """When the bundle has more than one proposal (mixed AI +
+        scanner), the AI shortcut does NOT fire; the normal composer path
+        runs so multi-item nudges get summarized correctly.
+        """
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        p_ai = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="ai_suggested",
+            trigger_entity_kind="ai_discovery",
+            trigger_entity_id=None,
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "body": "AI body here",
+                "ai_generated": True,
+                "occurrence_at_utc": now,
+            },
+        )
+        p_scanner = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=uuid.uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"title": "trash", "occurrence_at_utc": now},
+        )
+        body = nudges_service.compose_body(
+            db, family.id, [p_ai, p_scanner], now
+        )
+        # Shortcut should NOT fire; either the composer runs or the
+        # template fallback - both acceptable. The only non-acceptable
+        # outcome is returning "AI body here" from the shortcut.
+        assert body != "AI body here"
 
 
 class TestPersonalitySubstringMatrix:

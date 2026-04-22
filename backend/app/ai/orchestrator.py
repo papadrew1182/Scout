@@ -10,6 +10,7 @@ Handles the full chat loop:
 """
 
 import json
+import logging
 import time
 import uuid
 from collections.abc import Iterator
@@ -31,7 +32,10 @@ from app.ai.provider import AIResponse, AnthropicProvider, ToolDefinition, get_p
 from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor, _audit
 from app.config import settings
 from app.models.ai import AIConversation, AIMessage
+from app.schemas.nudge_discovery import DiscoveryProposal
 
+
+logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
 # Tier 4 F15: weekly planner unlocks a longer loop so it can gather
@@ -1314,3 +1318,185 @@ def meals_service_list_recent(db: Session, family_id: uuid.UUID) -> list:
     from app.services import meals_service
     meals = meals_service.list_meals(db, family_id)
     return [{"title": m.title, "meal_type": m.meal_type, "date": m.meal_date.isoformat()} for m in meals[:30]]
+
+
+# ---------------------------------------------------------------------------
+# Sprint 05 Phase 5 Task 1 -- AI-driven nudge discovery
+# ---------------------------------------------------------------------------
+
+
+_DISCOVERY_SYSTEM_PROMPT = (
+    "You are Scout, a proactive assistant for a family. Your job in this "
+    "call is to look at a digest of upcoming tasks, events, routines, and "
+    "habits for one family, and decide whether anything is worth a short "
+    "proactive nudge to a specific member right now.\n\n"
+    "Only propose a nudge when it is genuinely useful: a time-sensitive "
+    "reminder, something slipping, or something the member should prepare "
+    "for. Do not invent obligations. If nothing is worth nudging, return "
+    "an empty JSON array.\n\n"
+    "Output STRICT JSON: a single JSON array of proposal objects. No "
+    "prose, no code fences, no keys other than the ones listed. Each "
+    "object must have:\n"
+    '  - member_id (UUID string): the target family member.\n'
+    '  - trigger_entity_kind (one of "personal_task", "event", '
+    '"task_instance", "general"): use "general" if it does not tie to a '
+    "specific row.\n"
+    '  - trigger_entity_id (UUID string or null): the id of the row when '
+    'trigger_entity_kind is not "general".\n'
+    '  - scheduled_for (ISO-8601 datetime, naive UTC): when the nudge '
+    "should be delivered.\n"
+    '  - severity (one of "low", "normal", "high"): default "normal".\n'
+    "  - body (string, 1-280 chars): the final nudge copy to show the "
+    "member. Warm, concise, no em dashes, no greetings, no sign-off.\n\n"
+    "If no nudges are warranted, output exactly: []"
+)
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove ```json ... ``` or ``` ... ``` wrappers if present."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    # Drop the first fence line.
+    lines = stripped.splitlines()
+    # First line is the opening fence (possibly ```json).
+    lines = lines[1:]
+    # Drop trailing fence if present.
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def propose_nudges_from_digest(
+    *,
+    family_id: uuid.UUID,
+    digest: dict,
+    now_utc: datetime,
+    timeout_seconds: float = 5.0,
+    max_proposals: int = 8,
+) -> list[DiscoveryProposal]:
+    """Ask the AI what, if anything, is worth nudging this family about
+    right now. Returns a list of DiscoveryProposal; malformed items are
+    dropped rather than raising. Returns [] on any of:
+      - ai_available is False
+      - orchestrator timeout or moderation block
+      - empty or unparseable AI output
+      - every proposal fails pydantic validation
+
+    This function does NOT check the weekly soft-cap, does NOT enforce
+    rate limits, and does NOT write to the database. Those are the
+    caller's job. This function only calls the AI and parses output.
+    """
+    if not settings.ai_available:
+        return []
+
+    model = settings.ai_nudge_model
+    if not model:
+        logger.info(
+            "propose_nudges_from_digest: ai_nudge_model unset; returning []"
+        )
+        return []
+
+    user_message = (
+        f"Current time (UTC): {now_utc.isoformat()}\n\n"
+        f"Family id: {family_id}\n\n"
+        "Digest:\n"
+        f"{json.dumps(digest, default=str)}\n\n"
+        "Return the JSON array of proposals now. If nothing is worth "
+        "nudging, return []."
+    )
+
+    try:
+        client = _get_anthropic_client(timeout_seconds)
+        response = client.messages.create(
+            model=model,
+            max_tokens=800,
+            system=_DISCOVERY_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_message}],
+            timeout=timeout_seconds,
+        )
+    except anthropic.APITimeoutError as exc:
+        logger.warning(
+            "propose_nudges_from_digest: timeout for family_id=%s (%s)",
+            family_id,
+            exc.__class__.__name__,
+        )
+        return []
+    except anthropic.APIError as exc:
+        logger.warning(
+            "propose_nudges_from_digest: APIError for family_id=%s (%s)",
+            family_id,
+            exc.__class__.__name__,
+        )
+        return []
+    except RuntimeError as exc:
+        logger.warning(
+            "propose_nudges_from_digest: RuntimeError for family_id=%s (%s)",
+            family_id,
+            exc.__class__.__name__,
+        )
+        return []
+
+    stop_reason = getattr(response, "stop_reason", "") or ""
+    if stop_reason in ("moderation", "refusal"):
+        logger.warning(
+            "propose_nudges_from_digest: moderation stop_reason=%s for family_id=%s",
+            stop_reason,
+            family_id,
+        )
+        return []
+
+    text_parts: list[str] = []
+    for block in getattr(response, "content", []) or []:
+        if getattr(block, "type", "") == "text":
+            text_parts.append(getattr(block, "text", "") or "")
+    raw = "".join(text_parts).strip()
+    if not raw:
+        logger.info(
+            "propose_nudges_from_digest: empty AI output for family_id=%s",
+            family_id,
+        )
+        return []
+
+    cleaned = _strip_code_fences(raw)
+    try:
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.info(
+            "propose_nudges_from_digest: JSON parse failed for family_id=%s (%s)",
+            family_id,
+            exc.__class__.__name__,
+        )
+        return []
+
+    if not isinstance(parsed, list):
+        logger.info(
+            "propose_nudges_from_digest: AI output not a list for family_id=%s",
+            family_id,
+        )
+        return []
+
+    capped = parsed[:max_proposals]
+
+    proposals: list[DiscoveryProposal] = []
+    for idx, item in enumerate(capped):
+        try:
+            proposals.append(DiscoveryProposal.model_validate(item))
+        except Exception as exc:  # pydantic ValidationError and friends
+            err = str(exc)
+            if len(err) > 200:
+                err = err[:200] + "..."
+            logger.info(
+                "propose_nudges_from_digest: dropped proposal idx=%s for family_id=%s: %s",
+                idx,
+                family_id,
+                err,
+            )
+            continue
+
+    logger.info(
+        "propose_nudges_from_digest: emitted %s proposals for family_id=%s",
+        len(proposals),
+        family_id,
+    )
+    return proposals
