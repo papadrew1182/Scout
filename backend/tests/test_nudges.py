@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, time, timedelta, timezone
 
 import pytest
@@ -13,6 +14,7 @@ from app.models.life_management import ChoreTemplate, Routine, TaskInstance
 from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.personal_tasks import PersonalTask
 from app.models.push import PushDelivery, PushDevice
+from app.models.quiet_hours import QuietHoursFamily
 from app.services import ai_personality_service, nudges_service
 
 
@@ -927,3 +929,203 @@ class TestTickBenchmark:
         # Everyone defaults to balanced proactivity, so 70 proposals should dispatch
         assert written >= 50, f"expected >=50 dispatches, got {written}"
         assert elapsed < 10.0, f"tick took {elapsed:.2f}s (budget 10.0s)"
+
+
+class TestQuietHoursGate:
+    def _set_family_quiet_hours(self, db, family, start_minute, end_minute):
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=start_minute,
+                end_local_minute=end_minute,
+            )
+        )
+        db.commit()
+
+    def _set_member_override(self, db, member_id, start_minute, end_minute):
+        from sqlalchemy import text as _t
+        db.execute(
+            _t(
+                """
+                INSERT INTO member_config (family_member_id, key, value)
+                VALUES (:mid, 'nudges.quiet_hours', CAST(:v AS JSONB))
+                ON CONFLICT (family_member_id, key)
+                DO UPDATE SET value = EXCLUDED.value
+                """
+            ),
+            {
+                "mid": member_id,
+                "v": json.dumps(
+                    {
+                        "start_local_minute": start_minute,
+                        "end_local_minute": end_minute,
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+    def test_no_quiet_hours_configured_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        now = _utcnow().replace(tzinfo=None)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_outside_window_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        # 14:00 UTC on 2026-04-21 is 09:00 CDT (UTC-5, DST). Window 22-07.
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 14, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_inside_window_low_severity_drops(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        # 06:00 UTC on 2026-04-21 = 01:00 CDT -- inside window
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "low", now
+        )
+        assert decision == "drop"
+        assert hold is None
+
+    def test_inside_window_high_severity_delivers(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "high", now
+        )
+        assert decision == "deliver"
+        assert hold is None
+
+    def test_inside_window_normal_holds_until_window_end(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        # 06:00 UTC 2026-04-21 = 01:00 CDT -> hold until 07:00 CDT = 12:00 UTC same day
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "hold"
+        assert hold is not None
+        # End-of-window is 07:00 local = 12:00 UTC (CDT = UTC-5)
+        assert hold == __import__("datetime").datetime(2026, 4, 21, 12, 0)
+
+    def test_member_override_beats_family_default(
+        self, db: Session, family, adults
+    ):
+        """Family says 22-07; Andrew overrides to 23-05. At 06:00 CDT
+        (= 11:00 UTC), family rule says 'inside' but Andrew's override
+        says 'outside'. Override wins."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        self._set_member_override(db, andrew.id, 23 * 60, 5 * 60)
+        # 11:00 UTC = 06:00 CDT. Family window (22-07) would include it.
+        # Andrew's window (23-05) does not.
+        now = __import__("datetime").datetime(2026, 4, 21, 11, 0)
+
+        decision, hold = nudges_service.should_suppress_for_quiet_hours(
+            db, andrew.id, "normal", now
+        )
+        assert decision == "deliver"
+
+    def test_resolve_deliver_after_passes_through_when_deliver(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        now = __import__("datetime").datetime(2026, 4, 21, 14, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert deliver_after == now
+        assert reason is None
+
+    def test_resolve_deliver_after_returns_suppressed_reason_on_drop(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="low",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert reason == "quiet_hours"
+
+    def test_resolve_deliver_after_pushes_hold_across_midnight(
+        self, db: Session, family, adults
+    ):
+        """normal-severity proposal at 01:00 local on 2026-04-21 holds
+        to 07:00 local same morning (12:00 UTC)."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.commit()
+        self._set_family_quiet_hours(db, family, 22 * 60, 7 * 60)
+        now = __import__("datetime").datetime(2026, 4, 21, 6, 0)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={"occurrence_at_utc": now},
+        )
+
+        deliver_after, reason = nudges_service.resolve_deliver_after(db, prop, now)
+        assert reason is None
+        assert deliver_after == __import__("datetime").datetime(2026, 4, 21, 12, 0)

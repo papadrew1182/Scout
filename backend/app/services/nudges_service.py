@@ -26,6 +26,7 @@ AI-composed per-member copy.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from sqlalchemy.orm import Session
 from app.models.action_items import ParentActionItem
 from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.push import PushDevice
+from app.models.quiet_hours import QuietHoursFamily  # noqa: F401
 from app.services import ai_personality_service, push_service
 
 logger = logging.getLogger("scout.nudges")
@@ -309,6 +311,159 @@ def apply_proactivity(
             )
         )
     return out
+
+
+def _is_minute_in_window(current: int, start: int, end: int) -> bool:
+    """Minute-of-day window. Handles wrap across midnight when end < start."""
+    if start == end:
+        return False
+    if start < end:
+        return start <= current < end
+    # Wraps: start=1320 (22:00), end=420 (07:00)
+    return current >= start or current < end
+
+
+def _resolve_quiet_hours_window(
+    db: Session, family_member_id: uuid.UUID
+) -> tuple[int, int, str] | None:
+    """Returns (start_minute, end_minute, family_timezone) or None if
+    no quiet hours configured for the member (neither family default
+    nor per-member override)."""
+    member_row = db.execute(
+        text(
+            """
+            SELECT fm.family_id, f.timezone
+            FROM family_members fm
+            JOIN families f ON f.id = fm.family_id
+            WHERE fm.id = :mid
+            """
+        ),
+        {"mid": family_member_id},
+    ).first()
+    if member_row is None or not member_row.timezone:
+        return None
+    tz_name = member_row.timezone
+    family_id = member_row.family_id
+
+    # Member override wins
+    override_row = db.execute(
+        text(
+            """
+            SELECT value
+            FROM member_config
+            WHERE family_member_id = :mid AND key = 'nudges.quiet_hours'
+            """
+        ),
+        {"mid": family_member_id},
+    ).first()
+    if override_row and override_row.value:
+        v = (
+            override_row.value
+            if isinstance(override_row.value, dict)
+            else _json.loads(override_row.value)
+        )
+        return int(v["start_local_minute"]), int(v["end_local_minute"]), tz_name
+
+    # Family default
+    family_row = db.execute(
+        text(
+            """
+            SELECT start_local_minute, end_local_minute
+            FROM scout.quiet_hours_family
+            WHERE family_id = :fid
+            """
+        ),
+        {"fid": family_id},
+    ).first()
+    if family_row is None:
+        return None
+    return (
+        int(family_row.start_local_minute),
+        int(family_row.end_local_minute),
+        tz_name,
+    )
+
+
+def _window_end_in_utc(
+    now_utc: datetime, end_minute: int, tz_name: str
+) -> datetime:
+    """Return the next UTC moment matching end_minute in the family's
+    local timezone. If end_minute hasn't occurred yet today in local
+    time, return today's end; otherwise tomorrow's."""
+    tz = pytz.timezone(tz_name)
+    aware_utc = (
+        pytz.utc.localize(now_utc) if now_utc.tzinfo is None
+        else now_utc.astimezone(pytz.utc)
+    )
+    local_now = aware_utc.astimezone(tz)
+    end_hour, end_min = divmod(end_minute, 60)
+    candidate_local = local_now.replace(
+        hour=end_hour, minute=end_min, second=0, microsecond=0
+    )
+    if candidate_local <= local_now:
+        candidate_local += timedelta(days=1)
+    return candidate_local.astimezone(pytz.utc).replace(tzinfo=None)
+
+
+def should_suppress_for_quiet_hours(
+    db: Session,
+    family_member_id: uuid.UUID,
+    severity: str,
+    now_utc: datetime,
+) -> tuple[str, datetime | None]:
+    """Resolve quiet-hours gate per revised plan Section 4 step 5.
+
+    Returns (decision, hold_until_utc). decision is one of:
+      'deliver' - outside window, or high severity, or no config
+      'drop' - inside window and low severity
+      'hold' - inside window and normal severity; hold_until_utc is
+               the UTC timestamp matching the window's end in family local
+    """
+    resolved = _resolve_quiet_hours_window(db, family_member_id)
+    if resolved is None:
+        return ("deliver", None)
+    start_minute, end_minute, tz_name = resolved
+
+    tz = pytz.timezone(tz_name)
+    aware_utc = (
+        pytz.utc.localize(now_utc) if now_utc.tzinfo is None
+        else now_utc.astimezone(pytz.utc)
+    )
+    local_now = aware_utc.astimezone(tz)
+    current_minute = local_now.hour * 60 + local_now.minute
+
+    if not _is_minute_in_window(current_minute, start_minute, end_minute):
+        return ("deliver", None)
+
+    if severity == "high":
+        return ("deliver", None)
+    if severity == "low":
+        return ("drop", None)
+    # normal
+    hold_utc = _window_end_in_utc(now_utc, end_minute, tz_name)
+    return ("hold", hold_utc)
+
+
+def resolve_deliver_after(
+    db: Session, proposal: NudgeProposal, now_utc: datetime
+) -> tuple[datetime, str | None]:
+    """Compose scheduled_for with the quiet-hours gate into an effective
+    deliver_after_utc + optional suppressed_reason. Per revised plan
+    Section 6, never mutates occurrence_at_utc or occurrence_local_date."""
+    decision, hold_utc = should_suppress_for_quiet_hours(
+        db, proposal.family_member_id, proposal.severity, now_utc
+    )
+    if decision == "deliver":
+        return (proposal.scheduled_for, None)
+    if decision == "drop":
+        return (proposal.scheduled_for, "quiet_hours")
+    # hold
+    effective = (
+        max(proposal.scheduled_for, hold_utc)
+        if hold_utc is not None
+        else proposal.scheduled_for
+    )
+    return (effective, None)
 
 
 def resolve_occurrence_fields(
