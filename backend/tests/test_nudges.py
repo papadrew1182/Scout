@@ -1051,13 +1051,39 @@ class TestP1P5DedupeBoundary:
 
 
 class TestScannerStampsOccurrence:
-    """Confirm each scanner stamps context['occurrence_at_utc']."""
+    """Confirm each scanner stamps context['occurrence_at_utc'].
+
+    These tests use a fixed deterministic `now` (not _utcnow()) so
+    the date comparison cannot drift with real wall-clock time. The
+    flake documented across Sprint 05 phases 2-5 handoffs under the
+    name test_overdue_task_scanner_stamps_due_at was traced to the
+    original use of _utcnow() against a Postgres session running
+    America/Chicago TIME ZONE; at certain wall-clock hours the
+    naive-datetime roundtrip + `.date()` assertion would differ.
+    Batch-1 PR 4 swaps to a fixed datetime and compares on full
+    wall-clock value, not date, so the test is time-independent.
+    """
+
+    # Fixed mid-afternoon UTC; safe from the 00:00-06:00 UTC window
+    # where the America/Chicago session TZ could shift the roundtripped
+    # .date() vs the naive `due.date()`. Using midday ensures both
+    # sides agree under any Postgres session timezone policy.
+    _FIXED_NOW = datetime(2026, 4, 22, 15, 0, 0)
+
+    def _normalize_naive(self, dt: datetime) -> datetime:
+        """Drop tzinfo so aware (roundtripped) and naive (constructed)
+        datetimes compare by wall-clock. Postgres timestamptz with a
+        session TZ returns aware values; the test constructs naive
+        inputs. Both represent the same instant expressed as the
+        session's local clock, so stripping tzinfo yields matching
+        naive datetimes."""
+        return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
     def test_overdue_task_scanner_stamps_due_at(
         self, db: Session, family, adults
     ):
         andrew = adults["robert"]
-        now = _utcnow()
+        now = self._FIXED_NOW
         due = now - timedelta(hours=1)
         db.add(
             PersonalTask(
@@ -1073,14 +1099,18 @@ class TestScannerStampsOccurrence:
         proposals = nudges_service.scan_overdue_tasks(db, now)
         assert len(proposals) == 1
         assert "occurrence_at_utc" in proposals[0].context
-        # Ignore microseconds / tz parity; the underlying due_at round-trips
-        assert proposals[0].context["occurrence_at_utc"].date() == due.date()
+        # Full wall-clock equality (not .date()) so a roundtrip bug
+        # cannot be masked by a coincidentally-matching date.
+        actual = self._normalize_naive(proposals[0].context["occurrence_at_utc"])
+        assert actual.replace(microsecond=0) == due.replace(microsecond=0), (
+            f"expected occurrence_at_utc to round-trip due_at; got {actual} vs {due}"
+        )
 
     def test_upcoming_event_scanner_stamps_starts_at(
         self, db: Session, family, adults
     ):
         andrew = adults["robert"]
-        now = _utcnow()
+        now = self._FIXED_NOW
         starts = now + timedelta(minutes=15)
         ev = Event(
             family_id=family.id,
@@ -1096,13 +1126,18 @@ class TestScannerStampsOccurrence:
         proposals = nudges_service.scan_upcoming_events(db, now)
         assert len(proposals) == 1
         assert "occurrence_at_utc" in proposals[0].context
+        actual = self._normalize_naive(proposals[0].context["occurrence_at_utc"])
+        assert actual.replace(microsecond=0) == starts.replace(microsecond=0), (
+            f"expected occurrence_at_utc to round-trip starts_at; got {actual} vs {starts}"
+        )
 
     def test_missed_routine_scanner_stamps_due_at(
         self, db: Session, family, adults, children
     ):
         sadie = children["sadie"]
         parent = adults["robert"]
-        now = _utcnow()
+        now = self._FIXED_NOW
+        due = now - timedelta(minutes=20)
         from datetime import time as dtime
 
         r = Routine(
@@ -1122,7 +1157,7 @@ class TestScannerStampsOccurrence:
                 family_member_id=sadie.id,
                 routine_id=r.id,
                 instance_date=now.date(),
-                due_at=now - timedelta(minutes=20),
+                due_at=due,
                 is_completed=False,
             )
         )
@@ -1131,6 +1166,10 @@ class TestScannerStampsOccurrence:
         proposals = nudges_service.scan_missed_routines(db, now)
         assert len(proposals) == 1
         assert "occurrence_at_utc" in proposals[0].context
+        actual = self._normalize_naive(proposals[0].context["occurrence_at_utc"])
+        assert actual.replace(microsecond=0) == due.replace(microsecond=0), (
+            f"expected occurrence_at_utc to round-trip due_at; got {actual} vs {due}"
+        )
 
 
 class TestDispatchWithItems:
