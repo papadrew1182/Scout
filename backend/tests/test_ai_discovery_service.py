@@ -209,6 +209,38 @@ def test_is_throttled_is_per_family():
     assert nad._is_throttled(fam_b, t0 + timedelta(minutes=10)) is False
 
 
+def test_throttle_helpers_accept_tz_aware_datetimes():
+    """Batch-1 PR 1 Item 3: _is_throttled and _mark_discovery_ran
+    must normalize tz-aware inputs via _strip_tz for symmetry with
+    build_family_state_digest. Before this fix, mixing an aware
+    now_utc with a stored naive marker raised TypeError on the
+    subtraction at the heart of the throttle check.
+    """
+    from datetime import timezone as _tz
+
+    fam_id = uuid.uuid4()
+    t0_naive = datetime(2026, 4, 21, 10, 0, 0)
+    t0_aware = datetime(2026, 4, 21, 10, 0, 0, tzinfo=_tz.utc)
+
+    # Mark ran with aware, check with naive.
+    nad._mark_discovery_ran(fam_id, t0_aware)
+    assert nad._is_throttled(
+        fam_id, t0_naive + timedelta(minutes=10)
+    ) is True
+
+    # Window still closes at the 1h mark when mixing shapes.
+    assert nad._is_throttled(
+        fam_id, t0_aware + timedelta(minutes=61)
+    ) is False
+
+    # Mark ran with naive, check with aware. No TypeError.
+    nad._last_ai_discovery_run_utc.clear()
+    nad._mark_discovery_ran(fam_id, t0_naive)
+    assert nad._is_throttled(
+        fam_id, t0_aware + timedelta(minutes=10)
+    ) is True
+
+
 # ---------------------------------------------------------------------------
 # propose_nudges
 # ---------------------------------------------------------------------------

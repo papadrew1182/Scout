@@ -778,11 +778,21 @@ def resolve_occurrence_fields(
             if isinstance(proposal.context, dict)
             else None
         )
-        if body:
-            entity_part = "ai:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        # Explicit `is not None` (rather than truthy check) so an
+        # empty-string body hits the body-hash branch instead of
+        # silently falling through to the context-hash fallback.
+        # Pydantic's DiscoveryProposal min_length=1 prevents the
+        # empty case on the normal path, but a direct dataclass
+        # caller could reach here with body="" and we want a
+        # predictable key either way.
+        if body is not None:
+            entity_part = "ai:" + hashlib.sha256(
+                body.encode("utf-8")
+            ).hexdigest()[:16]
         else:
-            # No body either - fall back to a stable repr of the context
-            # so we don't collapse unrelated empty-context suggestions.
+            # No body key at all - fall back to a stable repr of
+            # the context so we don't collapse unrelated
+            # empty-context suggestions.
             entity_part = "ai:" + hashlib.sha256(
                 repr(sorted((proposal.context or {}).items())).encode("utf-8")
             ).hexdigest()[:16]
@@ -1354,6 +1364,13 @@ def process_pending_dispatches(
                 family_id = _family_id_for_member(
                     db, dispatch.family_member_id
                 )
+                # Mixed-kind bundles use the first child's trigger_kind
+                # for action_type (stability over cleverness; same
+                # convention as dispatch_with_items). The detail body
+                # still summarizes every child via _render_bundle.
+                # A formalized nudge.mixed action_type would require
+                # widening chk_parent_action_items_action_type - tracked
+                # as a separate backlog item, not in this hygiene pass.
                 inbox = ParentActionItem(
                     family_id=family_id,
                     created_by_member_id=dispatch.family_member_id,

@@ -754,6 +754,58 @@ class TestAISuggestedDedupeKey:
             f"{andrew.id}:overdue_task:{entity_id}:2026-04-21"
         )
 
+    def test_ai_suggested_empty_body_uses_body_hash_not_context(
+        self, db: Session, family, adults
+    ):
+        """Batch-1 PR 1 Item 2: an empty-string body must hit the
+        body-hash branch, not silently fall through to the
+        context-hash fallback.
+
+        Pydantic's DiscoveryProposal.min_length=1 prevents the empty
+        case on the normal path, but a direct dataclass caller could
+        construct a NudgeProposal with context['body']=''. The
+        resolver now uses 'is not None' so the body-hash branch
+        fires, and all empty-body proposals collapse to the same
+        stable dedupe key regardless of other context differences.
+        """
+        import hashlib as _hashlib
+
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        empty_body_hash = _hashlib.sha256(b"").hexdigest()[:16]
+        expected_entity_part = f"ai:{empty_body_hash}"
+
+        # Two proposals with empty body but otherwise different
+        # context. Under the old truthy check they would have fallen
+        # to the context-hash branch and produced DIFFERENT keys.
+        # Under the new 'is not None' check they share the body-hash
+        # key and collapse, which is the semantically correct
+        # behavior for two content-free suggestions on the same day.
+        prop_a = self._make_prop(
+            andrew.id,
+            context_extra={"body": "", "variant": "a"},
+        )
+        prop_b = self._make_prop(
+            andrew.id,
+            context_extra={"body": "", "variant": "b"},
+        )
+
+        key_a = nudges_service.resolve_occurrence_fields(
+            db, prop_a
+        ).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(
+            db, prop_b
+        ).source_dedupe_key
+
+        assert expected_entity_part in key_a
+        assert expected_entity_part in key_b
+        assert key_a == key_b, (
+            "empty-body proposals must collapse to the same key "
+            "regardless of other context keys"
+        )
+
 
 class TestP1P5DedupeBoundary:
     """Sprint 05 Phase 5 Task 5 - lock in the P1 vs P5 dedupe boundary.
@@ -1766,6 +1818,78 @@ class TestDispatchBundles:
         assert len(children) == 3
         inbox = db.get(ParentActionItem, parent.parent_action_item_id)
         assert inbox.title == "You have 3 nudges"
+
+    def test_mixed_kind_bundle_uses_first_childs_kind_for_action_type(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Batch-1 PR 1 Item 1: document the mixed-kind bundle contract.
+
+        A bundle containing children of DIFFERENT trigger_kinds writes a
+        single ParentActionItem. By convention the action_type comes
+        from the first child's trigger_kind (stability over cleverness).
+        This test pins that convention so a future silent change has to
+        also update the test + the handoff. Migration 050 widened the
+        CHECK to allow nudge.<trigger_kind> values; a formalized
+        nudge.mixed would require another migration and is not in
+        scope here.
+        """
+        _force_compose_fallback(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+
+        overdue = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "Trash",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        missed_routine = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence + timedelta(seconds=30),
+            severity="normal",
+            context={
+                "title": "Morning routine",
+                "due_time": "07:00 AM",
+                "occurrence_at_utc": occurrence + timedelta(seconds=30),
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(
+            andrew.id, [overdue, missed_routine]
+        )
+
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(
+            family_member_id=andrew.id
+        ).one()
+        inbox = db.get(ParentActionItem, parent.parent_action_item_id)
+        assert inbox.action_type == "nudge.overdue_task", (
+            "Mixed-kind bundles must use the first child's trigger_kind; "
+            "if this changes, update nudges_service.py line ~941 comment "
+            "and the handoff notes."
+        )
+        children = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).all()
+        kinds = {c.trigger_kind for c in children}
+        assert kinds == {"overdue_task", "missed_routine"}, (
+            "children must preserve both trigger_kinds so the bundle is "
+            "demonstrably mixed"
+        )
 
     def test_hold_path_writes_pending_no_inbox(
         self, db: Session, family, adults, monkeypatch
