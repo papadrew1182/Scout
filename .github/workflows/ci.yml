@@ -5,10 +5,14 @@ on:
     branches: [main, "release-*", "release/**"]
   pull_request:
     branches: [main]
-  # Manual trigger for the deployed-smoke job. Kept off the push path
-  # because prod currently holds a real family's data — running write
-  # tests would pollute the ledger. Wire into push when a dedicated
-  # smoke-user family is provisioned.
+  # The deployed-smoke job runs automatically on push-to-main (prod-
+  # safe default test list covers auth + surfaces + responsive +
+  # dev-mode only, no write paths against prod). Kept opt-in via
+  # workflow_dispatch so operators can run a wider test list or
+  # point it at a different deployed URL pair. Persistent smoke
+  # account smoke@scout.app was provisioned 2026-04-13; credentials
+  # live in GitHub secrets SCOUT_SMOKE_ADULT_EMAIL and
+  # SCOUT_SMOKE_ADULT_PASSWORD.
   workflow_dispatch:
     inputs:
       test_files:
@@ -148,21 +152,24 @@ jobs:
           retention-days: 7
 
   smoke-deployed:
-    # Manual-only today; see `workflow_dispatch` block at top. Runs
-    # Playwright against the real Vercel + Railway deploy.
-    if: github.event_name == 'workflow_dispatch'
+    # Runs Playwright against the real Vercel + Railway deploy. Auto-
+    # triggered on push-to-main (top-level `on:` block filters push to
+    # main + release-*); still available via workflow_dispatch for
+    # operator-driven runs. Does NOT run on pull_request events because
+    # PRs haven't deployed.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      SCOUT_WEB_URL: ${{ github.event.inputs.web_url }}
-      SCOUT_API_URL: ${{ github.event.inputs.api_url }}
+      SCOUT_WEB_URL: ${{ github.event.inputs.web_url || 'https://scout-ui-gamma.vercel.app' }}
+      SCOUT_API_URL: ${{ github.event.inputs.api_url || 'https://scout-backend-production-9991.up.railway.app' }}
       SMOKE_ADULT_EMAIL: ${{ secrets.SCOUT_SMOKE_ADULT_EMAIL }}
-      SMOKE_PASSWORD: ${{ secrets.SCOUT_SMOKE_PASSWORD }}
+      SMOKE_PASSWORD: ${{ secrets.SCOUT_SMOKE_ADULT_PASSWORD }}
       SMOKE_CHILD_EMAIL: ${{ secrets.SCOUT_SMOKE_CHILD_EMAIL }}
     steps:
       - name: Verify smoke credentials are configured
         run: |
           if [ -z "$SMOKE_ADULT_EMAIL" ] || [ -z "$SMOKE_PASSWORD" ]; then
-            echo "::error::Missing SCOUT_SMOKE_ADULT_EMAIL or SCOUT_SMOKE_PASSWORD secret."
+            echo "::error::Missing SCOUT_SMOKE_ADULT_EMAIL or SCOUT_SMOKE_ADULT_PASSWORD secret."
             echo "See docs/release_candidate_report.md > Deployed smoke (manual) for setup."
             exit 1
           fi
@@ -175,7 +182,7 @@ jobs:
       - run: cd smoke-tests && npx playwright install chromium --with-deps
 
       - name: Run Playwright against deployed URLs
-        run: cd smoke-tests && npx playwright test ${{ github.event.inputs.test_files }}
+        run: cd smoke-tests && npx playwright test ${{ github.event.inputs.test_files || 'tests/auth.spec.ts tests/surfaces.spec.ts tests/responsive.spec.ts tests/dev-mode.spec.ts' }}
 
       - uses: actions/upload-artifact@v4
         if: always()

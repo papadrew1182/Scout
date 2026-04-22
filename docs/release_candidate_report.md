@@ -19,7 +19,8 @@ provisioned in prod.
 Add these secrets under **Settings → Secrets and variables → Actions**:
 
 - `SCOUT_SMOKE_ADULT_EMAIL` — login email for a prod-safe adult account
-- `SCOUT_SMOKE_PASSWORD` — that account's password
+- `SCOUT_SMOKE_ADULT_PASSWORD` — that account's password (matches the
+  Railway env var of the same name)
 - `SCOUT_SMOKE_CHILD_EMAIL` — (optional) login for a prod-safe child
   account used by the child-surface tests
 
