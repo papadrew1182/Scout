@@ -60,13 +60,18 @@ Healthchecks: Postgres waits for pg_isready, backend waits for Postgres healthy,
 | `EXPO_ACCESS_TOKEN` | Only when security enabled | token from Expo dashboard |
 | `EXPO_PUBLIC_PUSH_PROVIDER` | Frontend, Phase 1 | `expo` |
 
-## Push notifications (Sprint Expansion Phase 1)
+## Push notifications (Sprint Expansion Phase 1) — LIVE
 
-Scout delivers time-sensitive notifications through the Expo Push
-Service, which fans out to APNs. The backend records one delivery row
-per device attempt and polls Expo for receipts on the scheduler tick.
+iOS push is live in production as of 2026-04-21, validated on physical
+device. Scout delivers time-sensitive notifications through the Expo
+Push Service, which fans out to APNs. The backend records one delivery
+row per device attempt and polls Expo for receipts on the scheduler
+tick.
 
-### Setup
+### Setup (completed 2026-04-21)
+
+All four steps below are done in production. Document retained so a
+future new-environment bring-up has the procedure.
 
 1. Register an Apple Developer bundle ID for Scout and upload the APNs
    Auth Key to the Expo project. Expo handles the handoff to APNs.
@@ -78,6 +83,12 @@ per device attempt and polls Expo for receipts on the scheduler tick.
    `EXPO_PUSH_SECURITY_ENABLED=false` unless you have enabled Expo's
    push-security flow; in that case also set `EXPO_ACCESS_TOKEN`.
 4. Set `EXPO_PUBLIC_PUSH_PROVIDER=expo` on the frontend (Vercel).
+
+### Operations
+
+Rotation + incident procedure for APNs key, Expo access token, and EAS
+project credentials is still TBD, tracked as item 8 on the gap list
+(ops playbook work).
 
 ### Provider semantics
 

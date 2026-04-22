@@ -296,34 +296,28 @@ Merge commit: `1cff7681`
 - [ ] Delete the worktree when done:
       `git worktree remove .claude/worktrees/phase-1-push`
 
-## After Phase 1 merges — production enablement
+## Push notifications — LIVE IN PRODUCTION (2026-04-21)
 
-These do not block the merge but push will not work in production
-without them.
+iOS push is live and validated on physical device as of 2026-04-21.
+Future gap-analysis runs should NOT flag this as an open item.
 
-### Expo / EAS
-- [ ] Register the Scout iOS bundle ID in Apple Developer
-- [ ] Upload APNs Auth Key to the Scout Expo project
-- [ ] `cd scout-ui && eas init` to create the EAS project ID
-- [ ] Paste the EAS project ID into `scout-ui/app.json` under
-      `expo.extra.eas.projectId` and open a small follow-up PR
-      (without it, `Notifications.getExpoPushTokenAsync` fails on
-      EAS-built apps)
+Out-of-repo config (not version-controlled, recorded here so audits
+have the full picture):
+- [x] Apple Developer: Scout iOS bundle ID registered
+- [x] Expo: APNs Auth Key uploaded to the Scout Expo project
+- [x] EAS project ID created and pasted into `scout-ui/app.json`
+      under `expo.extra.eas.projectId` (see the file for value)
+- [x] Vercel: `EXPO_PUBLIC_PUSH_PROVIDER=expo` set in production env
+- [x] Railway backend: `PUSH_PROVIDER=expo` + `EXPO_PUSH_SECURITY_ENABLED=false`
+      set 2026-04-21 (unchanged)
+- [x] Physical-device validation complete: device registers via
+      `/settings/notifications` -> Registered devices, test pushes
+      display on iPhone, tap opens Scout and `tapped_at` populates
 
-### Railway env vars (backend)
-- [x] `PUSH_PROVIDER=expo` — set 2026-04-21
-- [x] `EXPO_PUSH_SECURITY_ENABLED=false` — set 2026-04-21
-      (optional: set to `true` + provide `EXPO_ACCESS_TOKEN`)
-
-### Vercel env vars (frontend)
-- [ ] `EXPO_PUBLIC_PUSH_PROVIDER=expo`
-
-### Physical-device validation
-- [ ] Install the Scout app on a physical iPhone, sign in
-- [ ] Device appears under `/settings/notifications` → Registered devices
-- [ ] Admin sends a test push from another session
-- [ ] iPhone displays the notification
-- [ ] Tapping the notification opens Scout and `tapped_at` populates
+Open operations work on this surface (tracked separately):
+- [ ] Rotation + incident procedure for APNs key, Expo access token,
+      and EAS project credentials - deferred to the ops playbook
+      (gap-analysis recommendation #8)
 
 ---
 
