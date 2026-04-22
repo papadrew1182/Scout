@@ -672,9 +672,12 @@ class TestDispatchWithItems:
         now = _utcnow()
         occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
 
         # No push device => no push; test the Inbox path clean
-        written = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+        written = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
 
         assert written == 1
         parents = list(db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).all())
@@ -687,9 +690,9 @@ class TestDispatchWithItems:
         assert "push" not in parents[0].delivered_channels
         inbox = db.get(ParentActionItem, parents[0].parent_action_item_id)
         assert inbox is not None
-        # action_type falls back to 'general' until chk_parent_action_items_action_type
-        # is widened (migration pending). entity_type carries the trigger kind.
-        assert inbox.action_type == "general"
+        # Phase 2 + migration 050: chk_parent_action_items_action_type now
+        # allows nudge.* values. action_type reflects the trigger_kind.
+        assert inbox.action_type == "nudge.overdue_task"
         assert inbox.entity_type == "personal_task"
         assert "Take out bins" in inbox.title or "Take out bins" in (inbox.detail or "")
 
@@ -699,9 +702,12 @@ class TestDispatchWithItems:
         occurrence = now.replace(tzinfo=None) - timedelta(hours=1)
         entity_id = __import__("uuid").uuid4()
         prop = self._base_proposal(andrew.id, occurrence, entity_id=entity_id)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
 
-        first = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
-        second = nudges_service.dispatch_with_items(db, [prop], now.replace(tzinfo=None))
+        first = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
+        second = nudges_service.dispatch_with_items(db, [bundle], now.replace(tzinfo=None))
 
         assert first == 1
         assert second == 0
@@ -760,7 +766,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        nudges_service.dispatch_with_items(db, [bundle], now)
 
         assert len(sent) == 1
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
@@ -781,7 +790,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        nudges_service.dispatch_with_items(db, [bundle], now)
 
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
         assert parent.push_delivery_id is None
@@ -815,7 +827,10 @@ class TestDispatchWithItems:
 
         occurrence = now - timedelta(hours=1)
         prop = self._base_proposal(andrew.id, occurrence)
-        written = nudges_service.dispatch_with_items(db, [prop], now)
+        bundle = nudges_service.ProposalBundle(
+            family_member_id=prop.family_member_id, proposals=[prop]
+        )
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
 
         assert written == 1
         parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
@@ -826,9 +841,10 @@ class TestDispatchWithItems:
     def test_one_proposal_dedupe_does_not_undo_siblings(
         self, db: Session, family, adults
     ):
-        """Two proposals in one call. First succeeds, second has a
-        pre-existing dedupe row (simulated by dispatching it first).
-        Per-proposal SAVEPOINT ensures the first stays committed."""
+        """Two proposals (as separate bundles) in one call. First
+        succeeds, second has a pre-existing dedupe row (simulated by
+        dispatching it first). Per-bundle SAVEPOINT ensures the first
+        stays committed."""
         andrew = adults["robert"]
         now = _utcnow().replace(tzinfo=None)
         e1 = __import__("uuid").uuid4()
@@ -837,13 +853,19 @@ class TestDispatchWithItems:
 
         prop_first = self._base_proposal(andrew.id, occurrence, entity_id=e1)
         prop_second = self._base_proposal(andrew.id, occurrence, entity_id=e2)
+        bundle_first = nudges_service.ProposalBundle(
+            family_member_id=prop_first.family_member_id, proposals=[prop_first]
+        )
+        bundle_second = nudges_service.ProposalBundle(
+            family_member_id=prop_second.family_member_id, proposals=[prop_second]
+        )
 
         # Pre-seed dedupe for prop_second
-        nudges_service.dispatch_with_items(db, [prop_second], now)
+        nudges_service.dispatch_with_items(db, [bundle_second], now)
         assert db.query(NudgeDispatchItem).count() == 1
 
         written = nudges_service.dispatch_with_items(
-            db, [prop_first, prop_second], now
+            db, [bundle_first, bundle_second], now
         )
 
         # First is new (+1), second is deduped (no change)
@@ -926,8 +948,16 @@ class TestTickBenchmark:
         written = nudges_service.run_nudge_scan(db, now_utc=now)
         elapsed = _time.monotonic() - t0
 
-        # Everyone defaults to balanced proactivity, so 70 proposals should dispatch
-        assert written >= 50, f"expected >=50 dispatches, got {written}"
+        # Phase 2: run_nudge_scan now batches per member, so 70 proposals
+        # collapse into a handful of bundles (4 members with overdue +
+        # upcoming within 10-min anchors). Benchmark asserts the tick
+        # produced something and stayed under budget. Per-child item
+        # counts are covered in dedicated dispatch + batch tests.
+        assert written >= 1, f"expected >=1 bundle dispatched, got {written}"
+        child_count = db.query(NudgeDispatchItem).count()
+        assert child_count >= 50, (
+            f"expected >=50 child items written, got {child_count}"
+        )
         assert elapsed < 10.0, f"tick took {elapsed:.2f}s (budget 10.0s)"
 
 
@@ -1226,3 +1256,291 @@ class TestBatchProposals:
         bundles = nudges_service.batch_proposals([p1, p2, p3], window_minutes=10)
         assert len(bundles) == 1
         assert bundles[0].effective_deliver_after == datetime(2026, 4, 21, 12, 0)
+
+
+class TestDispatchBundles:
+    def test_single_item_bundle_matches_phase_1_shape(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "Trash",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.source_count == 1
+        assert parent.status == "delivered"
+        assert parent.body == "Reminder: Trash was due at 08:00 AM."
+        assert parent.parent_action_item_id is not None
+        inbox = db.get(ParentActionItem, parent.parent_action_item_id)
+        assert inbox.action_type == "nudge.overdue_task"
+
+    def test_multi_item_bundle_writes_composite(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        props = [
+            nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=__import__("uuid").uuid4(),
+                scheduled_for=occurrence + timedelta(seconds=i * 30),
+                severity="normal",
+                context={
+                    "title": f"Task {i}",
+                    "due_time": "08:00 AM",
+                    "occurrence_at_utc": occurrence + timedelta(seconds=i * 30),
+                    "proactivity": "balanced",
+                },
+            )
+            for i in range(3)
+        ]
+        bundle = nudges_service.ProposalBundle(andrew.id, props)
+
+        written = nudges_service.dispatch_with_items(db, [bundle], now)
+
+        assert written == 1
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.source_count == 3
+        assert "3 items to check" in parent.body
+        assert "Task 0" in parent.body and "Task 1" in parent.body
+        assert "1 more" in parent.body
+        children = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).all()
+        assert len(children) == 3
+        inbox = db.get(ParentActionItem, parent.parent_action_item_id)
+        assert inbox.title == "You have 3 nudges"
+
+    def test_hold_path_writes_pending_no_inbox(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during hold")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        # 06:00 UTC 2026-04-21 = 01:00 CDT, inside quiet window
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context={
+                "title": "t",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "pending"
+        assert parent.parent_action_item_id is None
+        assert parent.delivered_at_utc is None
+        assert parent.delivered_channels == []
+        # Held to window end: 07:00 local = 12:00 UTC. The column is
+        # TIMESTAMPTZ, so psycopg2 hydrates the row as tz-aware in the
+        # session's timezone; compare the UTC moment rather than the
+        # naive wall-clock to stay robust to the session TZ.
+        expected_hold_utc = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+        actual = parent.deliver_after_utc
+        if actual.tzinfo is None:
+            actual = actual.replace(tzinfo=timezone.utc)
+        assert actual.astimezone(timezone.utc) == expected_hold_utc
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).count()
+        assert child_count == 1
+
+    def test_drop_path_writes_suppressed_no_inbox(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Low severity inside window -> suppressed audit row, no Inbox."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during drop")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="missed_routine",
+            trigger_entity_kind="task_instance",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="low",
+            context={
+                "name": "Morning",
+                "due_time": "01:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "suppressed"
+        assert parent.suppressed_reason == "quiet_hours"
+        assert parent.parent_action_item_id is None
+        assert parent.delivered_channels == []
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            dispatch_id=parent.id
+        ).count()
+        assert child_count == 1
+
+    def test_high_severity_bypasses_quiet_hours(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="high",
+            context={
+                "title": "urgent",
+                "due_time": "05:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(family_member_id=andrew.id).one()
+        assert parent.status == "delivered"
+        assert parent.parent_action_item_id is not None
+
+
+class TestCrossMidnightDedupe:
+    def test_held_proposal_rescanned_does_not_double_dispatch(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Scanner emits the same proposal on two back-to-back ticks
+        while the first dispatch is held. Second tick's pre-check finds
+        the existing child item and skips. Only one parent + one child
+        exists at the end."""
+        andrew = adults["robert"]
+        family.timezone = "America/Chicago"
+        db.add(
+            QuietHoursFamily(
+                family_id=family.id,
+                start_local_minute=22 * 60,
+                end_local_minute=7 * 60,
+            )
+        )
+        db.commit()
+
+        def no_push(db_arg, **kw):
+            raise AssertionError("should not push during hold")
+
+        from app.services import push_service as ps
+        monkeypatch.setattr(ps, "send_push", no_push)
+
+        now = datetime(2026, 4, 21, 6, 0)
+        occurrence = now - timedelta(hours=1)
+        entity_id = __import__("uuid").uuid4()
+        def make_prop():
+            return nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=entity_id,
+                scheduled_for=now,
+                severity="normal",
+                context={
+                    "title": "t",
+                    "due_time": "05:00 AM",
+                    "occurrence_at_utc": occurrence,
+                    "proactivity": "balanced",
+                },
+            )
+
+        # Tick 1: held
+        bundle1 = nudges_service.ProposalBundle(andrew.id, [make_prop()])
+        nudges_service.dispatch_with_items(db, [bundle1], now)
+
+        # Tick 2 (5 min later, still inside window): scanner re-emits.
+        # Pre-check finds the existing child source_dedupe_key. Skip.
+        later = now + timedelta(minutes=5)
+        bundle2 = nudges_service.ProposalBundle(andrew.id, [make_prop()])
+        nudges_service.dispatch_with_items(db, [bundle2], later)
+
+        parent_count = db.query(NudgeDispatch).filter_by(
+            family_member_id=andrew.id
+        ).count()
+        child_count = db.query(NudgeDispatchItem).filter_by(
+            family_member_id=andrew.id
+        ).count()
+        assert parent_count == 1
+        assert child_count == 1
