@@ -1054,12 +1054,16 @@ def scan_rule_triggers(
     wall-clock budget (default 2.0s) stops iteration when exhausted;
     skipped count is logged at INFO.
 
-    Cross-family by design: the scheduler tick is global. Each rule's
-    family_id is the author's family; rule logic is responsible for
-    restricting which member_ids appear in its output.
+    Family-scope enforcement: each rule is authored within a specific
+    family_id. After a rule's canonical SQL runs, emitted rows are
+    filtered so only member_ids belonging to the rule's own family
+    survive. Rows that name members in other families are dropped
+    and logged at WARNING as cross_family_drop. This is authoritative;
+    rules MUST NOT assume caller-level restriction.
     """
     import time as _time
 
+    from app.models.foundation import FamilyMember
     from app.models.nudge_rules import NudgeRule
 
     rules = list(
@@ -1095,6 +1099,39 @@ def scan_rule_triggers(
                 rule.id, rule.name, e,
             )
             continue
+
+        # Family-scope enforcement: drop any row whose member_id does
+        # not belong to this rule's family. Rule authors cannot reach
+        # across tenants even if their canonical SQL tries to.
+        if rows:
+            member_ids_in_rows = {
+                r.get("member_id")
+                for r in rows
+                if r.get("member_id") is not None
+            }
+            if member_ids_in_rows:
+                in_family = set(db.scalars(
+                    select(FamilyMember.id).where(
+                        FamilyMember.id.in_(member_ids_in_rows),
+                        FamilyMember.family_id == rule.family_id,
+                    )
+                ).all())
+            else:
+                in_family = set()
+            dropped = 0
+            filtered_rows = []
+            for r in rows:
+                mid = r.get("member_id")
+                if mid is None or mid not in in_family:
+                    dropped += 1
+                    continue
+                filtered_rows.append(r)
+            if dropped:
+                logger.warning(
+                    "scan_rule_triggers cross_family_drop rule=%s name=%s dropped=%s",
+                    rule.id, rule.name, dropped,
+                )
+            rows = filtered_rows
 
         lead = timedelta(minutes=int(rule.default_lead_time_minutes or 0))
         for r in rows:

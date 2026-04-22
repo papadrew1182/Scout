@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 import pytz
@@ -2878,6 +2878,66 @@ class TestScanRuleTriggers:
         assert p.trigger_kind == "custom_rule"
         assert p.trigger_entity_kind == "personal_task"
         assert p.severity == "normal"
+
+    def test_rule_cannot_emit_member_from_other_family(
+        self, db: Session, family, adults
+    ):
+        """Family-scope enforcement: a rule authored in Family A whose
+        canonical SQL names a Family B member's id must have that row
+        dropped before a NudgeProposal is emitted. This is the
+        regression test for the admin-rule cross-tenant leak.
+        """
+        from app.models.foundation import Family, FamilyMember
+        from app.models.nudge_rules import NudgeRule
+
+        now = _utcnow().replace(tzinfo=None)
+
+        # Seed Family B with one member whose id the attacker-rule will
+        # try to emit. Family A is the `family` fixture (authoring tenant).
+        other_family = Family(name="Other", timezone="UTC")
+        db.add(other_family)
+        db.flush()
+        other_member = FamilyMember(
+            family_id=other_family.id,
+            first_name="Outsider",
+            last_name="X",
+            role="adult",
+            birthdate=date(1990, 1, 1),
+        )
+        db.add(other_member)
+        db.flush()
+
+        # Rule belongs to Family A, but its canonical SQL selects the
+        # Family B member's id verbatim. The allowlist permits
+        # family_members, so the validator-canonicalized form reads it
+        # back directly. Hardcoding the UUID via f-string is fine here;
+        # this test exercises the scanner's filter, not the validator.
+        canonical = (
+            "SELECT id AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, now() AS scheduled_for "
+            f"FROM family_members WHERE id = '{other_member.id}'"
+        )
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="cross-family-attempt",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",  # unused at scan time
+            canonical_sql=canonical,
+            trigger_kind="custom_rule",
+            default_lead_time_minutes=0,
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        # No proposal may carry a Family B member_id, even though the
+        # rule's SQL explicitly named one.
+        assert not any(
+            p.family_member_id == other_member.id for p in proposals
+        ), "cross-family member_id leaked into proposals"
+        # With only this one rule, the rule contributed no proposals.
+        assert proposals == []
 
     def test_inactive_rule_is_skipped(
         self, db: Session, family, adults
