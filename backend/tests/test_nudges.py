@@ -77,6 +77,20 @@ def client(db):
         app.dependency_overrides.clear()
 
 
+def _force_compose_fallback(monkeypatch):
+    """Force compose_body's orchestrator call to raise so tests that
+    assert on specific body text deterministically hit the fixed-template
+    fallback path. Used by TestDispatchBundles and TestCrossMidnightDedupe
+    cases that care about body content regardless of whether the test
+    env has an AI key configured."""
+    from app.ai import orchestrator as orch
+
+    def raising(**kwargs):
+        raise RuntimeError("test: force fallback")
+
+    monkeypatch.setattr(orch, "generate_nudge_body", raising)
+
+
 class TestScanOverdueTasks:
     def test_overdue_task_produces_one_proposal_for_the_assignee(
         self, db: Session, family, adults
@@ -1314,8 +1328,9 @@ class TestBatchProposals:
 
 class TestDispatchBundles:
     def test_single_item_bundle_matches_phase_1_shape(
-        self, db: Session, family, adults
+        self, db: Session, family, adults, monkeypatch
     ):
+        _force_compose_fallback(monkeypatch)
         andrew = adults["robert"]
         now = _utcnow().replace(tzinfo=None)
         occurrence = now - timedelta(hours=1)
@@ -1347,8 +1362,9 @@ class TestDispatchBundles:
         assert inbox.action_type == "nudge.overdue_task"
 
     def test_multi_item_bundle_writes_composite(
-        self, db: Session, family, adults
+        self, db: Session, family, adults, monkeypatch
     ):
+        _force_compose_fallback(monkeypatch)
         andrew = adults["robert"]
         now = _utcnow().replace(tzinfo=None)
         occurrence = now - timedelta(hours=1)
@@ -2061,3 +2077,204 @@ class TestComposeBody:
         assert "2 items to check" in body
         assert "Task 0" in body
         assert "Task 1" in body
+
+
+class TestPersonalitySubstringMatrix:
+    """Per revised plan Section 8 acceptance criterion: >=3
+    personalities asserting the composed body carries tone-marker
+    substrings from the preamble. Mocks orchestrator.generate_nudge_body
+    to return preamble-derived text so we can assert deterministically."""
+
+    def _force_ai_available(self, monkeypatch) -> None:
+        from app.config import settings
+        monkeypatch.setattr(settings, "enable_ai", True)
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+
+    def _compose_for_member(self, db, member_id, proposal_context=None):
+        """Build a minimal proposal and call compose_body."""
+        now = _utcnow().replace(tzinfo=None)
+        ctx = proposal_context or {
+            "title": "Dishes",
+            "due_time": "08:00 AM",
+            "occurrence_at_utc": now,
+        }
+        prop = nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now,
+            severity="normal",
+            context=ctx,
+        )
+        return prop, now
+
+    def test_terse_personality_body_reflects_tone(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        from app.services import ai_personality_service
+        # Tone=direct, verbosity=short -> terse profile
+        ai_personality_service.upsert_personality(
+            db,
+            family_member_id=andrew.id,
+            payload={"tone": "direct", "verbosity": "short"},
+        )
+
+        captured = {}
+
+        def fake_generate(**kwargs):
+            captured.update(kwargs)
+            preamble = kwargs.get("personality_preamble", "")
+            # Return something that clearly reflects the preamble tone
+            return f"[terse-reply] tone:{'direct' in preamble} short:{'short' in preamble}"
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        prop, now = self._compose_for_member(db, andrew.id)
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+
+        assert "direct" in captured["personality_preamble"]
+        assert "short" in captured["personality_preamble"]
+        assert "tone:True" in body
+        assert "short:True" in body
+
+    def test_warm_personality_body_reflects_tone(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        self._force_ai_available(monkeypatch)
+        megan = adults["megan"]
+        from app.services import ai_personality_service
+        ai_personality_service.upsert_personality(
+            db,
+            family_member_id=megan.id,
+            payload={"tone": "warm", "humor": "light"},
+        )
+
+        captured = {}
+
+        def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "[warm-reply]"
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        prop, now = self._compose_for_member(db, megan.id)
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+
+        assert "warm" in captured["personality_preamble"]
+        assert "light" in captured["personality_preamble"]
+        assert body == "[warm-reply]"
+
+    def test_formal_personality_body_reflects_tone(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        from app.services import ai_personality_service
+        ai_personality_service.upsert_personality(
+            db,
+            family_member_id=andrew.id,
+            payload={"tone": "professional", "formality": "formal"},
+        )
+
+        captured = {}
+
+        def fake_generate(**kwargs):
+            captured.update(kwargs)
+            return "[formal-reply]"
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        prop, now = self._compose_for_member(db, andrew.id)
+        body = nudges_service.compose_body(db, family.id, [prop], now)
+
+        assert "professional" in captured["personality_preamble"]
+        assert "formal" in captured["personality_preamble"]
+        assert body == "[formal-reply]"
+
+
+class TestDispatchUsesComposeBody:
+    def _force_ai_available(self, monkeypatch) -> None:
+        from app.config import settings
+        monkeypatch.setattr(settings, "enable_ai", True)
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test")
+
+    def test_dispatch_writes_ai_composed_body_when_available(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """dispatch_with_items -> compose_body -> generate_nudge_body
+        when AI is available. The parent.body reflects the composer
+        return value (mocked)."""
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now - timedelta(hours=1),
+            severity="normal",
+            context={
+                "title": "Dishes",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": now - timedelta(hours=1),
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        def fake_generate(**kwargs):
+            return "Custom AI copy here."
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", fake_generate)
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(
+            family_member_id=andrew.id
+        ).one()
+        assert parent.body == "Custom AI copy here."
+
+    def test_dispatch_falls_back_when_composer_raises(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """When the composer raises, dispatch still writes the parent
+        + child with the fixed-template body."""
+        self._force_ai_available(monkeypatch)
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=now - timedelta(hours=1),
+            severity="normal",
+            context={
+                "title": "Dishes",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": now - timedelta(hours=1),
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+
+        def raising(**kwargs):
+            raise RuntimeError("composer down")
+
+        from app.ai import orchestrator as orch
+        monkeypatch.setattr(orch, "generate_nudge_body", raising)
+
+        nudges_service.dispatch_with_items(db, [bundle], now)
+
+        parent = db.query(NudgeDispatch).filter_by(
+            family_member_id=andrew.id
+        ).one()
+        assert parent.body == "Reminder: Dishes was due at 08:00 AM."

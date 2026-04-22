@@ -831,7 +831,14 @@ def dispatch_with_items(
         try:
             with db.begin_nested():
                 proposals_only = [p for p, _ in resolved_pairs]
-                body = _render_bundle_body(proposals_only)
+                body = compose_body(
+                    db,
+                    family_id=_family_id_for_member(
+                        db, bundle.family_member_id
+                    ),
+                    proposals=proposals_only,
+                    now_utc=now_utc,
+                )
                 short_title = _render_bundle_inbox_title(proposals_only)
                 first_kind = resolved_pairs[0][0].trigger_kind
 
