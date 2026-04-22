@@ -3,24 +3,78 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, time, timedelta, timezone
 
 import pytest
+import pytz
 from sqlalchemy.orm import Session
 
 from app.models.action_items import ParentActionItem
 from app.models.calendar import Event, EventAttendee
+from app.models.foundation import Session as SessionModel, UserAccount
 from app.models.life_management import ChoreTemplate, Routine, TaskInstance
 from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.personal_tasks import PersonalTask
 from app.models.push import PushDelivery, PushDevice
 from app.models.quiet_hours import QuietHoursFamily
 from app.services import ai_personality_service, nudges_service
+from app.services.auth_service import hash_password
 
 
 def _utcnow() -> datetime:
     # tz-aware; compare-safe against Postgres-hydrated timestamptz values
     return datetime.now(timezone.utc)
+
+
+def _make_account_and_token(db: Session, member_id, email: str) -> str:
+    """Create a UserAccount + Session and return the bearer token.
+
+    Lifted from test_ai_conversation_resume.py (Sprint 04 Phase 1) so
+    HTTP tests in this file can authenticate without depending on
+    that module's fixture.
+    """
+    account = UserAccount(
+        id=uuid.uuid4(),
+        family_member_id=member_id,
+        email=email,
+        auth_provider="email",
+        password_hash=hash_password("x" * 12),
+        is_primary=True,
+        is_active=True,
+    )
+    db.add(account)
+    db.flush()
+    token = f"tok-{uuid.uuid4().hex}"
+    db.add(
+        SessionModel(
+            user_account_id=account.id,
+            token=token,
+            expires_at=datetime.now(pytz.UTC).replace(tzinfo=None) + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    return token
+
+
+@pytest.fixture
+def client(db):
+    """TestClient with the request-scoped db session overridden so the
+    route sees the same data the test seeds."""
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    c = TestClient(app)
+    try:
+        yield c
+    finally:
+        app.dependency_overrides.clear()
 
 
 class TestScanOverdueTasks:
@@ -1544,3 +1598,134 @@ class TestCrossMidnightDedupe:
         ).count()
         assert parent_count == 1
         assert child_count == 1
+
+
+class TestNudgesMeRoute:
+    def test_returns_empty_list_when_no_dispatches(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_returns_callers_recent_dispatches(
+        self, db: Session, family, adults, client, monkeypatch
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+        prop = nudges_service.NudgeProposal(
+            family_member_id=andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "T",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        bundle = nudges_service.ProposalBundle(andrew.id, [prop])
+        nudges_service.dispatch_with_items(db, [bundle], now)
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body) == 1
+        assert body[0]["status"] == "delivered"
+        assert body[0]["severity"] == "normal"
+        assert body[0]["source_count"] == 1
+        assert len(body[0]["items"]) == 1
+        assert body[0]["items"][0]["trigger_kind"] == "overdue_task"
+
+    def test_self_scoped_does_not_leak_other_members(
+        self, db: Session, family, adults, client
+    ):
+        """Andrew's call only sees Andrew's dispatches, never Megan's."""
+        andrew = adults["robert"]
+        megan = adults["megan"]
+        token_andrew = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+
+        now = _utcnow().replace(tzinfo=None)
+        occurrence = now - timedelta(hours=1)
+
+        # Megan has a dispatch; Andrew does not.
+        megan_prop = nudges_service.NudgeProposal(
+            family_member_id=megan.id,
+            trigger_kind="overdue_task",
+            trigger_entity_kind="personal_task",
+            trigger_entity_id=__import__("uuid").uuid4(),
+            scheduled_for=occurrence,
+            severity="normal",
+            context={
+                "title": "M",
+                "due_time": "08:00 AM",
+                "occurrence_at_utc": occurrence,
+                "proactivity": "balanced",
+            },
+        )
+        nudges_service.dispatch_with_items(
+            db, [nudges_service.ProposalBundle(megan.id, [megan_prop])], now
+        )
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me",
+            headers={"Authorization": f"Bearer {token_andrew}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_limit_query_param_respected(
+        self, db: Session, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-nudges@test.app")
+        now = _utcnow().replace(tzinfo=None)
+
+        for i in range(5):
+            occurrence = now - timedelta(hours=1 + i)
+            prop = nudges_service.NudgeProposal(
+                family_member_id=andrew.id,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=__import__("uuid").uuid4(),
+                scheduled_for=occurrence,
+                severity="normal",
+                context={
+                    "title": f"T{i}",
+                    "due_time": "08:00 AM",
+                    "occurrence_at_utc": occurrence,
+                    "proactivity": "balanced",
+                },
+            )
+            nudges_service.dispatch_with_items(
+                db, [nudges_service.ProposalBundle(andrew.id, [prop])], now
+            )
+        db.commit()
+
+        r = client.get(
+            "/api/nudges/me?limit=3",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert len(r.json()) == 3
+
+    def test_unauthenticated_returns_401(self, client):
+        r = client.get("/api/nudges/me")
+        assert r.status_code == 401

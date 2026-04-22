@@ -27,6 +27,7 @@ from app.routes import (
     meals,
     memory as memory_routes,
     notes,
+    nudges,
     personal_tasks,
     projects,
     project_templates,
@@ -112,6 +113,7 @@ app.include_router(projects.router)
 app.include_router(project_templates.router)
 app.include_router(dashboard.router)
 app.include_router(ai.router)
+app.include_router(nudges.router)
 app.include_router(storage.router)
 app.include_router(client_errors.router)
 app.include_router(memory_routes.router)
