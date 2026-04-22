@@ -44,6 +44,7 @@ from sqlglot import exp
 
 __all__ = [
     "CanonicalSQL",
+    "RuleExecutionError",
     "RuleValidationError",
     "validate_rule_sql",
 ]
@@ -191,6 +192,15 @@ class RuleValidationError(ValueError):
 
     The message always starts with one of the stable bracketed tags
     documented in the module docstring (e.g. [disallowed-node]).
+    """
+
+
+class RuleExecutionError(RuntimeError):
+    """Raised by execute_validated_rule_sql on timeout / lock / DB error.
+
+    The message always starts with one of the stable bracketed tags:
+    [timeout], [lock_timeout], [db_error], or [schema]. The scanner
+    callers match on these prefixes for structured logging.
     """
 
 
