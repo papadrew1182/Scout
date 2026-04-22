@@ -93,6 +93,20 @@ export async function patch<T>(url: string, body: unknown): Promise<T> {
   return await res.json();
 }
 
+export async function del(url: string): Promise<void> {
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.error("API ERROR:", res.status, url, text);
+    throw new Error(`DELETE ${url} failed: ${res.status} ${text}`);
+  }
+  // No body expected for 204
+}
+
 // ---------------------------------------------------------------------------
 // Family members
 // ---------------------------------------------------------------------------
