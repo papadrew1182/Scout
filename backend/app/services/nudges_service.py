@@ -1043,6 +1043,58 @@ def execute_validated_rule_sql(
         raise RuleExecutionError(f"[db_error] {e}") from e
 
 
+def filter_rule_rows_to_family(
+    db: Session,
+    rows: list[dict],
+    rule_family_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    rule_name: str,
+) -> list[dict]:
+    """Family-scope enforcement for rule output. Drops any row whose
+    member_id does not belong to rule_family_id. Returns the filtered
+    list; the caller decides what to do with it. Logs a WARNING as
+    cross_family_drop with counts only if any rows were dropped.
+
+    Used by both the scheduler (scan_rule_triggers, where dropped rows
+    would have produced cross-tenant dispatches) and the admin preview-
+    count route (where dropped rows would have leaked cross-tenant
+    counts via the response body). Both callers must apply this before
+    returning output to a user.
+    """
+    from app.models.foundation import FamilyMember
+
+    if not rows:
+        return []
+    member_ids_in_rows = {
+        r.get("member_id")
+        for r in rows
+        if r.get("member_id") is not None
+    }
+    if member_ids_in_rows:
+        in_family = set(db.scalars(
+            select(FamilyMember.id).where(
+                FamilyMember.id.in_(member_ids_in_rows),
+                FamilyMember.family_id == rule_family_id,
+            )
+        ).all())
+    else:
+        in_family = set()
+    dropped = 0
+    filtered: list[dict] = []
+    for r in rows:
+        mid = r.get("member_id")
+        if mid is None or mid not in in_family:
+            dropped += 1
+            continue
+        filtered.append(r)
+    if dropped:
+        logger.warning(
+            "nudge_rule cross_family_drop rule=%s name=%s dropped=%s",
+            rule_id, rule_name, dropped,
+        )
+    return filtered
+
+
 def scan_rule_triggers(
     db: Session,
     now_utc: datetime,
@@ -1063,7 +1115,6 @@ def scan_rule_triggers(
     """
     import time as _time
 
-    from app.models.foundation import FamilyMember
     from app.models.nudge_rules import NudgeRule
 
     rules = list(
@@ -1103,35 +1154,9 @@ def scan_rule_triggers(
         # Family-scope enforcement: drop any row whose member_id does
         # not belong to this rule's family. Rule authors cannot reach
         # across tenants even if their canonical SQL tries to.
-        if rows:
-            member_ids_in_rows = {
-                r.get("member_id")
-                for r in rows
-                if r.get("member_id") is not None
-            }
-            if member_ids_in_rows:
-                in_family = set(db.scalars(
-                    select(FamilyMember.id).where(
-                        FamilyMember.id.in_(member_ids_in_rows),
-                        FamilyMember.family_id == rule.family_id,
-                    )
-                ).all())
-            else:
-                in_family = set()
-            dropped = 0
-            filtered_rows = []
-            for r in rows:
-                mid = r.get("member_id")
-                if mid is None or mid not in in_family:
-                    dropped += 1
-                    continue
-                filtered_rows.append(r)
-            if dropped:
-                logger.warning(
-                    "scan_rule_triggers cross_family_drop rule=%s name=%s dropped=%s",
-                    rule.id, rule.name, dropped,
-                )
-            rows = filtered_rows
+        rows = filter_rule_rows_to_family(
+            db, rows, rule.family_id, rule.id, rule.name
+        )
 
         lead = timedelta(minutes=int(rule.default_lead_time_minutes or 0))
         for r in rows:

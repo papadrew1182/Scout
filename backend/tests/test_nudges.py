@@ -3428,6 +3428,71 @@ class TestAdminNudgeRulesRoutes:
         assert body["capped"] is False
         assert body["error"] is None
 
+    def test_preview_count_does_not_leak_cross_family_rows(
+        self, db, family, adults, client
+    ):
+        """Regression: /preview-count must apply the same family-scope
+        filter as scan_rule_triggers so a rule authored in Family A
+        cannot enumerate rows belonging to Family B.
+        """
+        from app.models.foundation import Family, FamilyMember
+        from app.models.nudge_rules import NudgeRule
+
+        andrew = adults["robert"]
+
+        # Seed Family B with one member whose id the attacker-rule
+        # explicitly names. Family A is the `family` fixture.
+        other_family = Family(name="Other", timezone="UTC")
+        db.add(other_family)
+        db.flush()
+        other_member = FamilyMember(
+            family_id=other_family.id,
+            first_name="Outsider",
+            last_name="X",
+            role="adult",
+            birthdate=date(1990, 1, 1),
+        )
+        db.add(other_member)
+        db.flush()
+
+        # Rule belongs to Family A but its canonical SQL names the
+        # Family B member's id. The validator would accept the raw form
+        # (family_members is on the allowlist); we store the canonical
+        # hand-rolled here because the test targets the route's filter,
+        # not the validator.
+        canonical = (
+            "SELECT id AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, now() AS scheduled_for "
+            f"FROM family_members WHERE id = '{other_member.id}'"
+        )
+        rule = NudgeRule(
+            family_id=family.id,
+            name="cross-family-preview",
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=canonical,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        token = _make_account_and_token(
+            db, andrew.id, "andrew-cross-family@test.app"
+        )
+        r = client.post(
+            f"/api/admin/nudges/rules/{rule.id}/preview-count",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        # The raw SQL would return 1 row (the Family B member). The
+        # filter drops it so the response count is 0 and no cross-
+        # tenant size is disclosed.
+        assert body["count"] == 0, (
+            f"preview-count leaked cross-family row count: {body}"
+        )
+        assert body["error"] is None
+
     def test_non_admin_cannot_access_routes(
         self, db, family, adults, children, client
     ):

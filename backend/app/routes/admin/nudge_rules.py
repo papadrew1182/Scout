@@ -177,5 +177,13 @@ def preview_count(
         )
     except RuleExecutionError as e:
         return PreviewCountResponse(count=0, capped=False, error=str(e))
-    count = len(rows)
-    return PreviewCountResponse(count=count, capped=(count == 200))
+    # Apply family-scope filter so the preview count cannot leak
+    # cross-tenant row counts. A rule authored in Family A that tries
+    # to SELECT from Family B will report 0 matches here, matching what
+    # scan_rule_triggers would actually dispatch.
+    raw_count = len(rows)
+    filtered = nudges_service.filter_rule_rows_to_family(
+        db, rows, rule.family_id, rule.id, rule.name
+    )
+    count = len(filtered)
+    return PreviewCountResponse(count=count, capped=(raw_count == 200))
