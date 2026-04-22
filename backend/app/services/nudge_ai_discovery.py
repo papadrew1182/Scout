@@ -36,10 +36,11 @@ from sqlalchemy.orm import Session
 from app.ai import orchestrator
 from app.config import settings
 from app.models.calendar import Event, EventAttendee
-from app.models.foundation import FamilyMember
+from app.models.foundation import Family, FamilyMember
 from app.models.life_management import Routine, TaskInstance
 from app.models.personal_tasks import PersonalTask
 from app.schemas.nudge_discovery import DiscoveryProposal
+from app.services import nudges_service
 from app.services.nudges_service import NudgeProposal
 
 logger = logging.getLogger("scout.nudges.ai_discovery")
@@ -452,3 +453,75 @@ def propose_nudges(
         len(converted),
     )
     return converted
+
+
+# ---------------------------------------------------------------------------
+# Scheduler tick entry point
+# ---------------------------------------------------------------------------
+
+
+def nudge_ai_discovery_tick(db: Session, now_utc: datetime) -> int:
+    """Scheduler tick entry point for Phase 5 AI-driven discovery.
+
+    Iterates all families in the system. For each family:
+      - Calls propose_nudges(db, family.id, now_utc) which self-throttles
+        to one AI call per hour per family.
+      - Feeds returned proposals through the shared dispatch pipeline
+        (apply_proactivity -> batch_proposals -> dispatch_with_items)
+        so quiet hours, batching, and dedupe all apply consistently.
+
+    Returns total count of new parent dispatches across all families.
+
+    Exceptions from a single family are logged at WARN and the tick
+    moves on to the next family; one bad family does not poison the
+    whole cycle. The Family model has no is_active column (only
+    FamilyMember does), so every row is considered in scope.
+    """
+    families = list(db.scalars(select(Family)).all())
+    total_dispatches = 0
+    families_processed = 0
+
+    for fam in families:
+        families_processed += 1
+        try:
+            proposals = propose_nudges(db, fam.id, now_utc)
+            if not proposals:
+                logger.debug(
+                    "nudge_ai_discovery_tick family_id=%s proposals=0",
+                    fam.id,
+                )
+                continue
+
+            # resolve_occurrence_fields reads context['occurrence_at_utc']
+            # as the source timestamp for dedupe_key generation. Built-in
+            # scanners stamp this in scan_*; for AI-suggested proposals
+            # the discovery service stamps it here from scheduled_for
+            # (the AI's intended delivery time) so the existing dispatch
+            # pipeline can consume these proposals unchanged.
+            for p in proposals:
+                if "occurrence_at_utc" not in p.context:
+                    p.context["occurrence_at_utc"] = p.scheduled_for
+
+            gated = nudges_service.apply_proactivity(db, proposals, now_utc)
+            bundles = nudges_service.batch_proposals(gated)
+            dispatched = nudges_service.dispatch_with_items(
+                db, bundles, now_utc
+            )
+            total_dispatches += dispatched
+        except Exception as exc:
+            # Isolate per-family failures. One bad family must not
+            # stall the cycle. Mirrors the per-job rollback boundaries
+            # in scheduler._tick.
+            logger.warning(
+                "nudge_ai_discovery_tick family_failed family_id=%s err=%s",
+                fam.id,
+                exc,
+            )
+            continue
+
+    logger.info(
+        "nudge_ai_discovery_tick families=%s dispatches=%s",
+        families_processed,
+        total_dispatches,
+    )
+    return total_dispatches

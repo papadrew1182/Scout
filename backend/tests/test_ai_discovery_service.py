@@ -23,6 +23,7 @@ from app.models.connectors import ConnectorConfig
 from app.models.foundation import Family, FamilyMember
 from app.models.health_fitness import HealthSummary
 from app.models.life_management import Routine, TaskInstance
+from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.personal_tasks import PersonalTask
 from app.schemas.nudge_discovery import DiscoveryProposal
 from app.services import nudge_ai_discovery as nad
@@ -464,3 +465,254 @@ def test_digest_recent_missed_routines_respects_3d_window(
 
     assert len(digest["recent_missed_routines_3d"]) == 1
     assert digest["recent_missed_routines_3d"][0]["routine_name"] == "Sadie Morning"
+
+
+# ---------------------------------------------------------------------------
+# Task 4 - nudge_ai_discovery_tick (scheduler entry point)
+# ---------------------------------------------------------------------------
+
+
+def _silence_compose_body_ai(monkeypatch):
+    """Force compose_body's orchestrator call to raise so the dispatch
+    pipeline deterministically hits the fixed-template fallback. Keeps
+    tick tests independent of any real AI key configuration.
+    """
+    from app.ai import orchestrator as orch
+
+    def _raising(**_kwargs):
+        raise RuntimeError("test: force compose_body fallback")
+
+    monkeypatch.setattr(orch, "generate_nudge_body", _raising)
+
+
+def _silence_soft_cap(monkeypatch):
+    """Short-circuit the weekly soft-cap usage report used by both
+    propose_nudges and compose_body. Returns a never-capped report so
+    the AI path is exercised end-to-end in the tick tests."""
+    monkeypatch.setattr(
+        "app.ai.pricing.build_usage_report",
+        lambda **_kw: {"cap_warning": False},
+    )
+
+
+class TestNudgeAiDiscoveryTick:
+    def test_tick_iterates_all_families_and_dispatches(
+        self, monkeypatch, db: Session, family: Family, adults: dict
+    ):
+        """Seed two families with actionable overdue tasks and assert
+        the tick produces nudge_dispatches rows for both."""
+        robert = adults["robert"]
+
+        # Seed family A's overdue task (family + adults fixtures).
+        db.add(
+            PersonalTask(
+                family_id=family.id,
+                assigned_to=robert.id,
+                title="Pay electric bill",
+                status="pending",
+                due_at=NOW - timedelta(hours=3),
+            )
+        )
+
+        # Seed family B from scratch (conftest gives one family).
+        fam_b = Family(name="Second Family", timezone="America/Chicago")
+        db.add(fam_b)
+        db.flush()
+        parent_b = FamilyMember(
+            family_id=fam_b.id,
+            first_name="Jamie",
+            last_name="Smith",
+            role="adult",
+        )
+        db.add(parent_b)
+        db.flush()
+        db.add(
+            PersonalTask(
+                family_id=fam_b.id,
+                assigned_to=parent_b.id,
+                title="Call the plumber",
+                status="pending",
+                due_at=NOW - timedelta(hours=2),
+            )
+        )
+        db.flush()
+
+        # Map each family's overdue member into a DiscoveryProposal.
+        member_by_family = {family.id: robert.id, fam_b.id: parent_b.id}
+
+        def _fake_propose(*, family_id, digest, now_utc, **_kw):
+            return [
+                DiscoveryProposal(
+                    member_id=member_by_family[family_id],
+                    trigger_entity_kind="general",
+                    scheduled_for=now_utc + timedelta(minutes=5),
+                    body=f"Family {family_id} has something to do today.",
+                )
+            ]
+
+        monkeypatch.setattr(
+            nad.orchestrator, "propose_nudges_from_digest", _fake_propose
+        )
+        _silence_soft_cap(monkeypatch)
+        _silence_compose_body_ai(monkeypatch)
+
+        written = nad.nudge_ai_discovery_tick(db, NOW)
+
+        assert written >= 2, (
+            f"expected at least one dispatch per family, got {written}"
+        )
+
+        # Children from both families landed.
+        items = (
+            db.query(NudgeDispatchItem)
+            .filter(NudgeDispatchItem.trigger_kind == "ai_suggested")
+            .all()
+        )
+        member_ids_touched = {item.family_member_id for item in items}
+        assert robert.id in member_ids_touched
+        assert parent_b.id in member_ids_touched
+
+        # Parent rows exist for both families (via the member join).
+        parent_member_ids = {
+            d.family_member_id
+            for d in db.query(NudgeDispatch).all()
+        }
+        assert robert.id in parent_member_ids
+        assert parent_b.id in parent_member_ids
+
+    def test_tick_logs_and_continues_when_one_family_raises(
+        self, monkeypatch, db: Session, family: Family, adults: dict
+    ):
+        """Family A's propose_nudges raises; family B still dispatches.
+        The tick must swallow the failure and continue."""
+        robert = adults["robert"]
+
+        db.add(
+            PersonalTask(
+                family_id=family.id,
+                assigned_to=robert.id,
+                title="Broken task",
+                status="pending",
+                due_at=NOW - timedelta(hours=1),
+            )
+        )
+
+        fam_b = Family(name="Healthy Family", timezone="America/Chicago")
+        db.add(fam_b)
+        db.flush()
+        parent_b = FamilyMember(
+            family_id=fam_b.id,
+            first_name="Sam",
+            role="adult",
+        )
+        db.add(parent_b)
+        db.flush()
+        db.add(
+            PersonalTask(
+                family_id=fam_b.id,
+                assigned_to=parent_b.id,
+                title="Healthy-family task",
+                status="pending",
+                due_at=NOW - timedelta(hours=1),
+            )
+        )
+        db.flush()
+
+        fam_a_id = family.id
+
+        real_propose = nad.propose_nudges
+
+        def _guarded_propose(db_arg, family_id, now_utc):
+            if family_id == fam_a_id:
+                raise RuntimeError("boom")
+            return real_propose(db_arg, family_id, now_utc)
+
+        monkeypatch.setattr(nad, "propose_nudges", _guarded_propose)
+
+        def _fake_orch(*, family_id, digest, now_utc, **_kw):
+            return [
+                DiscoveryProposal(
+                    member_id=parent_b.id,
+                    trigger_entity_kind="general",
+                    scheduled_for=now_utc + timedelta(minutes=7),
+                    body="Healthy-family ai suggestion.",
+                )
+            ]
+
+        monkeypatch.setattr(
+            nad.orchestrator, "propose_nudges_from_digest", _fake_orch
+        )
+        _silence_soft_cap(monkeypatch)
+        _silence_compose_body_ai(monkeypatch)
+
+        # Must not raise despite family A blowing up.
+        written = nad.nudge_ai_discovery_tick(db, NOW)
+
+        assert written >= 1
+
+        touched = {
+            d.family_member_id
+            for d in db.query(NudgeDispatch).all()
+        }
+        assert parent_b.id in touched
+        assert robert.id not in touched
+
+    def test_tick_returns_zero_when_no_families(
+        self, monkeypatch, db: Session
+    ):
+        """Empty families table: tick must complete cleanly and return 0."""
+        calls: list = []
+
+        def _fake_orch(**_kw):
+            calls.append(1)
+            return []
+
+        monkeypatch.setattr(
+            nad.orchestrator, "propose_nudges_from_digest", _fake_orch
+        )
+        _silence_soft_cap(monkeypatch)
+        _silence_compose_body_ai(monkeypatch)
+
+        written = nad.nudge_ai_discovery_tick(db, NOW)
+
+        assert written == 0
+        assert calls == []
+
+    def test_tick_returns_zero_when_all_throttled(
+        self, monkeypatch, db: Session, family: Family, adults: dict
+    ):
+        """Pre-mark the family as having just run AI discovery. Orchestrator
+        must not be called and the tick returns 0."""
+        robert = adults["robert"]
+        db.add(
+            PersonalTask(
+                family_id=family.id,
+                assigned_to=robert.id,
+                title="Would-be trigger",
+                status="pending",
+                due_at=NOW - timedelta(hours=2),
+            )
+        )
+        db.flush()
+
+        # Pre-load the in-memory throttle state so propose_nudges
+        # short-circuits on _is_throttled and never reaches the
+        # orchestrator.
+        nad._last_ai_discovery_run_utc[family.id] = NOW
+
+        calls: list = []
+
+        def _fake_orch(**_kw):
+            calls.append(1)
+            return []
+
+        monkeypatch.setattr(
+            nad.orchestrator, "propose_nudges_from_digest", _fake_orch
+        )
+        _silence_soft_cap(monkeypatch)
+        _silence_compose_body_ai(monkeypatch)
+
+        written = nad.nudge_ai_discovery_tick(db, NOW)
+
+        assert written == 0
+        assert calls == []

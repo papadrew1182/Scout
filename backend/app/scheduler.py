@@ -198,6 +198,19 @@ def _tick(db_factory: Callable[[], Session]) -> None:
             finally:
                 db.close()
 
+            # Phase 5: AI-driven discovery. Self-throttles to one call
+            # per family per hour; safe to invoke every 5-min tick.
+            db = db_factory()
+            try:
+                from app.services import nudge_ai_discovery
+                nudge_ai_discovery.nudge_ai_discovery_tick(db, now_utc=now_utc)
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.exception("nudge_ai_discovery_tick_failed: %s", e)
+            finally:
+                db.close()
+
             db = db_factory()
             try:
                 nudges_service.process_pending_dispatches_tick(db, now_utc=now_utc)
