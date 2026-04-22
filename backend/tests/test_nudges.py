@@ -592,29 +592,6 @@ class TestResolveOccurrenceFields:
         fields = nudges_service.resolve_occurrence_fields(db, prop)
         assert fields.occurrence_local_date.isoformat() == "2026-04-20"
 
-    def test_null_trigger_entity_id_uses_null_literal_in_key(
-        self, db: Session, family, adults
-    ):
-        """AI-suggested proposals may have no entity id. The key uses
-        the string 'null' in that slot so it still stays stable
-        across ticks."""
-        andrew = adults["robert"]
-        family.timezone = "UTC"
-        db.commit()
-
-        prop = nudges_service.NudgeProposal(
-            family_member_id=andrew.id,
-            trigger_kind="ai_suggested",
-            trigger_entity_kind="family",
-            trigger_entity_id=None,
-            scheduled_for=datetime(2026, 4, 21, 12, 0),
-            severity="normal",
-            context={"occurrence_at_utc": datetime(2026, 4, 21, 12, 0)},
-        )
-
-        fields = nudges_service.resolve_occurrence_fields(db, prop)
-        assert fields.source_dedupe_key == f"{andrew.id}:ai_suggested:null:2026-04-21"
-
     def test_missing_occurrence_at_utc_raises_value_error(
         self, db: Session, family, adults
     ):
@@ -631,6 +608,151 @@ class TestResolveOccurrenceFields:
 
         with pytest.raises(ValueError, match="occurrence_at_utc"):
             nudges_service.resolve_occurrence_fields(db, prop)
+
+
+class TestAISuggestedDedupeKey:
+    """Sprint 05 Phase 5 Task 3 - dedupe_key for ai_suggested proposals
+    with no trigger_entity_id must be derived from the proposal body so
+    two distinct AI suggestions on the same day don't collapse to the
+    same literal 'null' slot and get dropped by the child-row UNIQUE
+    constraint."""
+
+    def _make_prop(
+        self,
+        member_id,
+        *,
+        trigger_kind: str = "ai_suggested",
+        trigger_entity_id=None,
+        context_extra: dict | None = None,
+    ) -> "nudges_service.NudgeProposal":
+        ctx: dict = {"occurrence_at_utc": datetime(2026, 4, 21, 12, 0)}
+        if context_extra:
+            ctx.update(context_extra)
+        return nudges_service.NudgeProposal(
+            family_member_id=member_id,
+            trigger_kind=trigger_kind,
+            trigger_entity_kind="family",
+            trigger_entity_id=trigger_entity_id,
+            scheduled_for=datetime(2026, 4, 21, 12, 0),
+            severity="normal",
+            context=ctx,
+        )
+
+    def test_ai_suggested_with_none_entity_and_body_uses_body_hash(
+        self, db: Session, family, adults
+    ):
+        import hashlib as _hashlib
+
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        body = "Remember trash day"
+        prop = self._make_prop(andrew.id, context_extra={"body": body})
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+
+        assert ":ai:" in fields.source_dedupe_key
+        assert ":null:" not in fields.source_dedupe_key
+        expected_hash = _hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        assert expected_hash in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:ai_suggested:ai:{expected_hash}:2026-04-21"
+        )
+
+    def test_ai_suggested_different_bodies_get_different_keys(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        prop_a = self._make_prop(andrew.id, context_extra={"body": "Call the dentist"})
+        prop_b = self._make_prop(
+            andrew.id, context_extra={"body": "Pick up the dry cleaning"}
+        )
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert key_a != key_b
+
+    def test_ai_suggested_same_body_gets_same_key(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        body = "Top up the MetroCard"
+        prop_a = self._make_prop(andrew.id, context_extra={"body": body})
+        prop_b = self._make_prop(andrew.id, context_extra={"body": body})
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert key_a == key_b
+
+    def test_ai_suggested_with_none_entity_and_no_body_uses_context_hash(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        # No 'body' key in context, just an unrelated field.
+        prop_a = self._make_prop(andrew.id, context_extra={"foo": "bar"})
+        prop_b = self._make_prop(andrew.id, context_extra={"foo": "bar"})
+
+        key_a = nudges_service.resolve_occurrence_fields(db, prop_a).source_dedupe_key
+        key_b = nudges_service.resolve_occurrence_fields(db, prop_b).source_dedupe_key
+
+        assert ":null:" not in key_a
+        assert ":ai:" in key_a
+        # Stable: same context -> same key on repeat invocation.
+        assert key_a == key_b
+
+    def test_builtin_proposal_still_uses_null_for_none_entity(
+        self, db: Session, family, adults
+    ):
+        """Built-in P1 trigger kinds keep the 'null' literal so their
+        dedupe behavior is unchanged by the AI fix."""
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        prop = self._make_prop(
+            andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_id=None,
+            context_extra={},
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert ":null:" in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:overdue_task:null:2026-04-21"
+        )
+
+    def test_builtin_proposal_with_real_entity_unchanged(
+        self, db: Session, family, adults
+    ):
+        andrew = adults["robert"]
+        family.timezone = "UTC"
+        db.commit()
+
+        entity_id = uuid.uuid4()
+        prop = self._make_prop(
+            andrew.id,
+            trigger_kind="overdue_task",
+            trigger_entity_id=entity_id,
+        )
+
+        fields = nudges_service.resolve_occurrence_fields(db, prop)
+        assert str(entity_id) in fields.source_dedupe_key
+        assert fields.source_dedupe_key == (
+            f"{andrew.id}:overdue_task:{entity_id}:2026-04-21"
+        )
 
 
 class TestScannerStampsOccurrence:

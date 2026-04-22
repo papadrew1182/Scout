@@ -26,6 +26,7 @@ AI-composed per-member copy.
 
 from __future__ import annotations
 
+import hashlib
 import json as _json
 import logging
 import uuid
@@ -752,11 +753,27 @@ def resolve_occurrence_fields(
             )
             local_date = occurrence_at.date()
 
-    entity_part = (
-        str(proposal.trigger_entity_id)
-        if proposal.trigger_entity_id is not None
-        else "null"
-    )
+    if proposal.trigger_entity_id is not None:
+        entity_part = str(proposal.trigger_entity_id)
+    elif proposal.trigger_kind == "ai_suggested":
+        # AI-suggested proposals often have no upstream entity. Hash the
+        # body so two distinct AI suggestions on the same day dedupe to
+        # different keys but two identical suggestions collapse.
+        body = (
+            proposal.context.get("body")
+            if isinstance(proposal.context, dict)
+            else None
+        )
+        if body:
+            entity_part = "ai:" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        else:
+            # No body either - fall back to a stable repr of the context
+            # so we don't collapse unrelated empty-context suggestions.
+            entity_part = "ai:" + hashlib.sha256(
+                repr(sorted((proposal.context or {}).items())).encode("utf-8")
+            ).hexdigest()[:16]
+    else:
+        entity_part = "null"
     dedupe_key = (
         f"{proposal.family_member_id}:{proposal.trigger_kind}:"
         f"{entity_part}:{local_date.isoformat()}"
