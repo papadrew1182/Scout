@@ -3188,3 +3188,240 @@ class TestRunNudgeScanWithRules:
         # Built-in produced 1; rule scan capped -> at most 1 rule exec
         assert written >= 1
         assert len(exec_calls) <= 1
+
+
+class TestAdminNudgeRulesRoutes:
+    _BASIC_SQL = (
+        "SELECT assigned_to AS member_id, id AS entity_id, "
+        "'personal_task' AS entity_kind, due_at AS scheduled_for "
+        "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+    )
+
+    def test_list_empty_when_no_rules(self, db, family, adults, client):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.get(
+            "/api/admin/nudges/rules",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_post_creates_rule_with_canonical_sql(
+        self, db, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            "/api/admin/nudges/rules",
+            json={
+                "name": "overdue rule",
+                "template_sql": self._BASIC_SQL,
+                "severity": "normal",
+                "default_lead_time_minutes": 5,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "overdue rule"
+        assert body["canonical_sql"] is not None
+        assert body["canonical_sql"].lower().startswith("select")
+        assert body["trigger_kind"] == "custom_rule"
+
+    def test_post_rejects_bad_sql_with_422(
+        self, db, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            "/api/admin/nudges/rules",
+            json={
+                "name": "bad",
+                "template_sql": "DROP TABLE personal_tasks",
+                "severity": "normal",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+        assert "[" in r.json()["detail"]  # tagged error
+
+    def test_patch_revalidates_on_sql_change(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        canonical = validate_rule_sql(self._BASIC_SQL).canonical_sql
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=canonical,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"template_sql": "SELECT COUNT(*) FROM personal_tasks"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # COUNT is allowed but schema check on the rule executor won't
+        # run at PATCH time; only at scan/preview time. PATCH should
+        # succeed here since validate_rule_sql passes SELECT COUNT(*).
+        assert r.status_code == 200
+        assert r.json()["canonical_sql"].lower().startswith("select")
+
+    def test_patch_rejects_invalid_sql_and_keeps_old_canonical(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        original = validate_rule_sql(self._BASIC_SQL).canonical_sql
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=original,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"template_sql": "DELETE FROM personal_tasks"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+        db.refresh(rule)
+        assert rule.canonical_sql == original  # unchanged
+
+    def test_delete_removes_rule(self, db, family, adults, client):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.delete(
+            f"/api/admin/nudges/rules/{rule.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 204
+        assert db.get(NudgeRule, rule.id) is None
+
+    def test_preview_count_returns_count(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        for i in range(3):
+            db.add(PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title=f"T{i}",
+                status="pending",
+                due_at=now - timedelta(hours=1),
+            ))
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            f"/api/admin/nudges/rules/{rule.id}/preview-count",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["count"] >= 3
+        assert body["capped"] is False
+        assert body["error"] is None
+
+    def test_non_admin_cannot_access_routes(
+        self, db, family, adults, children, client
+    ):
+        """Child-role members lack nudges.configure -> 403."""
+        sadie = children["sadie"]
+        token = _make_account_and_token(db, sadie.id, "sadie-rules@test.app")
+
+        for path in [
+            ("GET", "/api/admin/nudges/rules", None),
+            ("POST", "/api/admin/nudges/rules",
+             {"name": "x", "template_sql": "SELECT 1 AS member_id, 1 AS entity_id, 'x' AS entity_kind, now() AS scheduled_for LIMIT 1", "severity": "normal"}),
+        ]:
+            method, url, body = path
+            if method == "GET":
+                r = client.get(url, headers={"Authorization": f"Bearer {token}"})
+            else:
+                r = client.post(url, json=body, headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 403
+
+    def test_cross_family_rule_returns_404(
+        self, db, family, adults, client
+    ):
+        """A rule from another family must return 404 for this actor."""
+        from app.models.nudge_rules import NudgeRule
+        from app.models.foundation import Family
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        # Separate family with one rule
+        other = Family(name="Other", timezone="UTC")
+        db.add(other)
+        db.flush()
+        rule = NudgeRule(
+            family_id=other.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"name": "hijacked"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 404
+
+        r = client.delete(
+            f"/api/admin/nudges/rules/{rule.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 404
