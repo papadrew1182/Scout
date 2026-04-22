@@ -1,0 +1,538 @@
+"""Sprint 05 Phase 1 - proactive nudges core engine.
+
+Scanners (scan_overdue_tasks, scan_upcoming_events, scan_missed_routines)
+return NudgeProposal dataclasses from pure read-only SQL. apply_proactivity
+gates them per the caller's member_config['ai.personality'].proactivity
+setting. resolve_occurrence_fields computes the immutable occurrence_at_utc
+and occurrence_local_date (timezone-aware, from the family's configured
+timezone) used for dedupe_key generation. dispatch_with_items is the sink
+that writes parent nudge_dispatches + child nudge_dispatch_items rows,
+creates a parent_action_items row, and calls push_service.send_push when
+the member has an active device.
+
+Idempotency is guaranteed by the UNIQUE (source_dedupe_key) constraint on
+scout.nudge_dispatch_items. If every child row for a proposed dispatch
+would conflict, the parent dispatch row is not written.
+
+run_nudge_scan is the orchestration entry point: scan -> proactivity ->
+resolve occurrence -> dispatch. run_nudge_scan_tick is the scheduler-facing
+wrapper that run_nudge_scan + logs the result; exceptions propagate to the
+tick's outer try/except so rollback happens cleanly per the existing
+scheduler pattern.
+
+Fixed copy templates ship here in Phase 1. Phase 3 replaces them with
+AI-composed per-member copy.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
+
+import pytz
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.models.action_items import ParentActionItem
+from app.models.nudges import NudgeDispatch, NudgeDispatchItem
+from app.models.push import PushDevice
+from app.services import ai_personality_service, push_service
+
+logger = logging.getLogger("scout.nudges")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@dataclass
+class NudgeProposal:
+    """A scanner's output before proactivity gate and dispatch.
+    Serializable; easy to inspect in tests."""
+
+    family_member_id: uuid.UUID
+    trigger_kind: str          # overdue_task | upcoming_event | missed_routine
+    trigger_entity_kind: str   # personal_task | event | task_instance
+    trigger_entity_id: uuid.UUID | None
+    scheduled_for: datetime
+    severity: str = "normal"
+    # Copy context (title, time string, etc.) used by the template renderer
+    # and by dispatch for source_metadata on the child row.
+    context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class OccurrenceFields:
+    """Computed in resolve_occurrence_fields. Immutable for a given
+    (member, trigger, entity, occurrence) tuple; never changes when
+    quiet-hours delays delivery."""
+
+    occurrence_at_utc: datetime
+    occurrence_local_date: date
+    source_dedupe_key: str
+
+
+# ---------------------------------------------------------------------------
+# Stubs. Each fills in via TDD in a later task (Tasks 4-9).
+# ---------------------------------------------------------------------------
+
+
+def scan_overdue_tasks(db: Session, now_utc: datetime) -> list[NudgeProposal]:
+    """Emit one proposal per active personal_tasks row whose due_at
+    has passed. Pure read; no side effects. scheduled_for is the
+    original due_at so the dispatch dedupe_key uses the same moment
+    regardless of when the scanner actually runs."""
+    rows = db.execute(
+        text(
+            """
+            SELECT id, assigned_to, title, due_at
+            FROM personal_tasks
+            WHERE status != 'done'
+              AND due_at IS NOT NULL
+              AND due_at < :now
+            """
+        ),
+        {"now": now_utc},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.assigned_to,
+                trigger_kind="overdue_task",
+                trigger_entity_kind="personal_task",
+                trigger_entity_id=row.id,
+                scheduled_for=row.due_at,
+                severity="normal",
+                context={
+                    "title": row.title,
+                    "due_time": row.due_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.due_at,
+                },
+            )
+        )
+    return proposals
+
+
+def scan_upcoming_events(
+    db: Session, now_utc: datetime, lead_minutes: int = 30
+) -> list[NudgeProposal]:
+    """Events starting within lead_minutes of now produce one proposal
+    per attendee. Past, cancelled, and all-day events are excluded.
+    scheduled_for = starts_at - lead_minutes so the proposal carries
+    the intended lead intact through apply_proactivity."""
+    horizon = now_utc + timedelta(minutes=lead_minutes)
+    rows = db.execute(
+        text(
+            """
+            SELECT e.id, e.title, e.starts_at, ea.family_member_id
+            FROM events e
+            JOIN event_attendees ea ON ea.event_id = e.id
+            WHERE e.is_cancelled = false
+              AND e.all_day = false
+              AND e.starts_at > :now
+              AND e.starts_at <= :horizon
+            """
+        ),
+        {"now": now_utc, "horizon": horizon},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.family_member_id,
+                trigger_kind="upcoming_event",
+                trigger_entity_kind="event",
+                trigger_entity_id=row.id,
+                scheduled_for=row.starts_at - timedelta(minutes=lead_minutes),
+                severity="normal",
+                context={
+                    "title": row.title,
+                    "start_time": row.starts_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.starts_at,
+                },
+            )
+        )
+    return proposals
+
+
+def scan_missed_routines(
+    db: Session, now_utc: datetime
+) -> list[NudgeProposal]:
+    """task_instances rows with routine_id (not chore_template) whose
+    due_at has passed AND are not completed (respecting
+    override_completed). severity='low' per revised plan Section 6.
+    scheduled_for = due_at + 15 min (lead-after-miss; apply_proactivity
+    may shift earlier)."""
+    rows = db.execute(
+        text(
+            """
+            SELECT ti.id,
+                   ti.family_member_id,
+                   ti.due_at,
+                   r.name AS routine_name
+            FROM task_instances ti
+            JOIN routines r ON r.id = ti.routine_id
+            WHERE ti.routine_id IS NOT NULL
+              AND ti.is_completed = false
+              AND COALESCE(ti.override_completed, false) = false
+              AND ti.due_at < :now
+            """
+        ),
+        {"now": now_utc},
+    ).all()
+    proposals: list[NudgeProposal] = []
+    for row in rows:
+        proposals.append(
+            NudgeProposal(
+                family_member_id=row.family_member_id,
+                trigger_kind="missed_routine",
+                trigger_entity_kind="task_instance",
+                trigger_entity_id=row.id,
+                scheduled_for=row.due_at + timedelta(minutes=15),
+                severity="low",
+                context={
+                    "name": row.routine_name,
+                    "due_time": row.due_at.strftime("%I:%M %p"),
+                    "occurrence_at_utc": row.due_at,
+                },
+            )
+        )
+    return proposals
+
+
+_FORTHCOMING_SHIFT_MINUTES = {
+    "upcoming_event": 30,
+    "missed_routine": 10,
+    # overdue_task: 0 -- cannot fire before already-overdue
+}
+
+
+# Fixed Phase 1 copy. Phase 3 swaps these for AI-composed per-member copy.
+_BODY_TEMPLATES = {
+    "overdue_task":    "Reminder: {title} was due at {due_time}.",
+    "upcoming_event":  "Heads up: {title} at {start_time}.",
+    "missed_routine":  "{name} hasn't been checked off yet (was due at {due_time}).",
+}
+
+_INBOX_TITLE_PREFIX = {
+    "overdue_task":    "Overdue",
+    "upcoming_event":  "Starting soon",
+    "missed_routine":  "Routine check",
+}
+
+
+def _render_body(proposal: "NudgeProposal") -> str:
+    template = _BODY_TEMPLATES.get(proposal.trigger_kind, "Scout nudge")
+    try:
+        return template.format(**proposal.context)
+    except KeyError as e:
+        logger.warning(
+            "nudge body template missing key=%s for trigger_kind=%s; using raw template",
+            e, proposal.trigger_kind,
+        )
+        return template
+
+
+def _render_inbox_title(proposal: "NudgeProposal") -> str:
+    prefix = _INBOX_TITLE_PREFIX.get(proposal.trigger_kind, "Scout")
+    source = proposal.context.get("title") or proposal.context.get("name") or ""
+    return f"{prefix}: {source}" if source else prefix
+
+
+def _family_id_for_member(db: Session, member_id: uuid.UUID) -> uuid.UUID:
+    row = db.execute(
+        text("SELECT family_id FROM family_members WHERE id = :mid"),
+        {"mid": member_id},
+    ).first()
+    if row is None:
+        raise ValueError(f"family_members row missing for {member_id}")
+    return row[0]
+
+
+def _route_hint(proposal: "NudgeProposal") -> str:
+    if proposal.trigger_kind == "overdue_task" and proposal.trigger_entity_id:
+        return f"/today?task={proposal.trigger_entity_id}"
+    if proposal.trigger_kind == "upcoming_event" and proposal.trigger_entity_id:
+        return f"/calendar?event={proposal.trigger_entity_id}"
+    return "/today"
+
+
+def apply_proactivity(
+    db: Session, proposals: list[NudgeProposal], now_utc: datetime
+) -> list[NudgeProposal]:
+    """Gate + lead-time adjust per member proactivity setting. quiet
+    drops proposals. balanced passes through unchanged. forthcoming
+    shifts scheduled_for earlier for triggers that support it (see
+    _FORTHCOMING_SHIFT_MINUTES). overdue_task is never shifted.
+
+    Stamps the effective proactivity setting into proposal.context
+    so dispatch_with_items can record it on the child row without a
+    second DB roundtrip.
+
+    Caches the member->setting lookup to one call per unique
+    family_member_id per invocation."""
+    out: list[NudgeProposal] = []
+    settings_cache: dict[uuid.UUID, str] = {}
+    for prop in proposals:
+        setting = settings_cache.get(prop.family_member_id)
+        if setting is None:
+            resolved = ai_personality_service.get_resolved_config(
+                db, prop.family_member_id
+            )
+            setting = resolved.get("proactivity", "balanced")
+            settings_cache[prop.family_member_id] = setting
+
+        if setting == "quiet":
+            continue
+
+        shifted_for = prop.scheduled_for
+        if setting == "forthcoming":
+            shift = _FORTHCOMING_SHIFT_MINUTES.get(prop.trigger_kind, 0)
+            if shift > 0:
+                shifted_for = prop.scheduled_for - timedelta(minutes=shift)
+
+        new_context = {**prop.context, "proactivity": setting}
+        out.append(
+            NudgeProposal(
+                family_member_id=prop.family_member_id,
+                trigger_kind=prop.trigger_kind,
+                trigger_entity_kind=prop.trigger_entity_kind,
+                trigger_entity_id=prop.trigger_entity_id,
+                scheduled_for=shifted_for,
+                severity=prop.severity,
+                context=new_context,
+            )
+        )
+    return out
+
+
+def resolve_occurrence_fields(
+    db: Session, proposal: NudgeProposal
+) -> OccurrenceFields:
+    """Compute the immutable occurrence triple. Reads the raw source
+    timestamp from proposal.context['occurrence_at_utc'] (scanner
+    stamps this), looks up the family's timezone, and converts the
+    UTC moment to a local date. source_dedupe_key is stable across
+    scheduler ticks and proactivity shifts because neither
+    occurrence_at_utc nor the family timezone changes between ticks
+    for the same source event."""
+    occurrence_at = proposal.context.get("occurrence_at_utc")
+    if occurrence_at is None:
+        raise ValueError(
+            f"proposal.context missing 'occurrence_at_utc' for "
+            f"trigger_kind={proposal.trigger_kind}. The scanner for "
+            f"this trigger must stamp the raw source timestamp."
+        )
+
+    row = db.execute(
+        text(
+            """
+            SELECT f.timezone
+            FROM family_members fm
+            JOIN families f ON f.id = fm.family_id
+            WHERE fm.id = :mid
+            """
+        ),
+        {"mid": proposal.family_member_id},
+    ).first()
+
+    if row is None or not row.timezone:
+        logger.warning(
+            "resolve_occurrence_fields: no timezone for member=%s; "
+            "falling back to UTC date.",
+            proposal.family_member_id,
+        )
+        local_date = occurrence_at.date()
+    else:
+        try:
+            tz = pytz.timezone(row.timezone)
+            # Treat naive UTC as UTC (the repo convention for timestamptz
+            # hydrated into naive Python datetimes)
+            aware_utc = (
+                pytz.utc.localize(occurrence_at)
+                if occurrence_at.tzinfo is None
+                else occurrence_at.astimezone(pytz.utc)
+            )
+            local_dt = aware_utc.astimezone(tz)
+            local_date = local_dt.date()
+        except pytz.UnknownTimeZoneError:
+            logger.warning(
+                "resolve_occurrence_fields: unknown timezone %r for member=%s; "
+                "falling back to UTC date.",
+                row.timezone,
+                proposal.family_member_id,
+            )
+            local_date = occurrence_at.date()
+
+    entity_part = (
+        str(proposal.trigger_entity_id)
+        if proposal.trigger_entity_id is not None
+        else "null"
+    )
+    dedupe_key = (
+        f"{proposal.family_member_id}:{proposal.trigger_kind}:"
+        f"{entity_part}:{local_date.isoformat()}"
+    )
+
+    return OccurrenceFields(
+        occurrence_at_utc=occurrence_at,
+        occurrence_local_date=local_date,
+        source_dedupe_key=dedupe_key,
+    )
+
+
+def dispatch_with_items(
+    db: Session, proposals: list[NudgeProposal], now_utc: datetime
+) -> int:
+    """Per-proposal: resolve occurrence -> pre-check dedupe -> SAVEPOINT
+    -> parent dispatch + child item + Inbox row + optional push ->
+    commit savepoint. Push errors are logged and swallowed so Inbox
+    remains authoritative. UNIQUE (source_dedupe_key) is the
+    authoritative dedupe boundary; IntegrityError inside the savepoint
+    rolls back that proposal alone.
+
+    Never calls db.commit() -- the caller (scheduler tick or test
+    fixture) owns transaction boundaries."""
+    written = 0
+    for proposal in proposals:
+        try:
+            fields = resolve_occurrence_fields(db, proposal)
+        except ValueError as e:
+            logger.warning("dispatch skipped: %s", e)
+            continue
+
+        existing = (
+            db.query(NudgeDispatchItem)
+            .filter_by(source_dedupe_key=fields.source_dedupe_key)
+            .first()
+        )
+        if existing is not None:
+            continue
+
+        try:
+            with db.begin_nested():
+                body = _render_body(proposal)
+                short_title = _render_inbox_title(proposal)
+
+                parent = NudgeDispatch(
+                    family_member_id=proposal.family_member_id,
+                    status="pending",
+                    severity=proposal.severity,
+                    deliver_after_utc=proposal.scheduled_for,
+                    source_count=1,
+                    body=body,
+                    delivered_channels=[],
+                )
+                db.add(parent)
+                db.flush()
+
+                source_metadata = {
+                    k: (v.isoformat() if isinstance(v, (datetime, date)) else str(v))
+                    for k, v in proposal.context.items()
+                    if k != "occurrence_at_utc"
+                }
+                child = NudgeDispatchItem(
+                    dispatch_id=parent.id,
+                    family_member_id=proposal.family_member_id,
+                    trigger_kind=proposal.trigger_kind,
+                    trigger_entity_kind=proposal.trigger_entity_kind,
+                    trigger_entity_id=proposal.trigger_entity_id,
+                    occurrence_at_utc=fields.occurrence_at_utc,
+                    occurrence_local_date=fields.occurrence_local_date,
+                    source_dedupe_key=fields.source_dedupe_key,
+                    source_metadata=source_metadata,
+                )
+                db.add(child)
+                db.flush()  # IntegrityError fires here on UNIQUE race
+
+                family_id = _family_id_for_member(db, proposal.family_member_id)
+                # Note: action_type is constrained by DB CHECK
+                # chk_parent_action_items_action_type which does not yet
+                # include 'nudge.*' values. We store the intended logical
+                # type in entity_type and fall back to 'general' here; a
+                # follow-up migration can widen the CHECK + update this.
+                inbox = ParentActionItem(
+                    family_id=family_id,
+                    created_by_member_id=proposal.family_member_id,
+                    action_type="general",
+                    title=short_title,
+                    detail=body,
+                    entity_type=proposal.trigger_entity_kind,
+                    entity_id=proposal.trigger_entity_id,
+                    status="pending",
+                )
+                db.add(inbox)
+                db.flush()
+                parent.parent_action_item_id = inbox.id
+
+                delivered: list[str] = ["inbox"]
+                active_device = (
+                    db.query(PushDevice)
+                    .filter(
+                        PushDevice.family_member_id == proposal.family_member_id,
+                        PushDevice.is_active == True,  # noqa: E712
+                    )
+                    .first()
+                )
+                if active_device is not None:
+                    try:
+                        result = push_service.send_push(
+                            db,
+                            family_member_id=proposal.family_member_id,
+                            category=f"nudge.{proposal.trigger_kind}",
+                            title=short_title,
+                            body=body,
+                            data={
+                                "route_hint": _route_hint(proposal),
+                                "trigger_kind": proposal.trigger_kind,
+                            },
+                            trigger_source="nudge_scan",
+                        )
+                        if getattr(result, "delivery_ids", None):
+                            parent.push_delivery_id = result.delivery_ids[0]
+                            delivered.append("push")
+                    except Exception as push_err:
+                        logger.exception(
+                            "nudge push failed member=%s err=%s",
+                            proposal.family_member_id, push_err,
+                        )
+
+                parent.delivered_channels = delivered
+                parent.status = "delivered"
+                parent.delivered_at_utc = now_utc
+            written += 1
+        except IntegrityError:
+            # Race: UNIQUE on source_dedupe_key won. Savepoint auto-rolled back.
+            continue
+    return written
+
+
+# ---------------------------------------------------------------------------
+# Orchestration entry points
+# ---------------------------------------------------------------------------
+
+
+def run_nudge_scan(db: Session, now_utc: datetime | None = None) -> int:
+    """End-to-end: scan all three sources, apply proactivity gate,
+    dispatch. Returns count of new parent dispatches."""
+    ts = now_utc or _utcnow()
+    proposals: list[NudgeProposal] = []
+    proposals.extend(scan_overdue_tasks(db, ts))
+    proposals.extend(scan_upcoming_events(db, ts))
+    proposals.extend(scan_missed_routines(db, ts))
+    gated = apply_proactivity(db, proposals, ts)
+    return dispatch_with_items(db, gated, ts)
+
+
+def run_nudge_scan_tick(db: Session, now_utc: datetime) -> None:
+    """Scheduler tick entry point. Logs the count. Exceptions propagate
+    to the scheduler's outer try/except/rollback so one failure does
+    not poison neighbouring runners on the same tick. Never catch
+    broadly here."""
+    count = run_nudge_scan(db, now_utc=now_utc)
+    logger.info("nudge_scan_tick count=%s", count)
