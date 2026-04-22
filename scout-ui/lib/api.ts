@@ -418,67 +418,17 @@ export interface AIPendingConfirmation {
   message: string;
 }
 
-export interface AIChatResult {
-  conversation_id: string;
-  response: string;
-  tool_calls_made: number;
-  model: string;
-  tokens: { input?: number; output?: number };
-  handoff?: AIHandoff | null;
-  pending_confirmation?: AIPendingConfirmation | null;
-}
-
-export interface SendChatOptions {
-  surface?: string;
-  conversationId?: string;
-  confirmTool?: { tool_name: string; arguments: Record<string, unknown> };
-  intent?: "chat" | "weekly_plan";
-  attachmentPath?: string;
-}
-
-export async function sendChatMessage(
-  message: string,
-  surfaceOrOptions: string | SendChatOptions = "personal",
-  conversationId?: string,
-): Promise<AIChatResult> {
-  // Backwards-compatible two-call signatures:
-  //   sendChatMessage("msg", "personal", convId)
-  //   sendChatMessage("", { confirmTool: {...}, conversationId })
-  const opts: SendChatOptions =
-    typeof surfaceOrOptions === "string"
-      ? { surface: surfaceOrOptions, conversationId }
-      : { surface: "personal", ...surfaceOrOptions };
-
-  const traceId = `scout-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const body: Record<string, unknown> = {
-    surface: opts.surface ?? "personal",
-    message,
-  };
-  if (opts.conversationId) body.conversation_id = opts.conversationId;
-  if (opts.confirmTool) body.confirm_tool = opts.confirmTool;
-  if (opts.intent) body.intent = opts.intent;
-  if (opts.attachmentPath) body.attachment_path = opts.attachmentPath;
-
-  const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
-    method: "POST",
-    headers: {
-      ...authHeaders(),
-      "Content-Type": "application/json",
-      "X-Scout-Trace-Id": traceId,
-    },
-    body: JSON.stringify(body),
-  });
-  if (res.status === 401) { _handleUnauthorized(); throw new Error("Session expired"); }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error(`[Scout AI] trace=${traceId} status=${res.status} error=${text.slice(0, 200)}`);
-    throw new Error(`AI request failed (${res.status})`);
-  }
-  return (await res.json()) as AIChatResult;
-}
-
 // ---------------------------------------------------------------------------
-// Streaming chat — Server-Sent Events variant of sendChatMessage.
+// Streaming chat via Server-Sent Events.
+//
+// The historical non-streaming `sendChatMessage` function (with
+// AIChatResult + SendChatOptions types) was removed in Batch-1 PR 2
+// after the chat UI migrated fully to sendChatMessageStream. No
+// component was still calling the non-streaming path, and its
+// 60-second backend-timeout behavior (backlog item 5.3) could not
+// affect users. If you need a non-streaming call site again, wire
+// through sendChatMessageStream and buffer the `done` event rather
+// than re-introducing the old function.
 // ---------------------------------------------------------------------------
 
 export type StreamEvent =

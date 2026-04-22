@@ -44,6 +44,16 @@ class Rollup:
     output_tokens: int = 0
     cost_usd: float = 0.0
     duration_ms: int = 0
+    # Prompt-cache tokens shipped by Phase 10 (PR #31). The observability
+    # layer stamps these on every ai_call log line (0 when a call did not
+    # exercise the cache path or for pre-Phase-10 historical lines). The
+    # hit rate is cache_read_tokens / total_input_tokens where
+    # total_input_tokens = input_tokens + cache_read_tokens + cache_creation_tokens.
+    # Anthropic bills input_tokens at full price, cache_creation at a
+    # small write premium, cache_read at ~10% of input. A healthy hit
+    # rate for a conversation-heavy workload is greater than 50 percent.
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
 
     def add(self, call: dict) -> None:
         self.messages += 1
@@ -51,12 +61,27 @@ class Rollup:
         self.output_tokens += int(call.get("output_tokens") or 0)
         self.cost_usd += float(call.get("cost_usd") or 0.0)
         self.duration_ms += int(call.get("duration_ms") or 0)
+        self.cache_creation_tokens += int(
+            call.get("cache_creation_input_tokens") or 0
+        )
+        self.cache_read_tokens += int(call.get("cache_read_input_tokens") or 0)
 
     def as_dict(self) -> dict:
+        total_input = (
+            self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
+        )
+        cache_hit_rate = (
+            round(self.cache_read_tokens / total_input, 4)
+            if total_input
+            else 0.0
+        )
         return {
             "messages": self.messages,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_hit_rate": cache_hit_rate,
             "cost_usd": round(self.cost_usd, 6),
             "avg_duration_ms": (
                 round(self.duration_ms / self.messages) if self.messages else 0
@@ -126,6 +151,11 @@ def render(report: Report) -> str:
         f"messages={t['messages']:>5}  input={t['input_tokens']:>8}  "
         f"output={t['output_tokens']:>8}  cost_usd=${t['cost_usd']:.4f}  "
         f"avg_ms={t['avg_duration_ms']:>5}"
+    )
+    lines.append(
+        f"  cache: read={t['cache_read_tokens']:>8}  "
+        f"created={t['cache_creation_tokens']:>8}  "
+        f"hit_rate={t['cache_hit_rate'] * 100:>5.1f}%"
     )
     lines.append("")
 
