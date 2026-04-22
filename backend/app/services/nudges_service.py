@@ -1133,15 +1133,38 @@ def scan_rule_triggers(
 # ---------------------------------------------------------------------------
 
 
-def run_nudge_scan(db: Session, now_utc: datetime | None = None) -> int:
+def run_nudge_scan(
+    db: Session,
+    now_utc: datetime | None = None,
+    rule_scan_budget_seconds: float = 2.0,
+) -> int:
     """End-to-end: scan all three sources, apply proactivity gate,
     batch into bundles, dispatch. Returns count of new parent
-    dispatches (delivered + held + suppressed)."""
+    dispatches (delivered + held + suppressed).
+
+    Built-in scanners run first; custom rules run second per revised
+    plan Section 3. Rules share the same wall-clock tick; a slow rule
+    cannot stall the tick because scan_rule_triggers stops once
+    rule_scan_budget_seconds (default 2.0s) is exhausted.
+    """
     ts = now_utc or _utcnow()
     proposals: list[NudgeProposal] = []
     proposals.extend(scan_overdue_tasks(db, ts))
     proposals.extend(scan_upcoming_events(db, ts))
     proposals.extend(scan_missed_routines(db, ts))
+    # Built-ins first; rules second per revised plan Section 3.
+    proposals.extend(
+        scan_rule_triggers(db, ts, budget_seconds=rule_scan_budget_seconds)
+    )
+    # Normalize scheduled_for to naive-UTC across built-ins + rules so
+    # apply_proactivity arithmetic and batch_proposals sort never mix
+    # tz-aware (timestamptz hydrated from Postgres) with naive (emitted
+    # from scan_rule_triggers per its Task 4 contract).
+    for p in proposals:
+        if p.scheduled_for is not None and p.scheduled_for.tzinfo is not None:
+            p.scheduled_for = p.scheduled_for.astimezone(
+                timezone.utc
+            ).replace(tzinfo=None)
     gated = apply_proactivity(db, proposals, ts)
     bundles = batch_proposals(gated)
     return dispatch_with_items(db, bundles, ts)

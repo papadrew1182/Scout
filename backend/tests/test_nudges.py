@@ -3048,3 +3048,143 @@ class TestScanRuleTriggers:
         # First rule runs (puts us over budget); subsequent two should be
         # skipped. Expect exactly 1 exec call.
         assert len(calls) == 1
+
+
+class TestRunNudgeScanWithRules:
+    def test_rule_triggered_proposal_flows_through_pipeline(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Active rule produces a row -> scan_rule_triggers emits a
+        NudgeProposal -> apply_proactivity passes it through (balanced)
+        -> batch_proposals wraps it -> dispatch_with_items writes a
+        NudgeDispatch with trigger_kind='custom_rule' on the child."""
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="rule-matched",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="overdue-wrapper",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        written = nudges_service.run_nudge_scan(db, now_utc=now)
+        assert written >= 1
+
+        child = db.query(NudgeDispatchItem).filter_by(
+            trigger_kind="custom_rule"
+        ).first()
+        assert child is not None
+        assert child.family_member_id == andrew.id
+
+    def test_rule_errors_do_not_break_tick(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """A broken rule raising in scan_rule_triggers is logged + skipped
+        (already proven in TestScanRuleTriggers); here we confirm that
+        run_nudge_scan still returns based on built-in scanners + healthy
+        rules."""
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="built-in-task",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="broken",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql="SELECT 1",  # missing required columns -> [schema] raise
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        # Should not raise; built-in scanner still produces at least 1
+        written = nudges_service.run_nudge_scan(db, now_utc=now)
+        assert written >= 1
+
+    def test_budget_caps_rule_scan_time(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """If rule scanning exceeds budget_seconds, scan_rule_triggers
+        stops. run_nudge_scan still completes with built-in-only proposals
+        plus whatever rules ran before the budget expired."""
+        from app.models.nudge_rules import NudgeRule
+        import time as _time
+
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="t",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        for i in range(3):
+            db.add(NudgeRule(
+                family_id=family.id,
+                name=f"slow-{i}",
+                is_active=True,
+                source_kind="sql_template",
+                template_sql="SELECT 1",
+                canonical_sql=(
+                    "SELECT assigned_to AS member_id, id AS entity_id, "
+                    "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                    "FROM personal_tasks LIMIT 1"
+                ),
+                trigger_kind="custom_rule",
+                severity="normal",
+            ))
+        db.commit()
+
+        exec_calls = []
+        real_exec = nudges_service.execute_validated_rule_sql
+
+        def slow_exec(db_arg, canonical_sql, params, **kwargs):
+            exec_calls.append(1)
+            _time.sleep(0.1)
+            return real_exec(db_arg, canonical_sql, params, **kwargs)
+
+        monkeypatch.setattr(
+            nudges_service, "execute_validated_rule_sql", slow_exec
+        )
+
+        written = nudges_service.run_nudge_scan(
+            db, now_utc=now, rule_scan_budget_seconds=0.05
+        )
+        # Built-in produced 1; rule scan capped -> at most 1 rule exec
+        assert written >= 1
+        assert len(exec_calls) <= 1
