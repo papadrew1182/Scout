@@ -65,18 +65,20 @@ export default function AdminNudges() {
   const canManageQuietHours = useHasPermission("quiet_hours.manage");
   const canConfigureRules = useHasPermission("nudges.configure");
   const canAccessPage = canManageQuietHours || canConfigureRules;
-  const [tab, setTab] = useState<Tab>("quiet_hours");
+  const [tabRaw, setTab] = useState<Tab>("quiet_hours");
 
-  // If the currently-selected tab is one the user lacks permission for,
-  // default-select the one they do have. Runs when the permission hooks
-  // resolve (they start false and flip true once /me returns).
-  useEffect(() => {
-    if (tab === "quiet_hours" && !canManageQuietHours && canConfigureRules) {
-      setTab("rules");
-    } else if (tab === "rules" && !canConfigureRules && canManageQuietHours) {
-      setTab("quiet_hours");
-    }
-  }, [tab, canManageQuietHours, canConfigureRules]);
+  // Derive the effective tab from the user's last selection AND their
+  // current permissions. If they picked a tab they lack permission for
+  // (or permissions resolved after mount with only one side granted),
+  // fall back to the one they can actually see. Deriving here (instead
+  // of useEffect + setState) avoids a one-render flash of the "not
+  // available" fallback body during the state-flip tick.
+  let tab: Tab = tabRaw;
+  if (tabRaw === "quiet_hours" && !canManageQuietHours && canConfigureRules) {
+    tab = "rules";
+  } else if (tabRaw === "rules" && !canConfigureRules && canManageQuietHours) {
+    tab = "quiet_hours";
+  }
 
   if (!canAccessPage) {
     return (
