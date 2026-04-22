@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 
+import anthropic
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,7 @@ from app.ai.moderation import check_user_message
 from app.ai.observability import log_ai_call, new_trace_id
 from app.ai.provider import AIResponse, AnthropicProvider, ToolDefinition, get_provider
 from app.ai.tools import TOOL_DEFINITIONS, ToolExecutor, _audit
+from app.config import settings
 from app.models.ai import AIConversation, AIMessage
 
 
@@ -1058,6 +1060,100 @@ def chat_stream(
         "handoff": handoff,
         "pending_confirmation": pending_confirmation,
     }
+
+
+def _get_anthropic_client(timeout_seconds: float) -> anthropic.Anthropic:
+    """Construct an Anthropic client for the nudge composer path.
+
+    Kept as a module-level helper (not a method on AnthropicProvider)
+    so tests can monkeypatch just the client construction without
+    touching the chat pipeline. The per-call timeout is baked into
+    the client so Anthropic's SDK raises APITimeoutError on breach,
+    which Task 2 (compose_body) catches and falls back to templates.
+    """
+    if not settings.anthropic_api_key:
+        raise RuntimeError("SCOUT_ANTHROPIC_API_KEY not set")
+    return anthropic.Anthropic(
+        api_key=settings.anthropic_api_key,
+        timeout=timeout_seconds,
+    )
+
+
+def generate_nudge_body(
+    *,
+    family_member_id: uuid.UUID,
+    proposal_summaries: list[dict],
+    personality_preamble: str,
+    timeout_seconds: float = 3.0,
+) -> str:
+    """Compose a short nudge body for a single member.
+
+    Dedicated AI composer entry point used by Sprint 05 Phase 3's
+    ``compose_body``. For a bundle of N source triggers this writes
+    ONE summary body. Does NOT create ai_conversations / ai_messages
+    rows: this path is not a chat.
+
+    Token cap enforced via ``max_tokens=80``. System prompt includes
+    the personality preamble verbatim plus the "no em dashes" voice
+    constraint. Uses ``settings.ai_nudge_model``; if unset, raises
+    so Task 2 can fall back to fixed templates.
+
+    Raises:
+        RuntimeError: when ``ai_nudge_model`` is unconfigured or the
+            composer returns empty content.
+        TimeoutError / anthropic.APITimeoutError: when the upstream
+            call exceeds ``timeout_seconds``.
+        anthropic.APIError: any other SDK failure.
+    """
+    model = settings.ai_nudge_model
+    if not model:
+        raise RuntimeError("ai_nudge_model not configured")
+
+    system_prompt = (
+        "You are Scout, composing a short proactive nudge for a family member.\n\n"
+        f"{personality_preamble}\n\n"
+        "Compose a single short message summarizing the trigger(s) below. "
+        "One or two sentences. No em dashes. No greetings. No sign-off. "
+        "No quotes around the message. Match the voice profile above. "
+        "Output plain text only."
+    )
+
+    trigger_lines = [
+        f'- {item.get("trigger_kind", "")}: "{item.get("title", "")}" ({item.get("time_label", "")})'
+        for item in proposal_summaries
+    ]
+    user_message = (
+        "Triggers:\n"
+        + "\n".join(trigger_lines)
+        + "\n\nCompose the nudge body now."
+    )
+
+    client = _get_anthropic_client(timeout_seconds)
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=80,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+        timeout=timeout_seconds,
+    )
+
+    # Extract text blocks. Anthropic may also return a moderation
+    # stop_reason; surface that as an error so the caller falls back.
+    stop_reason = getattr(response, "stop_reason", "") or ""
+    if stop_reason in ("moderation", "refusal"):
+        raise RuntimeError(f"composer moderation flagged: {stop_reason}")
+
+    text_parts: list[str] = []
+    for block in getattr(response, "content", []) or []:
+        block_type = getattr(block, "type", "")
+        if block_type == "text":
+            text_parts.append(getattr(block, "text", "") or "")
+
+    body = "".join(text_parts).strip()
+    if not body:
+        raise RuntimeError("empty composer response")
+    return body
 
 
 def generate_daily_brief(db: Session, family_id: uuid.UUID, member_id: uuid.UUID) -> dict:
