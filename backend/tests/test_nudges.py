@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 import pytz
@@ -2705,3 +2705,848 @@ class TestProcessPendingDispatchesTick:
         assert parent.parent_action_item_id is not None
         assert "inbox" in parent.delivered_channels
         assert "push" in parent.delivered_channels
+
+
+class TestExecuteValidatedRuleSQL:
+    def _make_rule_input_tables(self, db, family, member):
+        """Seed a couple of rows in approved tables so a rule can find them."""
+        now = _utcnow().replace(tzinfo=None)
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=member.id,
+            title="Rule-test-task",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.commit()
+
+    def test_happy_path_returns_rows(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        self._make_rule_input_tables(db, family, andrew)
+
+        canonical = (
+            "SELECT assigned_to AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, due_at AS scheduled_for "
+            "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+        )
+        rows = nudges_service.execute_validated_rule_sql(db, canonical, {})
+        assert len(rows) >= 1
+        assert "member_id" in rows[0]
+        assert "entity_id" in rows[0]
+        assert "entity_kind" in rows[0]
+        assert "scheduled_for" in rows[0]
+
+    def test_caps_at_200_rows(self, db: Session, family, adults):
+        """Seed 250 personal_tasks; rule SELECT returns 200 rows capped."""
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        for i in range(250):
+            db.add(PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title=f"Task {i}",
+                status="pending",
+                due_at=now - timedelta(hours=1),
+            ))
+        db.commit()
+
+        canonical = (
+            "SELECT assigned_to AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, due_at AS scheduled_for "
+            "FROM personal_tasks"
+        )
+        rows = nudges_service.execute_validated_rule_sql(db, canonical, {})
+        assert len(rows) == 200
+
+    def test_missing_required_column_raises_schema_error(
+        self, db: Session, family, adults
+    ):
+        """Rule SQL that doesn't include all four required columns."""
+        andrew = adults["robert"]
+        # Still need a row to reach the row-shape check
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="t",
+            status="pending",
+            due_at=_utcnow().replace(tzinfo=None) - timedelta(hours=1),
+        ))
+        db.commit()
+
+        # Missing entity_kind and scheduled_for
+        canonical = "SELECT assigned_to AS member_id, id AS entity_id FROM personal_tasks LIMIT 1"
+        from app.services.nudge_rule_validator import RuleExecutionError
+        with pytest.raises(RuleExecutionError, match=r"^\[schema\]"):
+            nudges_service.execute_validated_rule_sql(db, canonical, {})
+
+    def test_bind_parameters(self, db: Session, family, adults):
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="Rule-test-task",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.commit()
+
+        canonical = (
+            "SELECT assigned_to AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, due_at AS scheduled_for "
+            "FROM personal_tasks WHERE status = :wanted LIMIT 100"
+        )
+        rows = nudges_service.execute_validated_rule_sql(
+            db, canonical, {"wanted": "pending"}
+        )
+        assert len(rows) >= 1
+
+    def test_statement_timeout_is_honored(self, db: Session, family, adults):
+        """A pg_sleep-style query would fail validation, but a self-cross-join
+        style slow query is harder to build in the allowlist. Assert timeout
+        behavior by using an extremely short timeout on a query that will
+        reliably exceed it."""
+        andrew = adults["robert"]
+        # Force a self-join that scans every row twice.
+        now = _utcnow().replace(tzinfo=None)
+        for i in range(500):
+            db.add(PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title=f"t{i}",
+                status="pending",
+                due_at=now,
+            ))
+        db.commit()
+
+        canonical = (
+            "SELECT a.assigned_to AS member_id, a.id AS entity_id, "
+            "'personal_task' AS entity_kind, a.due_at AS scheduled_for "
+            "FROM personal_tasks a JOIN personal_tasks b "
+            "ON a.assigned_to = b.assigned_to"
+        )
+        from app.services.nudge_rule_validator import RuleExecutionError
+        with pytest.raises(RuleExecutionError, match=r"^\[timeout\]|^\[db_error\]"):
+            # 1ms -- nearly any real query exceeds this
+            nudges_service.execute_validated_rule_sql(
+                db, canonical, {}, statement_timeout_ms=1
+            )
+
+
+class TestScanRuleTriggers:
+    def test_no_active_rules_returns_empty(
+        self, db: Session, family, adults
+    ):
+        now = _utcnow().replace(tzinfo=None)
+        assert nudges_service.scan_rule_triggers(db, now) == []
+
+    def test_active_rule_emits_proposals(
+        self, db: Session, family, adults
+    ):
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="task A",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="overdue-test-rule",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",  # unused at scan time
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            default_lead_time_minutes=0,
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        assert len(proposals) >= 1
+        p = proposals[0]
+        assert p.family_member_id == andrew.id
+        assert p.trigger_kind == "custom_rule"
+        assert p.trigger_entity_kind == "personal_task"
+        assert p.severity == "normal"
+
+    def test_rule_cannot_emit_member_from_other_family(
+        self, db: Session, family, adults
+    ):
+        """Family-scope enforcement: a rule authored in Family A whose
+        canonical SQL names a Family B member's id must have that row
+        dropped before a NudgeProposal is emitted. This is the
+        regression test for the admin-rule cross-tenant leak.
+        """
+        from app.models.foundation import Family, FamilyMember
+        from app.models.nudge_rules import NudgeRule
+
+        now = _utcnow().replace(tzinfo=None)
+
+        # Seed Family B with one member whose id the attacker-rule will
+        # try to emit. Family A is the `family` fixture (authoring tenant).
+        other_family = Family(name="Other", timezone="UTC")
+        db.add(other_family)
+        db.flush()
+        other_member = FamilyMember(
+            family_id=other_family.id,
+            first_name="Outsider",
+            last_name="X",
+            role="adult",
+            birthdate=date(1990, 1, 1),
+        )
+        db.add(other_member)
+        db.flush()
+
+        # Rule belongs to Family A, but its canonical SQL selects the
+        # Family B member's id verbatim. The allowlist permits
+        # family_members, so the validator-canonicalized form reads it
+        # back directly. Hardcoding the UUID via f-string is fine here;
+        # this test exercises the scanner's filter, not the validator.
+        canonical = (
+            "SELECT id AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, now() AS scheduled_for "
+            f"FROM family_members WHERE id = '{other_member.id}'"
+        )
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="cross-family-attempt",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",  # unused at scan time
+            canonical_sql=canonical,
+            trigger_kind="custom_rule",
+            default_lead_time_minutes=0,
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        # No proposal may carry a Family B member_id, even though the
+        # rule's SQL explicitly named one.
+        assert not any(
+            p.family_member_id == other_member.id for p in proposals
+        ), "cross-family member_id leaked into proposals"
+        # With only this one rule, the rule contributed no proposals.
+        assert proposals == []
+
+    def test_inactive_rule_is_skipped(
+        self, db: Session, family, adults
+    ):
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="task A",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="disabled-rule",
+            is_active=False,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        assert proposals == []
+
+    def test_lead_time_shifts_scheduled_for(
+        self, db: Session, family, adults
+    ):
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        # tz-aware insert so the timestamptz round-trip yields the same
+        # UTC moment back regardless of the DB session's default TimeZone.
+        # We compare after normalizing both sides to naive UTC.
+        fixed_due_aware = _utcnow() - timedelta(hours=1)
+        fixed_due = fixed_due_aware.astimezone(timezone.utc).replace(tzinfo=None)
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="task A",
+            status="pending",
+            due_at=fixed_due_aware,
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="leaded-rule",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            default_lead_time_minutes=15,
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        assert len(proposals) >= 1
+        # scheduled_for should be fixed_due - 15 min
+        delta = fixed_due - proposals[0].scheduled_for
+        assert delta == timedelta(minutes=15)
+
+    def test_one_bad_rule_does_not_poison_tick(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """A rule whose canonical SQL raises at execution time is logged
+        and skipped. A healthy rule in the same tick still emits."""
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="t",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="bad-rule",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                # Missing required columns -> RuleExecutionError [schema]
+                "SELECT id FROM personal_tasks LIMIT 1"
+            ),
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="good-rule",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        proposals = nudges_service.scan_rule_triggers(db, now)
+        # bad-rule contributed zero; good-rule contributed 1+
+        assert len(proposals) >= 1
+        names_from_context = {p.context.get("title", "") for p in proposals}
+        assert any("good-rule" in t for t in names_from_context)
+
+    def test_budget_stops_iteration(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """If total wall-clock budget is exceeded, subsequent rules are
+        skipped. Verify by monkeypatching execute_validated_rule_sql to
+        sleep inside, and using budget_seconds=0.05."""
+        from app.models.nudge_rules import NudgeRule
+        import time as _time
+
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        for i in range(3):
+            db.add(NudgeRule(
+                family_id=family.id,
+                name=f"slow-rule-{i}",
+                is_active=True,
+                source_kind="sql_template",
+                template_sql="SELECT 1",
+                canonical_sql=(
+                    "SELECT assigned_to AS member_id, id AS entity_id, "
+                    "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                    "FROM personal_tasks LIMIT 1"
+                ),
+                trigger_kind="custom_rule",
+                severity="normal",
+            ))
+        db.commit()
+
+        calls = []
+        real_exec = nudges_service.execute_validated_rule_sql
+
+        def slow_exec(db_arg, canonical_sql, params, **kwargs):
+            calls.append(canonical_sql)
+            _time.sleep(0.1)
+            return real_exec(db_arg, canonical_sql, params, **kwargs)
+
+        monkeypatch.setattr(
+            nudges_service, "execute_validated_rule_sql", slow_exec
+        )
+
+        proposals = nudges_service.scan_rule_triggers(db, now, budget_seconds=0.05)
+        # First rule runs (puts us over budget); subsequent two should be
+        # skipped. Expect exactly 1 exec call.
+        assert len(calls) == 1
+
+
+class TestRunNudgeScanWithRules:
+    def test_rule_triggered_proposal_flows_through_pipeline(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """Active rule produces a row -> scan_rule_triggers emits a
+        NudgeProposal -> apply_proactivity passes it through (balanced)
+        -> batch_proposals wraps it -> dispatch_with_items writes a
+        NudgeDispatch with trigger_kind='custom_rule' on the child."""
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="rule-matched",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="overdue-wrapper",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=(
+                "SELECT assigned_to AS member_id, id AS entity_id, "
+                "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+            ),
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        written = nudges_service.run_nudge_scan(db, now_utc=now)
+        assert written >= 1
+
+        child = db.query(NudgeDispatchItem).filter_by(
+            trigger_kind="custom_rule"
+        ).first()
+        assert child is not None
+        assert child.family_member_id == andrew.id
+
+    def test_rule_errors_do_not_break_tick(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """A broken rule raising in scan_rule_triggers is logged + skipped
+        (already proven in TestScanRuleTriggers); here we confirm that
+        run_nudge_scan still returns based on built-in scanners + healthy
+        rules."""
+        from app.models.nudge_rules import NudgeRule
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="built-in-task",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        db.add(NudgeRule(
+            family_id=family.id,
+            name="broken",
+            is_active=True,
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql="SELECT 1",  # missing required columns -> [schema] raise
+            trigger_kind="custom_rule",
+            severity="normal",
+        ))
+        db.commit()
+
+        # Should not raise; built-in scanner still produces at least 1
+        written = nudges_service.run_nudge_scan(db, now_utc=now)
+        assert written >= 1
+
+    def test_budget_caps_rule_scan_time(
+        self, db: Session, family, adults, monkeypatch
+    ):
+        """If rule scanning exceeds budget_seconds, scan_rule_triggers
+        stops. run_nudge_scan still completes with built-in-only proposals
+        plus whatever rules ran before the budget expired."""
+        from app.models.nudge_rules import NudgeRule
+        import time as _time
+
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+
+        _force_compose_fallback(monkeypatch)
+
+        db.add(PersonalTask(
+            family_id=family.id,
+            assigned_to=andrew.id,
+            title="t",
+            status="pending",
+            due_at=now - timedelta(hours=1),
+        ))
+        for i in range(3):
+            db.add(NudgeRule(
+                family_id=family.id,
+                name=f"slow-{i}",
+                is_active=True,
+                source_kind="sql_template",
+                template_sql="SELECT 1",
+                canonical_sql=(
+                    "SELECT assigned_to AS member_id, id AS entity_id, "
+                    "'personal_task' AS entity_kind, due_at AS scheduled_for "
+                    "FROM personal_tasks LIMIT 1"
+                ),
+                trigger_kind="custom_rule",
+                severity="normal",
+            ))
+        db.commit()
+
+        exec_calls = []
+        real_exec = nudges_service.execute_validated_rule_sql
+
+        def slow_exec(db_arg, canonical_sql, params, **kwargs):
+            exec_calls.append(1)
+            _time.sleep(0.1)
+            return real_exec(db_arg, canonical_sql, params, **kwargs)
+
+        monkeypatch.setattr(
+            nudges_service, "execute_validated_rule_sql", slow_exec
+        )
+
+        written = nudges_service.run_nudge_scan(
+            db, now_utc=now, rule_scan_budget_seconds=0.05
+        )
+        # Built-in produced 1; rule scan capped -> at most 1 rule exec
+        assert written >= 1
+        assert len(exec_calls) <= 1
+
+
+class TestAdminNudgeRulesRoutes:
+    _BASIC_SQL = (
+        "SELECT assigned_to AS member_id, id AS entity_id, "
+        "'personal_task' AS entity_kind, due_at AS scheduled_for "
+        "FROM personal_tasks WHERE status = 'pending' LIMIT 100"
+    )
+
+    def test_list_empty_when_no_rules(self, db, family, adults, client):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.get(
+            "/api/admin/nudges/rules",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_post_creates_rule_with_canonical_sql(
+        self, db, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            "/api/admin/nudges/rules",
+            json={
+                "name": "overdue rule",
+                "template_sql": self._BASIC_SQL,
+                "severity": "normal",
+                "default_lead_time_minutes": 5,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["name"] == "overdue rule"
+        assert body["canonical_sql"] is not None
+        assert body["canonical_sql"].lower().startswith("select")
+        assert body["trigger_kind"] == "custom_rule"
+
+    def test_post_rejects_bad_sql_with_422(
+        self, db, family, adults, client
+    ):
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            "/api/admin/nudges/rules",
+            json={
+                "name": "bad",
+                "template_sql": "DROP TABLE personal_tasks",
+                "severity": "normal",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+        assert "[" in r.json()["detail"]  # tagged error
+
+    def test_patch_revalidates_on_sql_change(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        canonical = validate_rule_sql(self._BASIC_SQL).canonical_sql
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=canonical,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"template_sql": "SELECT COUNT(*) FROM personal_tasks"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        # COUNT is allowed but schema check on the rule executor won't
+        # run at PATCH time; only at scan/preview time. PATCH should
+        # succeed here since validate_rule_sql passes SELECT COUNT(*).
+        assert r.status_code == 200
+        assert r.json()["canonical_sql"].lower().startswith("select")
+
+    def test_patch_rejects_invalid_sql_and_keeps_old_canonical(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        original = validate_rule_sql(self._BASIC_SQL).canonical_sql
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=original,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"template_sql": "DELETE FROM personal_tasks"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+        db.refresh(rule)
+        assert rule.canonical_sql == original  # unchanged
+
+    def test_delete_removes_rule(self, db, family, adults, client):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        r = client.delete(
+            f"/api/admin/nudges/rules/{rule.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 204
+        assert db.get(NudgeRule, rule.id) is None
+
+    def test_preview_count_returns_count(
+        self, db, family, adults, client
+    ):
+        from app.models.nudge_rules import NudgeRule
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        andrew = adults["robert"]
+        now = _utcnow().replace(tzinfo=None)
+        for i in range(3):
+            db.add(PersonalTask(
+                family_id=family.id,
+                assigned_to=andrew.id,
+                title=f"T{i}",
+                status="pending",
+                due_at=now - timedelta(hours=1),
+            ))
+        rule = NudgeRule(
+            family_id=family.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+        r = client.post(
+            f"/api/admin/nudges/rules/{rule.id}/preview-count",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["count"] >= 3
+        assert body["capped"] is False
+        assert body["error"] is None
+
+    def test_preview_count_does_not_leak_cross_family_rows(
+        self, db, family, adults, client
+    ):
+        """Regression: /preview-count must apply the same family-scope
+        filter as scan_rule_triggers so a rule authored in Family A
+        cannot enumerate rows belonging to Family B.
+        """
+        from app.models.foundation import Family, FamilyMember
+        from app.models.nudge_rules import NudgeRule
+
+        andrew = adults["robert"]
+
+        # Seed Family B with one member whose id the attacker-rule
+        # explicitly names. Family A is the `family` fixture.
+        other_family = Family(name="Other", timezone="UTC")
+        db.add(other_family)
+        db.flush()
+        other_member = FamilyMember(
+            family_id=other_family.id,
+            first_name="Outsider",
+            last_name="X",
+            role="adult",
+            birthdate=date(1990, 1, 1),
+        )
+        db.add(other_member)
+        db.flush()
+
+        # Rule belongs to Family A but its canonical SQL names the
+        # Family B member's id. The validator would accept the raw form
+        # (family_members is on the allowlist); we store the canonical
+        # hand-rolled here because the test targets the route's filter,
+        # not the validator.
+        canonical = (
+            "SELECT id AS member_id, id AS entity_id, "
+            "'personal_task' AS entity_kind, now() AS scheduled_for "
+            f"FROM family_members WHERE id = '{other_member.id}'"
+        )
+        rule = NudgeRule(
+            family_id=family.id,
+            name="cross-family-preview",
+            source_kind="sql_template",
+            template_sql="SELECT 1",
+            canonical_sql=canonical,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        token = _make_account_and_token(
+            db, andrew.id, "andrew-cross-family@test.app"
+        )
+        r = client.post(
+            f"/api/admin/nudges/rules/{rule.id}/preview-count",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        # The raw SQL would return 1 row (the Family B member). The
+        # filter drops it so the response count is 0 and no cross-
+        # tenant size is disclosed.
+        assert body["count"] == 0, (
+            f"preview-count leaked cross-family row count: {body}"
+        )
+        assert body["error"] is None
+
+    def test_non_admin_cannot_access_routes(
+        self, db, family, adults, children, client
+    ):
+        """Child-role members lack nudges.configure -> 403."""
+        sadie = children["sadie"]
+        token = _make_account_and_token(db, sadie.id, "sadie-rules@test.app")
+
+        for path in [
+            ("GET", "/api/admin/nudges/rules", None),
+            ("POST", "/api/admin/nudges/rules",
+             {"name": "x", "template_sql": "SELECT 1 AS member_id, 1 AS entity_id, 'x' AS entity_kind, now() AS scheduled_for LIMIT 1", "severity": "normal"}),
+        ]:
+            method, url, body = path
+            if method == "GET":
+                r = client.get(url, headers={"Authorization": f"Bearer {token}"})
+            else:
+                r = client.post(url, json=body, headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 403
+
+    def test_cross_family_rule_returns_404(
+        self, db, family, adults, client
+    ):
+        """A rule from another family must return 404 for this actor."""
+        from app.models.nudge_rules import NudgeRule
+        from app.models.foundation import Family
+        from app.services.nudge_rule_validator import validate_rule_sql
+
+        # Separate family with one rule
+        other = Family(name="Other", timezone="UTC")
+        db.add(other)
+        db.flush()
+        rule = NudgeRule(
+            family_id=other.id,
+            name="r",
+            source_kind="sql_template",
+            template_sql=self._BASIC_SQL,
+            canonical_sql=validate_rule_sql(self._BASIC_SQL).canonical_sql,
+            severity="normal",
+        )
+        db.add(rule)
+        db.commit()
+
+        andrew = adults["robert"]
+        token = _make_account_and_token(db, andrew.id, "andrew-rules@test.app")
+
+        r = client.patch(
+            f"/api/admin/nudges/rules/{rule.id}",
+            json={"name": "hijacked"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 404
+
+        r = client.delete(
+            f"/api/admin/nudges/rules/{rule.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 404

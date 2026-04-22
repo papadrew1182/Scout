@@ -34,7 +34,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytz
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from app.models.nudges import NudgeDispatch, NudgeDispatchItem
 from app.models.push import PushDevice
 from app.models.quiet_hours import QuietHoursFamily  # noqa: F401
 from app.services import ai_personality_service, push_service
+from app.services.nudge_rule_validator import RuleExecutionError
 
 logger = logging.getLogger("scout.nudges")
 
@@ -963,19 +964,269 @@ def dispatch_with_items(
 
 
 # ---------------------------------------------------------------------------
+# Sprint 05 Phase 4 - Custom rule scanner
+# ---------------------------------------------------------------------------
+
+_RULE_REQUIRED_COLUMNS = ("member_id", "entity_id", "entity_kind", "scheduled_for")
+
+
+def execute_validated_rule_sql(
+    db: Session,
+    canonical_sql: str,
+    template_params: dict,
+    statement_timeout_ms: int = 1500,
+    lock_timeout_ms: int = 500,
+) -> list[dict]:
+    """Execute canonical SQL from a validated rule inside a READ ONLY
+    nested transaction with strict statement_timeout + lock_timeout.
+
+    Admins authoring rules MUST produce exactly these four columns in
+    their SELECT list:
+
+      - member_id       uuid       (must match a family_members.id)
+      - entity_id       uuid|null  (the entity the rule is about)
+      - entity_kind     text       (the child row's trigger_entity_kind)
+      - scheduled_for   timestamptz (the moment the nudge should fire)
+
+    Caps returned rows at 200 (logs a WARN if truncated). Validates the
+    result set has the four required columns; missing columns raise
+    RuleExecutionError with a [schema] tag. Timeouts raise [timeout],
+    lock waits raise [lock_timeout], and all other DB errors raise
+    [db_error]. Caller is expected to log + skip on RuleExecutionError.
+    """
+    try:
+        with db.begin_nested():
+            db.execute(
+                text(f"SET LOCAL statement_timeout = '{int(statement_timeout_ms)}ms'")
+            )
+            db.execute(
+                text(f"SET LOCAL lock_timeout = '{int(lock_timeout_ms)}ms'")
+            )
+            db.execute(text("SET LOCAL transaction_read_only = on"))
+            # Pin TimeZone=UTC for this nested tx so naive datetimes in
+            # rule SQL round-trip correctly regardless of the deployment
+            # session's default TimeZone (repo convention is naive-UTC
+            # everywhere in Python).
+            db.execute(text("SET LOCAL TIME ZONE 'UTC'"))
+            try:
+                result = db.execute(
+                    text(canonical_sql), template_params or {}
+                )
+                rows = result.mappings().all()
+            except Exception as e:
+                msg = str(e).lower()
+                if "statement timeout" in msg or "canceling statement" in msg:
+                    raise RuleExecutionError(f"[timeout] {e}") from e
+                if "lock timeout" in msg:
+                    raise RuleExecutionError(f"[lock_timeout] {e}") from e
+                raise RuleExecutionError(f"[db_error] {e}") from e
+
+            if rows and not all(col in rows[0] for col in _RULE_REQUIRED_COLUMNS):
+                missing = [
+                    c for c in _RULE_REQUIRED_COLUMNS if c not in rows[0]
+                ]
+                raise RuleExecutionError(
+                    f"[schema] rule SQL must SELECT "
+                    f"{list(_RULE_REQUIRED_COLUMNS)}; missing {missing}"
+                )
+
+            if len(rows) > 200:
+                logger.warning(
+                    "rule SQL returned %s rows; truncating to 200", len(rows)
+                )
+                rows = rows[:200]
+
+            return [dict(r) for r in rows]
+    except RuleExecutionError:
+        raise
+    except Exception as e:
+        raise RuleExecutionError(f"[db_error] {e}") from e
+
+
+def filter_rule_rows_to_family(
+    db: Session,
+    rows: list[dict],
+    rule_family_id: uuid.UUID,
+    rule_id: uuid.UUID,
+    rule_name: str,
+) -> list[dict]:
+    """Family-scope enforcement for rule output. Drops any row whose
+    member_id does not belong to rule_family_id. Returns the filtered
+    list; the caller decides what to do with it. Logs a WARNING as
+    cross_family_drop with counts only if any rows were dropped.
+
+    Used by both the scheduler (scan_rule_triggers, where dropped rows
+    would have produced cross-tenant dispatches) and the admin preview-
+    count route (where dropped rows would have leaked cross-tenant
+    counts via the response body). Both callers must apply this before
+    returning output to a user.
+    """
+    from app.models.foundation import FamilyMember
+
+    if not rows:
+        return []
+    member_ids_in_rows = {
+        r.get("member_id")
+        for r in rows
+        if r.get("member_id") is not None
+    }
+    if member_ids_in_rows:
+        in_family = set(db.scalars(
+            select(FamilyMember.id).where(
+                FamilyMember.id.in_(member_ids_in_rows),
+                FamilyMember.family_id == rule_family_id,
+            )
+        ).all())
+    else:
+        in_family = set()
+    dropped = 0
+    filtered: list[dict] = []
+    for r in rows:
+        mid = r.get("member_id")
+        if mid is None or mid not in in_family:
+            dropped += 1
+            continue
+        filtered.append(r)
+    if dropped:
+        logger.warning(
+            "nudge_rule cross_family_drop rule=%s name=%s dropped=%s",
+            rule_id, rule_name, dropped,
+        )
+    return filtered
+
+
+def scan_rule_triggers(
+    db: Session,
+    now_utc: datetime,
+    budget_seconds: float = 2.0,
+) -> list[NudgeProposal]:
+    """Iterate active NudgeRule rows and emit NudgeProposals for each
+    row the rule's canonical SQL returns. One bad rule is logged at
+    WARN and skipped; a bad rule does NOT poison the tick. Total
+    wall-clock budget (default 2.0s) stops iteration when exhausted;
+    skipped count is logged at INFO.
+
+    Family-scope enforcement: each rule is authored within a specific
+    family_id. After a rule's canonical SQL runs, emitted rows are
+    filtered so only member_ids belonging to the rule's own family
+    survive. Rows that name members in other families are dropped
+    and logged at WARNING as cross_family_drop. This is authoritative;
+    rules MUST NOT assume caller-level restriction.
+    """
+    import time as _time
+
+    from app.models.nudge_rules import NudgeRule
+
+    rules = list(
+        db.scalars(
+            select(NudgeRule)
+            .where(NudgeRule.is_active == True)  # noqa: E712
+            .order_by(NudgeRule.created_at)
+        ).all()
+    )
+
+    proposals: list[NudgeProposal] = []
+    start = _time.monotonic()
+    skipped = 0
+    for idx, rule in enumerate(rules):
+        if _time.monotonic() - start >= budget_seconds:
+            skipped = len(rules) - idx
+            break
+        if not rule.canonical_sql:
+            logger.warning(
+                "scan_rule_triggers skip rule=%s reason=missing_canonical_sql",
+                rule.id,
+            )
+            continue
+        try:
+            rows = execute_validated_rule_sql(
+                db,
+                rule.canonical_sql,
+                rule.template_params or {},
+            )
+        except RuleExecutionError as e:
+            logger.warning(
+                "scan_rule_triggers skip rule=%s name=%s err=%s",
+                rule.id, rule.name, e,
+            )
+            continue
+
+        # Family-scope enforcement: drop any row whose member_id does
+        # not belong to this rule's family. Rule authors cannot reach
+        # across tenants even if their canonical SQL tries to.
+        rows = filter_rule_rows_to_family(
+            db, rows, rule.family_id, rule.id, rule.name
+        )
+
+        lead = timedelta(minutes=int(rule.default_lead_time_minutes or 0))
+        for r in rows:
+            scheduled = r.get("scheduled_for")
+            if scheduled is None:
+                continue
+            # Normalize to naive-UTC per the repo convention (see
+            # _as_utc_aware docstring). Postgres timestamptz columns
+            # hydrate as tz-aware; downstream code expects naive UTC.
+            if scheduled.tzinfo is not None:
+                scheduled = scheduled.astimezone(timezone.utc).replace(tzinfo=None)
+            proposals.append(NudgeProposal(
+                family_member_id=r["member_id"],
+                trigger_kind="custom_rule",
+                trigger_entity_kind=r["entity_kind"],
+                trigger_entity_id=r.get("entity_id"),
+                scheduled_for=scheduled - lead,
+                severity=rule.severity,
+                context={
+                    "title": f"Custom rule: {rule.name}",
+                    "due_time": scheduled.strftime("%I:%M %p"),
+                    "occurrence_at_utc": scheduled,
+                },
+            ))
+
+    if skipped:
+        logger.info(
+            "scan_rule_triggers budget exhausted; skipped %s of %s rules",
+            skipped, len(rules),
+        )
+    return proposals
+
+
+# ---------------------------------------------------------------------------
 # Orchestration entry points
 # ---------------------------------------------------------------------------
 
 
-def run_nudge_scan(db: Session, now_utc: datetime | None = None) -> int:
+def run_nudge_scan(
+    db: Session,
+    now_utc: datetime | None = None,
+    rule_scan_budget_seconds: float = 2.0,
+) -> int:
     """End-to-end: scan all three sources, apply proactivity gate,
     batch into bundles, dispatch. Returns count of new parent
-    dispatches (delivered + held + suppressed)."""
+    dispatches (delivered + held + suppressed).
+
+    Built-in scanners run first; custom rules run second per revised
+    plan Section 3. Rules share the same wall-clock tick; a slow rule
+    cannot stall the tick because scan_rule_triggers stops once
+    rule_scan_budget_seconds (default 2.0s) is exhausted.
+    """
     ts = now_utc or _utcnow()
     proposals: list[NudgeProposal] = []
     proposals.extend(scan_overdue_tasks(db, ts))
     proposals.extend(scan_upcoming_events(db, ts))
     proposals.extend(scan_missed_routines(db, ts))
+    # Built-ins first; rules second per revised plan Section 3.
+    proposals.extend(
+        scan_rule_triggers(db, ts, budget_seconds=rule_scan_budget_seconds)
+    )
+    # Normalize scheduled_for to naive-UTC across built-ins + rules so
+    # apply_proactivity arithmetic and batch_proposals sort never mix
+    # tz-aware (timestamptz hydrated from Postgres) with naive (emitted
+    # from scan_rule_triggers per its Task 4 contract).
+    for p in proposals:
+        if p.scheduled_for is not None and p.scheduled_for.tzinfo is not None:
+            p.scheduled_for = p.scheduled_for.astimezone(
+                timezone.utc
+            ).replace(tzinfo=None)
     gated = apply_proactivity(db, proposals, ts)
     bundles = batch_proposals(gated)
     return dispatch_with_items(db, bundles, ts)

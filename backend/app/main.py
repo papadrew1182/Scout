@@ -44,6 +44,7 @@ from app.routes.admin import allowance as admin_allowance
 from app.routes.admin import integrations as admin_integrations
 from app.routes.admin import affirmations as admin_affirmations
 from app.routes.admin import quiet_hours as admin_quiet_hours
+from app.routes.admin import nudge_rules as admin_nudge_rules
 
 logging.basicConfig(
     level=logging.INFO,
@@ -128,6 +129,7 @@ app.include_router(admin_allowance.router)
 app.include_router(admin_integrations.router)
 app.include_router(admin_affirmations.router)
 app.include_router(admin_quiet_hours.router)
+app.include_router(admin_nudge_rules.router)
 
 
 @app.get("/health")

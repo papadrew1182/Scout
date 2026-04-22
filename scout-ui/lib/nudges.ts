@@ -5,7 +5,7 @@
  */
 
 import { API_BASE_URL } from "./config";
-import { get, put } from "./api";
+import { del, get, patch, post, put } from "./api";
 
 export type NudgeStatus = "pending" | "delivered" | "suppressed";
 export type NudgeSeverity = "low" | "normal" | "high";
@@ -61,4 +61,78 @@ export function putFamilyQuietHours(
     start_local_minute,
     end_local_minute,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 05 Phase 4 - Custom nudge rules (admin)
+// ---------------------------------------------------------------------------
+
+export type RuleSeverity = "low" | "normal" | "high";
+
+export interface NudgeRule {
+  id: string;
+  family_id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  source_kind: "sql_template" | "predicate";
+  template_sql: string | null;
+  canonical_sql: string | null;
+  template_params: Record<string, unknown>;
+  trigger_kind: string;
+  default_lead_time_minutes: number;
+  severity: RuleSeverity;
+  created_by_family_member_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NudgeRuleCreate {
+  name: string;
+  description?: string;
+  source_kind?: "sql_template";
+  template_sql: string;
+  template_params?: Record<string, unknown>;
+  default_lead_time_minutes?: number;
+  severity?: RuleSeverity;
+  is_active?: boolean;
+}
+
+export interface NudgeRulePatch {
+  name?: string;
+  description?: string | null;
+  template_sql?: string;
+  template_params?: Record<string, unknown>;
+  default_lead_time_minutes?: number;
+  severity?: RuleSeverity;
+  is_active?: boolean;
+}
+
+export interface PreviewCountResponse {
+  count: number;
+  capped: boolean;
+  error: string | null;
+}
+
+export function listNudgeRules(): Promise<NudgeRule[]> {
+  return get(`${API_BASE_URL}/api/admin/nudges/rules`);
+}
+
+export function createNudgeRule(body: NudgeRuleCreate): Promise<NudgeRule> {
+  return post(`${API_BASE_URL}/api/admin/nudges/rules`, body);
+}
+
+export function patchNudgeRule(
+  id: string,
+  body: NudgeRulePatch,
+): Promise<NudgeRule> {
+  return patch(`${API_BASE_URL}/api/admin/nudges/rules/${id}`, body);
+}
+
+export function deleteNudgeRule(id: string): Promise<void> {
+  return del(`${API_BASE_URL}/api/admin/nudges/rules/${id}`);
+}
+
+export function previewRuleCount(id: string): Promise<PreviewCountResponse> {
+  return post(`${API_BASE_URL}/api/admin/nudges/rules/${id}/preview-count`, {});
 }
