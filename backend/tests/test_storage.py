@@ -146,3 +146,93 @@ class TestUploadEndpointValidation:
         from app.routes.storage import ALLOWED_TYPES
         expected = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
         assert ALLOWED_TYPES == expected
+
+
+# ---------------------------------------------------------------------------
+# Signed-URL resolver — Batch 2 PR 1b
+#
+# Added because chore_templates.photo_example_url now stores the Supabase
+# Storage PATH (not a signed URL). Signed URLs expire in 1 hour, so the
+# admin UI saves the path and render-side consumers resolve via
+# GET /api/storage/signed-url at read time. Tenancy gate: path must
+# begin with the actor's family_id.
+# ---------------------------------------------------------------------------
+
+class TestSignedUrlEndpoint:
+    """Direct async-handler tests. Mocks settings + create_signed_url so
+    no real Supabase calls are made.
+    """
+
+    def _fake_actor(self, family_id: str):
+        # Duck-typed stand-in for app.auth.Actor; the handler only reads
+        # family_id and member_id off it.
+        return type("FakeActor", (), {
+            "family_id": uuid.UUID(family_id),
+            "member_id": uuid.UUID(str(uuid.uuid4())),
+        })()
+
+    @pytest.mark.asyncio
+    async def test_missing_path_raises_400(self):
+        from fastapi import HTTPException
+
+        from app.routes.storage import get_signed_url
+
+        with patch("app.routes.storage.settings") as mock_settings:
+            mock_settings.supabase_url = "https://example.test"
+
+            with pytest.raises(HTTPException) as exc:
+                await get_signed_url(path="", actor=self._fake_actor(str(uuid.uuid4())))
+        assert exc.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_cross_family_path_raises_403(self):
+        from fastapi import HTTPException
+
+        from app.routes.storage import get_signed_url
+
+        fam_a = str(uuid.uuid4())
+        fam_b = str(uuid.uuid4())
+        with patch("app.routes.storage.settings") as mock_settings:
+            mock_settings.supabase_url = "https://example.test"
+
+            with pytest.raises(HTTPException) as exc:
+                await get_signed_url(
+                    path=f"{fam_b}/somebody/2026-04-22/file.jpg",
+                    actor=self._fake_actor(fam_a),
+                )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_supabase_not_configured_raises_501(self):
+        from fastapi import HTTPException
+
+        from app.routes.storage import get_signed_url
+
+        with patch("app.routes.storage.settings") as mock_settings:
+            mock_settings.supabase_url = None
+
+            with pytest.raises(HTTPException) as exc:
+                await get_signed_url(
+                    path="any/path.jpg",
+                    actor=self._fake_actor(str(uuid.uuid4())),
+                )
+        assert exc.value.status_code == 501
+
+    @pytest.mark.asyncio
+    async def test_happy_path_returns_fresh_signed_url(self):
+        from app.routes.storage import get_signed_url
+
+        fam = str(uuid.uuid4())
+        path = f"{fam}/member-abc/2026-04-22/photo.jpg"
+
+        with patch("app.routes.storage.settings") as mock_settings, \
+             patch("app.routes.storage.create_signed_url", new_callable=AsyncMock) as mock_sign:
+            mock_settings.supabase_url = "https://example.test"
+            mock_sign.return_value = "https://example.test/storage/v1/signed-123"
+
+            result = await get_signed_url(path=path, actor=self._fake_actor(fam))
+
+        assert result["path"] == path
+        assert result["signed_url"] == "https://example.test/storage/v1/signed-123"
+        assert result["expires_in"] == 3600
+        mock_sign.assert_called_once_with(path, expires_in=3600)

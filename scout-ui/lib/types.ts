@@ -57,6 +57,17 @@ export interface ChoreTemplate {
   description: string | null;
   recurrence: string;
   assignment_type: string;
+  // Scope-contract fields exposed through the API in Batch 2 PR 1b.
+  // Optional on the response: older callers that ignore these get
+  // backward-compatible ChoreTemplate shapes; forms that POST them
+  // see them round-trip.
+  included?: string[];
+  not_included?: string[];
+  done_means_done?: string | null;
+  supplies?: string[];
+  photo_example_url?: string | null;
+  estimated_duration_minutes?: number | null;
+  consequence_on_miss?: string | null;
 }
 
 export interface DailyWin {

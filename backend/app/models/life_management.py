@@ -56,6 +56,12 @@ class ChoreTemplate(Base):
     not_included: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     done_means_done: Mapped[str | None] = mapped_column(Text)
     supplies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Stores the Supabase Storage PATH (e.g. "{family_id}/{member_id}/{date}/{file}"),
+    # NOT a signed URL. Signed URLs expire in 1 hour; persisting one
+    # would go stale within an hour. Consumers resolve the path to a
+    # fresh signed URL at read time via GET /api/storage/signed-url.
+    # Column name kept as photo_example_url for backward compatibility
+    # even though the contents are now a path string.
     photo_example_url: Mapped[str | None] = mapped_column(Text)
     estimated_duration_minutes: Mapped[int | None] = mapped_column()
     consequence_on_miss: Mapped[str | None] = mapped_column(Text)

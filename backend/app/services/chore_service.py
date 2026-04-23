@@ -36,6 +36,17 @@ def create_chore_template(db: Session, family_id: uuid.UUID, payload: ChoreTempl
         due_time=payload.due_time,
         assignment_type=payload.assignment_type,
         assignment_rule=payload.assignment_rule,
+        # Phase 3 scope-contract fields, exposed through the schema in
+        # Batch 2 PR 1b. All optional; lists default to [], strings
+        # and ints default to None. Existing POST payloads that do
+        # not carry these keys still produce well-formed rows.
+        included=payload.included,
+        not_included=payload.not_included,
+        done_means_done=payload.done_means_done,
+        supplies=payload.supplies,
+        photo_example_url=payload.photo_example_url,
+        estimated_duration_minutes=payload.estimated_duration_minutes,
+        consequence_on_miss=payload.consequence_on_miss,
     )
     db.add(template)
     db.commit()
