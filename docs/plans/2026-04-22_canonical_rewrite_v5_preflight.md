@@ -399,7 +399,7 @@ Verification of each of v3's 12 open questions per prompt.
 | # | Question | Status | Notes |
 |---|---|---|---|
 | 1 | Orphan blobs decision | resolved | v4 §5 Phase 0 adds Supabase Storage purge step |
-| 2 | AI quiesce strategy | resolved | Don't chat + optional `SCOUT_AI_ENABLED=false` documented |
+| 2 | AI quiesce strategy | resolved | Don't chat + optional `SCOUT_ENABLE_AI=false` documented. Env var name corrected 2026-04-23: the actual setting feeds `settings.enable_ai` (`backend/app/config.py:93`) so the env var is `SCOUT_ENABLE_AI`, not `SCOUT_AI_ENABLED`. |
 | 3 | Bootstrap flag lifecycle | resolved | `SCOUT_ENABLE_BOOTSTRAP=true` before Phase 5, flip off after |
 | 4 | Phase 5 checklist item #4 | resolved | Admin UI not Scout AI |
 | 5 | Frontend token handling | resolved | Documented as expected 401 on first request |

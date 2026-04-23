@@ -17,7 +17,7 @@ Each env var is flipped at the start of the sprint and flipped back at the end. 
 |---------|--------|--------|-----------|-----------|-------|
 | `SCOUT_SCHEDULER_ENABLED` | Phase 0 manual ops (after PR 0.2 merges) | Andrew | Phase 5 PR 5.3 step 1 via `scripts/unquiesce_prod.py --full` | Andrew | Sprint value: `false`. Revert: `true` (or delete; default is `true`). |
 | `SCOUT_ENABLE_BOOTSTRAP` | Phase 0 manual ops | Andrew | Phase 5 PR 5.3 step 1 via `scripts/unquiesce_prod.py --full` | Andrew | Sprint value: `true`. Revert: `false`. Startup warns while enabled in prod. |
-| `SCOUT_AI_ENABLED` | Phase 0 manual ops | Andrew | Phase 5 PR 5.2 via `scripts/unquiesce_prod.py --ai-only` | Andrew | Sprint value: `false`. Revert: `true` (or delete; default unset = enabled per config). |
+| `SCOUT_ENABLE_AI` | Phase 0 manual ops | Andrew | Phase 5 PR 5.2 via `scripts/unquiesce_prod.py --ai-only` | Andrew | Sprint value: `false`. Revert: `true` (or delete; default is `true` per `backend/app/config.py:93`). Note: the env var name is `SCOUT_ENABLE_AI` (feeds `settings.enable_ai`), NOT `SCOUT_AI_ENABLED`. Earlier drafts used the wrong name; corrected 2026-04-23. |
 
 **Verification at revert time:**
 
@@ -115,7 +115,7 @@ Per v5.1 §Phase 5 Step 2, sources for the reseed span migrations 022, 023, 034,
 - [ ] All scout-ui clients closed (mobile, web tabs) before Phase 1 begins.
 - [ ] No manual DB writes for the full duration: no psql sessions, no Supabase SQL editor queries, no Supabase table editor clicks, no ad-hoc scripts beyond the named `quiesce_prod.py` / `unquiesce_prod.py`.
 - [ ] No `workflow_dispatch` runs of smoke-deployed during the window.
-- [ ] Don't chat with Scout AI (belt-and-suspenders alongside `SCOUT_AI_ENABLED=false`).
+- [ ] Don't chat with Scout AI (belt-and-suspenders alongside `SCOUT_ENABLE_AI=false`).
 
 These are tracked in the Phase 0 handoff doc; this file is the summary.
 
@@ -126,7 +126,7 @@ These are tracked in the Phase 0 handoff doc; this file is the summary.
 After Phase 5 PR 5.3 merges and the first auto-smoke-run passes:
 
 - [ ] `SCOUT_SCHEDULER_ENABLED` is `true` or unset on Railway
-- [ ] `SCOUT_AI_ENABLED` is `true` or unset on Railway
+- [ ] `SCOUT_ENABLE_AI` is `true` or unset on Railway
 - [ ] `SCOUT_ENABLE_BOOTSTRAP` is `false` on Railway
 - [ ] `.github/workflows/ci.yml` `smoke-deployed.if:` includes the `'push'` event again (exact text per section 2)
 - [ ] `/api/ready` returns `ai_available: true`
