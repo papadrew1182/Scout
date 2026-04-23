@@ -56,6 +56,15 @@ class RoutineWithStepsRead(RoutineRead):
 
 
 # --- ChoreTemplate ---
+#
+# Scope-contract fields (included, not_included, done_means_done) plus
+# supplies, photo_example_url, estimated_duration_minutes, and
+# consequence_on_miss shipped at the SQLAlchemy-model layer in Phase 3
+# but were not exposed through these API schemas until Batch 2 PR 1b.
+# All are optional at create time; list fields default to empty arrays
+# matching the model's default=list. Existing callers that POST without
+# the new fields continue to work unchanged.
+
 
 class ChoreTemplateCreate(BaseModel):
     name: str
@@ -64,6 +73,16 @@ class ChoreTemplateCreate(BaseModel):
     due_time: time
     assignment_type: str
     assignment_rule: dict = {}
+    included: list[str] = []
+    not_included: list[str] = []
+    done_means_done: str | None = None
+    supplies: list[str] = []
+    # Supabase Storage path, not a signed URL. See the model comment
+    # on ChoreTemplate.photo_example_url. Callers resolve via
+    # GET /api/storage/signed-url?path=... at render time.
+    photo_example_url: str | None = None
+    estimated_duration_minutes: int | None = None
+    consequence_on_miss: str | None = None
 
 
 class ChoreTemplateRead(BaseModel):
@@ -76,6 +95,13 @@ class ChoreTemplateRead(BaseModel):
     assignment_type: str
     assignment_rule: dict
     is_active: bool
+    included: list[str] = []
+    not_included: list[str] = []
+    done_means_done: str | None = None
+    supplies: list[str] = []
+    photo_example_url: str | None = None
+    estimated_duration_minutes: int | None = None
+    consequence_on_miss: str | None = None
     created_at: datetime
     updated_at: datetime
 

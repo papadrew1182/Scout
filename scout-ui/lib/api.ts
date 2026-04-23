@@ -1279,6 +1279,16 @@ export function createChoreTemplate(payload: {
   due_time?: string;
   assignment_type?: string;
   assignment_rule?: Record<string, unknown>;
+  // Scope-contract fields exposed through the API in Batch 2 PR 1b.
+  // All optional at create time; backend defaults to [] for lists and
+  // null for strings/ints when absent.
+  included?: string[];
+  not_included?: string[];
+  done_means_done?: string;
+  supplies?: string[];
+  photo_example_url?: string;
+  estimated_duration_minutes?: number;
+  consequence_on_miss?: string;
 }): Promise<ChoreTemplate> {
   return post(`${familyUrl()}/chore-templates`, payload);
 }
@@ -1320,4 +1330,35 @@ export async function uploadAttachment(
     throw new Error(`Upload failed (${res.status}): ${text.slice(0, 200)}`);
   }
   return (await res.json()) as AttachmentUploadResult;
+}
+
+export interface SignedUrlResult {
+  path: string;
+  signed_url: string;
+  expires_in: number;
+}
+
+/**
+ * Resolve a previously-uploaded storage path to a fresh signed URL.
+ *
+ * Required because signed URLs from uploadAttachment expire in 1 hour.
+ * Anywhere a storage path is persisted long-term (e.g.
+ * chore_templates.photo_example_url) must call this before rendering.
+ * Backend enforces that the path begins with the actor's family_id.
+ */
+export async function fetchSignedUrl(path: string): Promise<SignedUrlResult> {
+  const qs = new URLSearchParams({ path });
+  const res = await fetch(
+    `${API_BASE_URL}/api/storage/signed-url?${qs.toString()}`,
+    { method: "GET", headers: authHeaders() },
+  );
+  if (res.status === 401) {
+    _handleUnauthorized();
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Signed URL fetch failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  return (await res.json()) as SignedUrlResult;
 }
