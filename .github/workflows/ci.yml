@@ -152,12 +152,21 @@ jobs:
           retention-days: 7
 
   smoke-deployed:
-    # Runs Playwright against the real Vercel + Railway deploy. Auto-
-    # triggered on push-to-main (top-level `on:` block filters push to
-    # main + release-*); still available via workflow_dispatch for
-    # operator-driven runs. Does NOT run on pull_request events because
-    # PRs haven't deployed.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Runs Playwright against the real Vercel + Railway deploy.
+    #
+    # TEMPORARY (canonical rewrite sprint 2026-04-23): auto-trigger on
+    # push-to-main is DISABLED for the duration of Phase 1 through Phase 5.
+    # The scout.* schema is being rebuilt; auto-running smoke against prod
+    # mid-sprint would fail and produce noise. Workflow_dispatch remains
+    # available for operator-initiated runs outside the maintenance window.
+    #
+    # Reversal: Phase 5 PR 5.3 restores the original `if:` clause
+    #   (`github.event_name == 'push' || github.event_name == 'workflow_dispatch'`)
+    # after scripts/unquiesce_prod.py --full has confirmed green.
+    #
+    # Originally: runs on push-to-main + release-* (top-level on: filters);
+    # available via workflow_dispatch; does NOT run on pull_request.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       SCOUT_WEB_URL: ${{ github.event.inputs.web_url || 'https://scout-ui-gamma.vercel.app' }}
