@@ -6,6 +6,8 @@
 **Scope:** Eight items Andrew specified. Evidence-based, grep-verified.
 **Status:** advisory. Does not start execution.
 
+**Erratum (2026-04-23, added as part of PR 0.2):** this document contains 4 references to `SCOUT_AI_ENABLED` as the env var controlling AI availability. That env var name is incorrect. The actual env var is `SCOUT_ENABLE_AI` (feeds `settings.enable_ai` at `backend/app/config.py:93`). The correct name is used in the v5.1 merged plan and PR 0.2 scripts. References in this historical doc were left as-is to preserve the record of what was believed at reality-check time; future operational guidance uses the correct name.
+
 ---
 
 ## 0. Headline findings
