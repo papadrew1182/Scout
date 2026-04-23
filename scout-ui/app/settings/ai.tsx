@@ -66,6 +66,27 @@ function formatRelative(iso: string | null): string {
   return `${diffMo}mo ago`;
 }
 
+const TRIGGER_SOURCE_LABELS: Record<string, string> = {
+  overdue_task: "Scanner: overdue task",
+  upcoming_event: "Scanner: upcoming event",
+  missed_routine: "Scanner: missed routine",
+  custom_rule: "Custom rule",
+  ai_suggested: "AI discovery",
+};
+
+function labelTriggerSource(n: NudgeDispatch): string {
+  if (!n.items || n.items.length === 0) return "Source: unknown";
+  const kinds = Array.from(new Set(n.items.map((i) => i.trigger_kind)));
+  if (kinds.length === 1) {
+    return TRIGGER_SOURCE_LABELS[kinds[0]] ?? `Source: ${kinds[0]}`;
+  }
+  // Mixed-kind bundle: show the first kind followed by a count suffix.
+  // Matches the first-kind-wins convention used for ParentActionItem
+  // action_type (see nudges_service.py line 941 comment).
+  const first = TRIGGER_SOURCE_LABELS[kinds[0]] ?? kinds[0];
+  return `${first} (+${kinds.length - 1} more)`;
+}
+
 const ARCHIVE_PRESETS = [
   { label: "7 days", days: 7 },
   { label: "30 days", days: 30 },
@@ -448,6 +469,9 @@ export default function AISettings() {
                     {formatRelative(n.created_at)}
                   </Text>
                 </View>
+                <Text style={styles.nudgeSource}>
+                  {labelTriggerSource(n)}
+                </Text>
                 {n.body && <Text style={styles.nudgeBody}>{n.body}</Text>}
               </View>
             ))}
@@ -780,5 +804,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.body,
     lineHeight: 18,
+  },
+  nudgeSource: {
+    fontSize: 11,
+    color: colors.muted,
+    fontFamily: fonts.body,
+    fontStyle: "italic",
+    marginBottom: 4,
   },
 });

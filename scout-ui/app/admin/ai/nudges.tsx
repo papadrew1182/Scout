@@ -39,6 +39,14 @@ import {
   type QuietHoursConfig,
   type RuleSeverity,
 } from "../../../lib/nudges";
+import {
+  deleteMemberConfig,
+  fetchAllMemberConfigForKey,
+  fetchMembers,
+  putMemberConfig,
+  type MemberConfigRow,
+} from "../../../lib/api";
+import type { FamilyMember } from "../../../lib/types";
 import { useHasPermission } from "../../../lib/permissions";
 import { colors, fonts, shared } from "../../../lib/styles";
 
@@ -59,6 +67,49 @@ function hhmmToMinute(s: string): number | null {
 
 const TABS = ["quiet_hours", "rules"] as const;
 type Tab = (typeof TABS)[number];
+
+// Pre-filled example snippets for the rule SQL template field.
+// Every snippet exercises a whitelisted table and returns the four
+// required columns (member_id, entity_id, entity_kind, scheduled_for).
+// Operators start from one and edit the specifics rather than writing
+// from scratch against a blank text area. If you add snippets here,
+// keep them under 200 chars and do not reference tables outside the
+// Phase 4 validator allowlist (backend/app/services/nudge_rule_validator.py).
+const RULE_SQL_SNIPPETS: Array<{ name: string; sql: string }> = [
+  {
+    name: "Overdue personal tasks",
+    sql:
+      "SELECT assigned_to AS member_id, id AS entity_id, " +
+      "'personal_task' AS entity_kind, due_at AS scheduled_for " +
+      "FROM personal_tasks WHERE status = 'pending' " +
+      "AND due_at < now() - interval '1 day' LIMIT 100",
+  },
+  {
+    name: "Bills due in 3 days",
+    sql:
+      "SELECT owner_member_id AS member_id, id AS entity_id, " +
+      "'bill' AS entity_kind, due_date AS scheduled_for FROM bills " +
+      "WHERE status != 'paid' AND due_date BETWEEN current_date " +
+      "AND current_date + interval '3 days' LIMIT 100",
+  },
+  {
+    name: "Events starting in 30 min",
+    sql:
+      "SELECT ea.family_member_id AS member_id, e.id AS entity_id, " +
+      "'event' AS entity_kind, e.starts_at AS scheduled_for " +
+      "FROM events e JOIN event_attendees ea ON ea.event_id = e.id " +
+      "WHERE e.starts_at BETWEEN now() AND now() + interval '30 minutes' " +
+      "LIMIT 100",
+  },
+  {
+    name: "Missed routine instances today",
+    sql:
+      "SELECT family_member_id AS member_id, id AS entity_id, " +
+      "'task_instance' AS entity_kind, due_at AS scheduled_for " +
+      "FROM task_instances WHERE is_completed = false " +
+      "AND due_at < now() AND due_at > now() - interval '24 hours' LIMIT 100",
+  },
+];
 
 export default function AdminNudges() {
   const router = useRouter();
@@ -141,6 +192,7 @@ export default function AdminNudges() {
       </View>
 
       {showQuietHoursBody && <QuietHoursSection />}
+      {showQuietHoursBody && <MemberQuietHoursOverridesSection />}
       {showRulesBody && <RulesSection />}
       {!showQuietHoursBody && !showRulesBody && (
         <Text style={styles.blurb}>This tab is not available for your role.</Text>
@@ -193,12 +245,13 @@ function QuietHoursSection() {
 
   return (
     <View style={shared.card}>
-      <Text style={shared.cardTitle}>Quiet hours</Text>
+      <Text style={shared.cardTitle}>Quiet hours (family default)</Text>
       <Text style={styles.blurb}>
         During quiet hours, low-severity nudges are suppressed and
         normal-severity nudges are held until the window ends.
-        High-severity nudges are delivered anyway. Per-family window;
-        per-member overrides ship in a later phase.
+        High-severity nudges are delivered anyway. This window is the
+        family default; per-member overrides are managed in the card
+        below.
       </Text>
 
       {config === null && !error && (
@@ -258,6 +311,232 @@ function QuietHoursSection() {
           )}
         </>
       )}
+    </View>
+  );
+}
+
+// Per-member quiet-hours override editor.
+//
+// Reads member_config rows with key='nudges.quiet_hours'. Backend
+// resolution in nudges_service.py:_resolve_quiet_hours_window lets
+// any member override win over the family default; absence of a row
+// means the member inherits the family default.
+const QUIET_HOURS_KEY = "nudges.quiet_hours";
+
+interface OverrideValue {
+  start_local_minute: number;
+  end_local_minute: number;
+}
+
+function parseOverride(raw: unknown): OverrideValue | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const s = typeof o.start_local_minute === "number" ? o.start_local_minute : null;
+  const e = typeof o.end_local_minute === "number" ? o.end_local_minute : null;
+  if (s === null || e === null) return null;
+  return { start_local_minute: s, end_local_minute: e };
+}
+
+function MemberQuietHoursOverridesSection() {
+  const [members, setMembers] = useState<FamilyMember[] | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, OverrideValue>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftStart, setDraftStart] = useState("22:00");
+  const [draftEnd, setDraftEnd] = useState("07:00");
+  const [rowError, setRowError] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      const [mems, rows] = await Promise.all([
+        fetchMembers(),
+        fetchAllMemberConfigForKey(QUIET_HOURS_KEY),
+      ]);
+      setMembers(mems.filter((m) => m.is_active));
+      const map: Record<string, OverrideValue> = {};
+      rows.forEach((r: MemberConfigRow) => {
+        const parsed = parseOverride(r.value);
+        if (parsed) map[r.member_id] = parsed;
+      });
+      setOverrides(map);
+    } catch (e: unknown) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load overrides.");
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const startEdit = (memberId: string) => {
+    setRowError(null);
+    const existing = overrides[memberId];
+    if (existing) {
+      setDraftStart(minuteToHHMM(existing.start_local_minute));
+      setDraftEnd(minuteToHHMM(existing.end_local_minute));
+    } else {
+      setDraftStart("22:00");
+      setDraftEnd("07:00");
+    }
+    setEditingId(memberId);
+  };
+
+  const handleSave = async (memberId: string) => {
+    setRowError(null);
+    const start = hhmmToMinute(draftStart);
+    const end = hhmmToMinute(draftEnd);
+    if (start === null || end === null) {
+      setRowError("Use HH:MM format (00:00 to 23:59).");
+      return;
+    }
+    if (start === end) {
+      setRowError("Start and end must differ.");
+      return;
+    }
+    setSavingId(memberId);
+    try {
+      await putMemberConfig(memberId, QUIET_HOURS_KEY, {
+        start_local_minute: start,
+        end_local_minute: end,
+      });
+      await refresh();
+      setEditingId(null);
+    } catch (e: unknown) {
+      setRowError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleRemove = async (memberId: string) => {
+    setRowError(null);
+    setSavingId(memberId);
+    try {
+      await deleteMemberConfig(memberId, QUIET_HOURS_KEY);
+      await refresh();
+      setEditingId(null);
+    } catch (e: unknown) {
+      setRowError(e instanceof Error ? e.message : "Remove failed.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <View style={shared.card}>
+      <Text style={shared.cardTitle}>Per-member overrides</Text>
+      <Text style={styles.blurb}>
+        Override the family quiet-hours window for a specific member.
+        Absence of an override means the member inherits the family
+        default above.
+      </Text>
+
+      {loadError && <Text style={styles.errorText}>{loadError}</Text>}
+      {members === null && !loadError && (
+        <ActivityIndicator color={colors.muted} style={{ marginTop: 8 }} />
+      )}
+
+      {members !== null && members.length === 0 && (
+        <Text style={styles.blurb}>No active family members.</Text>
+      )}
+
+      {members !== null &&
+        members.map((m) => {
+          const override = overrides[m.id];
+          const isEditing = editingId === m.id;
+          const isSaving = savingId === m.id;
+          return (
+            <View key={m.id} style={styles.overrideRow}>
+              <View style={styles.overrideRowHeader}>
+                <Text style={styles.overrideName}>
+                  {m.first_name} {m.last_name ?? ""}
+                </Text>
+                <Text style={styles.overrideSummary}>
+                  {override
+                    ? `${minuteToHHMM(override.start_local_minute)} - ${minuteToHHMM(
+                        override.end_local_minute,
+                      )}`
+                    : "Inherits family default"}
+                </Text>
+              </View>
+
+              {!isEditing && (
+                <View style={styles.row}>
+                  <Pressable
+                    style={styles.chip}
+                    onPress={() => startEdit(m.id)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.chipText}>
+                      {override ? "Edit" : "Add override"}
+                    </Text>
+                  </Pressable>
+                  {override && (
+                    <Pressable
+                      style={styles.chip}
+                      onPress={() => handleRemove(m.id)}
+                      accessibilityRole="button"
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.chipText}>Remove</Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
+
+              {isEditing && (
+                <View>
+                  <View style={styles.row}>
+                    <View style={styles.col}>
+                      <Text style={styles.label}>Start</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={draftStart}
+                        onChangeText={setDraftStart}
+                        placeholder="22:00"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                    <View style={styles.col}>
+                      <Text style={styles.label}>End</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={draftEnd}
+                        onChangeText={setDraftEnd}
+                        placeholder="07:00"
+                        autoCapitalize="none"
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.row}>
+                    <Pressable
+                      style={[styles.chip, styles.chipActive]}
+                      onPress={() => handleSave(m.id)}
+                      accessibilityRole="button"
+                      disabled={isSaving}
+                    >
+                      <Text style={[styles.chipText, styles.chipTextActive]}>
+                        {isSaving ? "Saving..." : "Save"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.chip}
+                      onPress={() => setEditingId(null)}
+                      accessibilityRole="button"
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.chipText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                  {rowError && editingId === m.id && (
+                    <Text style={styles.errorText}>{rowError}</Text>
+                  )}
+                </View>
+              )}
+            </View>
+          );
+        })}
     </View>
   );
 }
@@ -394,6 +673,26 @@ function RulesSection() {
             SQL must SELECT the four columns member_id, entity_id,
             entity_kind, scheduled_for. Only SELECTs from approved tables
             are accepted.
+          </Text>
+
+          <Text style={styles.label}>Start from an example</Text>
+          <View style={[styles.row, { flexWrap: "wrap", gap: 6 }]}>
+            {RULE_SQL_SNIPPETS.map((snip) => (
+              <Pressable
+                key={snip.name}
+                style={styles.snippetChip}
+                onPress={() => setForm({ ...form, template_sql: snip.sql })}
+                accessibilityRole="button"
+                accessibilityLabel={`Load snippet: ${snip.name}`}
+              >
+                <Text style={styles.snippetChipText}>{snip.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.helperText}>
+            Loading a snippet overwrites the SQL template field. Edit
+            the bound values (member names, thresholds, tables) before
+            saving.
           </Text>
 
           <Text style={styles.label}>Severity</Text>
@@ -641,6 +940,41 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: "#ffffff",
+  },
+  snippetChip: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#f3f4f6",
+  },
+  snippetChipText: {
+    color: colors.text,
+    fontSize: 12,
+    fontFamily: fonts.body,
+  },
+  overrideRow: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  overrideRowHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  overrideName: {
+    fontSize: 14,
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontWeight: "500",
+  },
+  overrideSummary: {
+    fontSize: 12,
+    color: colors.muted,
+    fontFamily: fonts.body,
   },
   ruleRow: {
     flexDirection: "row",
