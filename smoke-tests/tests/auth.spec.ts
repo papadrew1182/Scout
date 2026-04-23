@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const CHILD_PASSWORD = process.env.SMOKE_CHILD_PASSWORD || "testpass123";
 
 async function login(page: any, email: string, password: string) {
   await page.goto("/");
@@ -31,7 +32,7 @@ test.describe("Login", () => {
   });
 
   test("child can sign in", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
     await expect(page.locator("text=Personal")).toBeVisible();
   });
 

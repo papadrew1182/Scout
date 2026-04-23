@@ -11,6 +11,7 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const CHILD_PASSWORD = process.env.SMOKE_CHILD_PASSWORD || "testpass123";
 const API_URL = process.env.SCOUT_API_URL || "http://localhost:8000";
 
 async function login(page: Page, email: string, password: string) {
@@ -201,7 +202,7 @@ test.describe("Write paths — parent", () => {
 
 test.describe("Write paths — child", () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
   });
 
   test("child marks seeded chore task instance complete", async ({ page }) => {

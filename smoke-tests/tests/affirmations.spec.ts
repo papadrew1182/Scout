@@ -10,6 +10,7 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const CHILD_PASSWORD = process.env.SMOKE_CHILD_PASSWORD || "testpass123";
 
 async function login(page: Page, email: string, password: string) {
   await page.goto("/");
@@ -66,7 +67,7 @@ test.describe("Affirmation admin surface", () => {
   });
 
   test("child cannot access admin affirmations", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
     await page.goto("/admin/affirmations");
     await page.waitForTimeout(2000);
 
