@@ -29,9 +29,11 @@ Flag semantics:
         SCOUT_ENABLE_BOOTSTRAP=false on Railway.
         Wait for Enter.
         Verify /ready shows bootstrap_enabled=false.
-        Poll public.scout_scheduled_runs for up to 6 minutes, verify
-        at least one new row appears with run_started_at and run_ended_at
-        both populated (one healthy tick).
+        Poll public.scout_scheduled_runs for up to 6 minutes:
+          - status='success' with created_at > baseline = healthy tick, pass
+          - status='error' with created_at > baseline = failed tick, fail
+            and surface the error column
+          - status='skipped' = does not count, keep polling
 
 Idempotent. Running twice is fine; each run re-prompts and re-verifies.
 
@@ -130,7 +132,19 @@ def poll_ready_until(
 
 
 def poll_for_healthy_tick(db_url: str) -> None:
-    """Poll public.scout_scheduled_runs for a complete, healthy tick."""
+    """Poll public.scout_scheduled_runs for a complete, healthy tick.
+
+    Schema (migration 016, verified 2026-04-23):
+      id, job_name, family_id, member_id, run_date,
+      status (CHECK IN 'success','error','skipped'),
+      duration_ms, result, error, created_at
+
+    Healthy tick = a row with created_at > baseline AND status = 'success'.
+    Failed tick = a row with created_at > baseline AND status = 'error'
+      (surface the error column and fail verification).
+    Skipped row = status = 'skipped'. Does NOT count as healthy;
+      keep polling until a success lands or the deadline passes.
+    """
     info(
         f"Polling public.scout_scheduled_runs for up to "
         f"{SCHEDULER_TICK_TIMEOUT_SECONDS // 60} minutes to confirm scheduler active..."
@@ -140,40 +154,57 @@ def poll_for_healthy_tick(db_url: str) -> None:
     deadline = time.monotonic() + SCHEDULER_TICK_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         with engine.connect() as conn:
-            # Any row created after baseline AND with both run_started_at
-            # and run_ended_at populated = one complete, healthy tick.
-            healthy_ticks = conn.execute(
+            # Errors fail immediately - the scheduler ran but work broke.
+            errors = conn.execute(
+                text(
+                    "SELECT job_name, error, created_at "
+                    "FROM public.scout_scheduled_runs "
+                    "WHERE created_at > :baseline "
+                    "  AND status = 'error' "
+                    "ORDER BY created_at ASC"
+                ),
+                {"baseline": baseline_ts},
+            ).mappings().all()
+            success_count = conn.execute(
                 text(
                     "SELECT count(*) FROM public.scout_scheduled_runs "
-                    "WHERE created_at > :baseline "
-                    "  AND run_started_at IS NOT NULL "
-                    "  AND run_ended_at IS NOT NULL"
+                    "WHERE created_at > :baseline AND status = 'success'"
                 ),
                 {"baseline": baseline_ts},
             ).scalar_one()
-            stuck = conn.execute(
+            skipped_count = conn.execute(
                 text(
                     "SELECT count(*) FROM public.scout_scheduled_runs "
-                    "WHERE created_at > :baseline "
-                    "  AND run_started_at IS NOT NULL "
-                    "  AND run_ended_at IS NULL"
+                    "WHERE created_at > :baseline AND status = 'skipped'"
                 ),
                 {"baseline": baseline_ts},
             ).scalar_one()
         elapsed = int(time.monotonic() - (deadline - SCHEDULER_TICK_TIMEOUT_SECONDS))
-        info(f"  elapsed={elapsed}s, healthy_ticks={healthy_ticks}, stuck={stuck}")
-        if healthy_ticks >= 1 and stuck == 0:
-            info("  verified: at least one healthy scheduler tick observed")
+        info(
+            f"  elapsed={elapsed}s, success={success_count}, "
+            f"error={len(errors)}, skipped={skipped_count}"
+        )
+        if errors:
+            detail = "\n".join(
+                f"  - {r['job_name']} at {r['created_at']}: {r['error'] or '(no error text)'}"
+                for r in errors
+            )
+            fail(
+                f"Scheduler ran but {len(errors)} tick(s) errored after baseline "
+                f"{baseline_ts.isoformat()}:\n{detail}"
+            )
+        if success_count >= 1:
+            info(f"  verified: {success_count} healthy scheduler tick(s) observed")
             return
-        if stuck > 0:
-            # Allow a single in-flight tick (current tick is being processed).
-            # Only fail if no healthy tick emerges by the deadline.
-            pass
+        # success_count == 0 and no errors: either no ticks yet or only
+        # skipped rows. Keep waiting for a success.
         time.sleep(SCHEDULER_POLL_STEP_SECONDS)
     fail(
-        "Timed out waiting for a healthy scheduler tick. "
-        "Either the scheduler is not running, or ticks are getting stuck. "
-        "Check Railway logs and SCOUT_SCHEDULER_ENABLED."
+        f"Timed out after {SCHEDULER_TICK_TIMEOUT_SECONDS // 60} minutes waiting for a "
+        f"successful scheduler tick (status='success') since baseline "
+        f"{baseline_ts.isoformat()}. Either the scheduler is not running, or every "
+        "tick in the window resolved to status='skipped'. Check Railway logs and "
+        "SCOUT_SCHEDULER_ENABLED."
     )
 
 

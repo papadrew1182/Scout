@@ -30,8 +30,9 @@ Flow:
     4. Verify via /ready: bootstrap_enabled=true, ai_available=false.
     5. Prompt: confirm SCOUT_SCHEDULER_ENABLED=false is set, press Enter.
     6. Poll public.scout_scheduled_runs for 5 minutes.
-       Pass conditions: no new rows created after baseline AND no in-flight
-       rows (run_started_at IS NOT NULL AND run_ended_at IS NULL).
+       Pass condition: zero rows with created_at > baseline for the full
+       window. Any new row (status='success' or 'error' or 'skipped')
+       means the scheduler is still ticking.
     7. Purge Supabase Storage attachments bucket (list + delete all objects).
     8. Print summary. Exit 0 on success, non-zero on any failure.
 
@@ -127,7 +128,23 @@ def verify_bootstrap_and_ai(api_url: str) -> None:
 
 
 def poll_scheduler_idle(db_url: str) -> None:
-    """Poll public.scout_scheduled_runs for 5 minutes; verify no activity."""
+    """Poll public.scout_scheduled_runs for 5 minutes; verify no new rows.
+
+    Schema (migration 016, verified 2026-04-23):
+      id, job_name, family_id, member_id, run_date,
+      status (CHECK IN 'success','error','skipped'),
+      duration_ms, result, error, created_at
+
+    Write pattern (backend/app/scheduler.py): each job INSERTs its mutex
+    row savepointed + flushed, does its work, then commit happens at the
+    outer tick. Other transactions see the row only after commit, i.e.
+    after the work has actually run. There is no mid-flight state in the
+    table - a row's presence means the scheduler did something.
+
+    Therefore: "scheduler idle" = no rows with created_at > baseline
+    for the full window. Any new row (success, error, or skipped) means
+    the scheduler is still active.
+    """
     info(
         f"Polling public.scout_scheduled_runs for {SCHEDULER_POLL_SECONDS // 60} minutes to confirm scheduler idle..."
     )
@@ -139,7 +156,6 @@ def poll_scheduler_idle(db_url: str) -> None:
     while time.monotonic() < deadline:
         step += 1
         with engine.connect() as conn:
-            # New rows created after the baseline.
             new_rows = conn.execute(
                 text(
                     "SELECT count(*) FROM public.scout_scheduled_runs "
@@ -147,25 +163,24 @@ def poll_scheduler_idle(db_url: str) -> None:
                 ),
                 {"baseline": baseline_ts},
             ).scalar_one()
-            # In-flight rows (started but not ended). Defensive: any history row
-            # with a non-null run_started_at but null run_ended_at counts.
-            in_flight = conn.execute(
-                text(
-                    "SELECT count(*) FROM public.scout_scheduled_runs "
-                    "WHERE run_started_at IS NOT NULL AND run_ended_at IS NULL"
-                )
-            ).scalar_one()
         elapsed = int(time.monotonic() - (deadline - SCHEDULER_POLL_SECONDS))
-        info(f"  step {step}: elapsed={elapsed}s, new_rows={new_rows}, in_flight={in_flight}")
+        info(f"  step {step}: elapsed={elapsed}s, new_rows={new_rows}")
         if new_rows > 0:
+            # Surface which jobs fired so the operator can investigate fast.
+            with engine.connect() as conn:
+                offending = conn.execute(
+                    text(
+                        "SELECT job_name, status, created_at, error "
+                        "FROM public.scout_scheduled_runs "
+                        "WHERE created_at > :baseline "
+                        "ORDER BY created_at ASC"
+                    ),
+                    {"baseline": baseline_ts},
+                ).mappings().all()
             fail(
                 f"Scheduler is NOT idle: {new_rows} row(s) created after baseline "
-                f"{baseline_ts.isoformat()}. Scheduler is still ticking."
-            )
-        if in_flight > 0:
-            fail(
-                f"Scheduler has {in_flight} in-flight run(s) (run_started_at set, run_ended_at null). "
-                "Wait for the current tick to complete or investigate stuck jobs."
+                f"{baseline_ts.isoformat()}. Scheduler is still ticking. Rows:\n"
+                + "\n".join(f"  - {r['job_name']} status={r['status']} created_at={r['created_at']} error={r['error']}" for r in offending)
             )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
