@@ -11,6 +11,7 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const CHILD_PASSWORD = process.env.SMOKE_CHILD_PASSWORD || "testpass123";
 const API_URL = process.env.SCOUT_API_URL || "http://localhost:8000";
 
 async function login(page: Page, email: string, password: string) {
@@ -117,7 +118,7 @@ test.describe("Chore template creation", () => {
   });
 
   test("child cannot see chore template form", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
     await page.goto("/admin/chores/new");
     // admin/_layout.tsx redirects non-admins to "/" before the form renders.
     // Assert the child was redirected out of /admin.
@@ -153,7 +154,7 @@ test.describe("Meal staple creation", () => {
   });
 
   test("child cannot see meal staple form", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
     await page.goto("/admin/meals/staples/new");
     // admin/_layout.tsx redirects non-admins to "/" before the form renders.
     await expect

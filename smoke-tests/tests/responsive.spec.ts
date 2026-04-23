@@ -19,7 +19,10 @@ async function login(page: Page, email: string, password: string) {
 
 const SURFACES = [
   { path: "/", ready: "Good evening" },
-  { path: "/personal", ready: "Andrew's Dashboard" },
+  // Anchored on an unconditionally-rendered card title rather than
+  // the first-name-dependent "${first_name}'s Dashboard" heading,
+  // so the test passes regardless of which account is logged in.
+  { path: "/personal", ready: "Top 5 tasks" },
   { path: "/parent", ready: "Parent Dashboard" },
   { path: "/meals/this-week", ready: "Week of" },
   { path: "/grocery", ready: "Grocery List" },

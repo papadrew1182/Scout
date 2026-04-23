@@ -10,6 +10,7 @@ import { test, expect, type Page } from "@playwright/test";
 const ADULT_EMAIL = process.env.SMOKE_ADULT_EMAIL || "adult@test.com";
 const CHILD_EMAIL = process.env.SMOKE_CHILD_EMAIL || "child@test.com";
 const PASSWORD = process.env.SMOKE_PASSWORD || "testpass123";
+const CHILD_PASSWORD = process.env.SMOKE_CHILD_PASSWORD || "testpass123";
 const API_URL = process.env.SCOUT_API_URL || "http://localhost:8000";
 
 async function currentMemberId(page: Page): Promise<string> {
@@ -76,7 +77,7 @@ test.describe("Child master card", () => {
   });
 
   test("child sees own master card", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
 
     let memberId: string;
     try {
@@ -96,7 +97,7 @@ test.describe("Child master card", () => {
   });
 
   test("child cannot view another child's card", async ({ page }) => {
-    await login(page, CHILD_EMAIL, PASSWORD);
+    await login(page, CHILD_EMAIL, CHILD_PASSWORD);
 
     let selfId: string;
     try {

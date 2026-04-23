@@ -165,6 +165,7 @@ jobs:
       SMOKE_ADULT_EMAIL: ${{ secrets.SCOUT_SMOKE_ADULT_EMAIL }}
       SMOKE_PASSWORD: ${{ secrets.SCOUT_SMOKE_ADULT_PASSWORD }}
       SMOKE_CHILD_EMAIL: ${{ secrets.SCOUT_SMOKE_CHILD_EMAIL }}
+      SMOKE_CHILD_PASSWORD: ${{ secrets.SCOUT_SMOKE_CHILD_PASSWORD }}
     steps:
       - name: Verify smoke credentials are configured
         run: |

@@ -20,7 +20,10 @@ test.describe("NavBar — all 7 desktop nav links navigate", () => {
 
   const NAV_ITEMS = [
     { label: "Home", path: "/", readyText: "Good evening" },
-    { label: "Personal", path: "/personal", readyText: "Andrew's Dashboard" },
+    // Anchored on an unconditionally-rendered card title rather than
+    // the first-name-dependent "${first_name}'s Dashboard" heading,
+    // so the test passes regardless of which account is logged in.
+    { label: "Personal", path: "/personal", readyText: "Top 5 tasks" },
     { label: "Parent", path: "/parent", readyText: "Parent Dashboard" },
     { label: "Meals", path: "/meals", readyText: "Week of" },
     { label: "Grocery", path: "/grocery", readyText: "Grocery List" },
