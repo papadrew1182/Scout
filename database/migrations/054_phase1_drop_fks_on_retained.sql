@@ -22,12 +22,14 @@
 --   Phase 2 reconciliation gate (PR 2.6) enforcing completeness.
 --
 -- Structure:
---   Section A - 38 FK drops on the 23 retained tables enumerated in
---               pre-flight Part 1 (original scope). Part 1's summary
---               phrased per-table action as "drop FK + recreate" even
---               when multiple FKs existed (e.g. nudge_dispatches had
---               2, user_family_memberships had 4). Actual individual
---               FK count summed across the 23 tables is 38.
+--   Section A - 38 FK drops on the 24 retained tables whose matrix
+--               rows in pre-flight Part 1 listed drop-worthy FKs.
+--               Part 1's summary sentence said "23 of 26 retained
+--               tables have FKs" and classified nudge_dispatch_items
+--               as self-contained, but the row data for that table
+--               did list family_member_id -> public.family_members
+--               for drop. Counting by what the matrix actually
+--               enumerated gives 24 tables / 38 individual FKs.
 --   Section B - 27 FK drops on 20 additional retained scout.* tables
 --               that Part 1 did not enumerate (finding during PR 1.1
 --               execution). Recreate ownership for these is flagged
@@ -46,8 +48,8 @@
 BEGIN;
 
 -- ===========================================================================
--- SECTION A: 38 FKs on the 23 retained scout.* tables enumerated in
--- pre-flight Part 1 (original v5.1 PR 1.1 scope).
+-- SECTION A: 38 FKs on 24 retained scout.* tables whose Part 1 matrix
+-- rows listed drop-worthy FKs (original v5.1 PR 1.1 scope).
 -- ===========================================================================
 
 -- A.1 Identity-target FKs (public.families, public.family_members,
