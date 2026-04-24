@@ -129,6 +129,7 @@ After Phase 5 PR 5.3 merges and the first auto-smoke-run passes:
 - [ ] `SCOUT_ENABLE_AI` is `true` or unset on Railway
 - [ ] `SCOUT_ENABLE_BOOTSTRAP` is `false` on Railway
 - [ ] `.github/workflows/ci.yml` `smoke-deployed.if:` includes the `'push'` event again (exact text per section 2)
+- [ ] Re-enable Railway "Wait for CI" toggle on scout-backend service (Settings -> Source -> Wait for CI). Disabled during sprint execution because backend-tests fails on the documented PR 1.1 7-file blast radius (and will continue failing through Phase 3).
 - [ ] `/api/ready` returns `ai_available: true`
 - [ ] `/api/auth/bootstrap` returns 403
 - [ ] First auto-triggered smoke-deployed run on PR 5.3's merge commit is green
