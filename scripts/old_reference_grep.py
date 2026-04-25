@@ -46,6 +46,29 @@ Scope:
     defensively (mirrored from backend/ - same content, no separate
     consumers).
 
+    The following directories and extensions are scoped out of manifest
+    §3 by design and are excluded from the grep:
+
+      - scout-ui/app/**, scout-ui/components/**, scout-ui/features/**
+        UI render layer. Consumes the API client (scout-ui/lib/*) which
+        IS in §3.7; never touches the DB directly. Table-name string
+        hits in these files are React state-variable names (e.g.
+        `const [events, setEvents] = useState<Event[]>([])`) and JSX
+        labels - structural false positives.
+
+      - backend/app/schemas/**
+        Pydantic request/response shapes. Field names like `notes:
+        str | None` collide with table names by coincidence; these
+        files do not query the DB.
+
+      - *.json
+        Config files. Hits are typically natural-language strings
+        (e.g. iOS permission descriptions in scout-ui/app.json).
+
+      - *.md
+        Documentation files. Hits are prose mentions of table names
+        in module-level docstrings or README content.
+
 Usage:
     python scripts/old_reference_grep.py
     python scripts/old_reference_grep.py --out path/to/output.json
@@ -119,11 +142,24 @@ SCAN_PATHS: tuple[str, ...] = (
 
 # File extensions to scan. Plain-text only; the grep is identifier-based,
 # so extension diversity is fine.
+# .json and .md are intentionally excluded - they're config/docs that
+# consume natural-language mentions of table names, not DB references.
+# See module docstring "scoped out of manifest §3 by design" for the
+# full justification.
 SCANNED_EXTENSIONS: frozenset[str] = frozenset({
-    ".py", ".sql", ".ts", ".tsx", ".js", ".jsx", ".json",
-    ".yml", ".yaml", ".md", ".txt", ".toml", ".ini", ".cfg",
+    ".py", ".sql", ".ts", ".tsx", ".js", ".jsx",
+    ".yml", ".yaml", ".txt", ".toml", ".ini", ".cfg",
     ".sh", ".bash", ".env", ".dockerfile", ".html", ".css",
 })
+
+# Directory prefixes (relative to repo root) excluded from the scan
+# because they're scoped out of manifest §3 by design.
+EXCLUDED_PATH_PREFIXES: tuple[str, ...] = (
+    "scout-ui/app/",
+    "scout-ui/components/",
+    "scout-ui/features/",
+    "backend/app/schemas/",
+)
 
 # Directory-name fragments to skip while walking. Match anywhere in path.
 EXCLUDED_DIR_NAMES: frozenset[str] = frozenset({
@@ -217,6 +253,8 @@ def iter_files(repo_root: Path) -> list[Path]:
                 if rel in EXCLUDED_FILES:
                     continue
                 if is_excluded_migration(rel):
+                    continue
+                if any(rel.startswith(prefix) for prefix in EXCLUDED_PATH_PREFIXES):
                     continue
                 if p.suffix.lower() in SCANNED_EXTENSIONS or fname.lower() in {
                     "dockerfile", "makefile", "procfile",
@@ -422,6 +460,7 @@ def main() -> None:
         "scanned_extensions": sorted(SCANNED_EXTENSIONS),
         "excluded_dir_names": sorted(EXCLUDED_DIR_NAMES),
         "excluded_files": sorted(EXCLUDED_FILES),
+        "excluded_path_prefixes": list(EXCLUDED_PATH_PREFIXES),
         "excluded_migrations_through": MAX_EXCLUDED_MIGRATION,
         "dropped_public_tables": list(DROPPED_PUBLIC_TABLES),
         "manifest_section_3_files_indexed": len(owner_index),

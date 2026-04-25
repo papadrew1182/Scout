@@ -1,5 +1,5 @@
 {
-  "scan_date_utc": "2026-04-25T19:35:21.664933+00:00",
+  "scan_date_utc": "2026-04-25T19:53:52.241872+00:00",
   "repo_root": "C:/dev/scout",
   "manifest_path": "docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md",
   "scan_paths": [
@@ -19,9 +19,7 @@
     ".html",
     ".ini",
     ".js",
-    ".json",
     ".jsx",
-    ".md",
     ".py",
     ".sh",
     ".sql",
@@ -52,6 +50,12 @@
   "excluded_files": [
     "scripts/manifest_check.py",
     "scripts/old_reference_grep.py"
+  ],
+  "excluded_path_prefixes": [
+    "scout-ui/app/",
+    "scout-ui/components/",
+    "scout-ui/features/",
+    "backend/app/schemas/"
   ],
   "excluded_migrations_through": 57,
   "dropped_public_tables": [
@@ -95,97 +99,44 @@
     "user_accounts",
     "weekly_meal_plans"
   ],
-  "manifest_section_3_files_indexed": 172,
+  "manifest_section_3_files_indexed": 181,
   "manifest_parse_warnings": [],
   "summary": {
-    "total_hits": 1344,
-    "files_with_hits": 198,
-    "unmapped_hits": 223,
-    "unmapped_files_count": 52,
-    "unmapped_files": [
-      "backend/app/database.py",
-      "backend/app/scheduler.py",
-      "backend/app/schemas/ai.py",
-      "backend/app/schemas/finance.py",
-      "backend/app/schemas/grocery.py",
-      "backend/app/schemas/health_fitness.py",
-      "backend/app/schemas/meals.py",
-      "backend/app/schemas/personal_tasks.py",
-      "backend/scout_mcp/README.md",
-      "backend/scout_mcp/server.py",
-      "backend/services/connectors/base.py",
-      "backend/services/connectors/google_calendar/adapter.py",
-      "scout-ui/app.json",
-      "scout-ui/app/(scout)/home/index.tsx",
-      "scout-ui/app/_layout.tsx",
-      "scout-ui/app/admin/ai/nudges.tsx",
-      "scout-ui/app/admin/ai/personalities.tsx",
-      "scout-ui/app/admin/chores/index.tsx",
-      "scout-ui/app/admin/chores/new.tsx",
-      "scout-ui/app/admin/home/index.tsx",
-      "scout-ui/app/admin/index.tsx",
-      "scout-ui/app/admin/integrations/index.tsx",
-      "scout-ui/app/admin/meals/index.tsx",
-      "scout-ui/app/admin/meals/staples/new.tsx",
-      "scout-ui/app/child/[memberId].tsx",
-      "scout-ui/app/index.tsx",
-      "scout-ui/app/meals/_layout.tsx",
-      "scout-ui/app/meals/index.tsx",
-      "scout-ui/app/meals/prep.tsx",
-      "scout-ui/app/meals/reviews.tsx",
-      "scout-ui/app/meals/this-week.tsx",
-      "scout-ui/app/personal/index.tsx",
-      "scout-ui/app/projects/[id].tsx",
-      "scout-ui/app/settings/ai.tsx",
-      "scout-ui/app/settings/index.tsx",
-      "scout-ui/components/ActionInbox.tsx",
-      "scout-ui/components/BottomTabBar.tsx",
-      "scout-ui/components/FamilyMemorySection.tsx",
-      "scout-ui/components/NavBar.tsx",
-      "scout-ui/components/NeedSomething.tsx",
-      "scout-ui/components/PlannerReviewCard.tsx",
-      "scout-ui/features/app/AppContext.tsx",
-      "scout-ui/features/assistant/ScoutAssistEntry.tsx",
-      "scout-ui/features/hooks/index.ts",
-      "scout-ui/features/lib/contracts.ts",
-      "scout-ui/features/lib/mockData.ts",
-      "scout-ui/features/projects/ProjectsTodayCard.tsx",
-      "scout-ui/features/rewards/DailyWinCard.tsx",
-      "scout-ui/features/rewards/WeeklyPayoutCard.tsx",
-      "scout-ui/features/today/ChoreList.tsx",
-      "scout-ui/features/today/CompletionSheet.tsx",
-      "scout-ui/lib/meal_plan_hooks.ts"
-    ],
+    "total_hits": 1147,
+    "files_with_hits": 152,
+    "unmapped_hits": 0,
+    "unmapped_files_count": 0,
+    "unmapped_files": [],
     "tables_referenced": {
-      "meals": 239,
-      "notes": 218,
-      "families": 182,
-      "events": 153,
-      "routines": 116,
+      "meals": 191,
+      "families": 175,
+      "notes": 153,
+      "events": 131,
+      "routines": 92,
       "family_members": 85,
-      "personal_tasks": 63,
-      "bills": 40,
-      "member_config": 34,
-      "grocery_items": 22,
-      "task_instances": 22,
-      "daily_wins": 20,
+      "personal_tasks": 60,
+      "member_config": 30,
+      "bills": 28,
+      "grocery_items": 21,
+      "task_instances": 19,
+      "daily_wins": 15,
       "parent_action_items": 14,
       "ai_messages": 13,
       "connector_mappings": 12,
-      "chore_templates": 11,
       "ai_conversations": 10,
+      "chore_templates": 10,
       "role_tiers": 10,
       "user_accounts": 10,
       "meal_reviews": 7,
       "routine_steps": 7,
-      "event_attendees": 6,
       "role_tier_overrides": 6,
       "connector_configs": 5,
+      "event_attendees": 5,
       "health_summaries": 5,
       "activity_records": 4,
-      "ai_tool_audit": 4,
       "allowance_ledger": 4,
       "ai_homework_sessions": 3,
+      "ai_tool_audit": 3,
       "meal_plans": 3,
       "planner_bundle_applies": 3,
       "weekly_meal_plans": 3,
@@ -198,13 +149,13 @@
       "task_instance_step_completions": 1
     },
     "hits_by_section": {
-      "§3.7": 481,
-      "UNMAPPED": 223,
+      "§3.7": 482,
       "§3.6": 182,
-      "§3.4": 158,
-      "§3.5": 145,
+      "§3.4": 162,
+      "§3.5": 150,
       "§3.3": 141,
-      "§3.1": 14
+      "§3.1": 15,
+      "§3.2": 15
     }
   },
   "hits": [
@@ -286,7 +237,7 @@
       "table": "routine_steps",
       "match": "routine_steps",
       "text": "# `INSERT INTO routine_steps ...` against the old public shape.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.1 backend/app/database.py"
     },
     {
       "file": "backend/app/main.py",
@@ -406,7 +357,7 @@
       "table": "parent_action_items",
       "match": "parent_action_items",
       "text": "and drops it into parent_action_items as a 'daily_brief' row.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -414,7 +365,7 @@
       "table": "notes",
       "match": "notes",
       "text": "Design notes",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -422,7 +373,7 @@
       "table": "events",
       "match": "events",
       "text": "# landed today. 0 or 1 events don't need a rollup — the live alerts",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -430,7 +381,7 @@
       "table": "families",
       "match": "families",
       "text": "\"\"\"Scheduler tick: one pass over all families + jobs.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -438,7 +389,7 @@
       "table": "families",
       "match": "families",
       "text": "families = list(db.scalars(select(Family)).all())",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -446,7 +397,7 @@
       "table": "families",
       "match": "families",
       "text": "for fam in families:",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -454,7 +405,7 @@
       "table": "families",
       "match": "families",
       "text": "families = list(db.scalars(select(Family)).all())",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -462,7 +413,7 @@
       "table": "families",
       "match": "families",
       "text": "for fam in families:",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -470,7 +421,7 @@
       "table": "families",
       "match": "families",
       "text": "families = list(db.scalars(select(Family)).all())",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -478,7 +429,7 @@
       "table": "families",
       "match": "families",
       "text": "for fam in families:",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -486,7 +437,7 @@
       "table": "events",
       "match": "events",
       "text": "\"moderation_digest_ok family=%s date=%s events=%s\",",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -494,7 +445,7 @@
       "table": "parent_action_items",
       "match": "parent_action_items",
       "text": "parent_action_items of action_type='anomaly_alert'. Dedupe via",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -502,7 +453,7 @@
       "table": "families",
       "match": "families",
       "text": "families = list(db.scalars(select(Family)).all())",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -510,7 +461,7 @@
       "table": "families",
       "match": "families",
       "text": "for fam in families:",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/scheduler.py",
@@ -518,7 +469,7 @@
       "table": "parent_action_items",
       "match": "parent_action_items",
       "text": "and write them as parent_action_items. Dedupe-safe; transaction",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.2 backend/app/scheduler.py"
     },
     {
       "file": "backend/app/ai/anomalies.py",
@@ -4265,222 +4216,6 @@
       "manifest_section_3_owner": "§3.3 backend/app/routes/admin/config.py"
     },
     {
-      "file": "backend/app/schemas/ai.py",
-      "line": 143,
-      "table": "member_config",
-      "match": "member_config",
-      "text": "from tier defaults even when the member has no member_config row.\"\"\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/ai.py",
-      "line": 172,
-      "table": "member_config",
-      "match": "member_config",
-      "text": "\"\"\"GET response shape. Includes stored (raw member_config value or",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/finance.py",
-      "line": 11,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/finance.py",
-      "line": 21,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/finance.py",
-      "line": 33,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/grocery.py",
-      "line": 16,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/grocery.py",
-      "line": 26,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/grocery.py",
-      "line": 40,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 18,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 27,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 41,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 60,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 69,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/health_fitness.py",
-      "line": 84,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 13,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 17,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 25,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 41,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 47,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 60,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 72,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 80,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 172,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/meals.py",
-      "line": 188,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/personal_tasks.py",
-      "line": 12,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/personal_tasks.py",
-      "line": 22,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None = None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/app/schemas/personal_tasks.py",
-      "line": 37,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: str | None",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
       "file": "backend/app/services/ai_personality_service.py",
       "line": 3,
       "table": "member_config",
@@ -5745,68 +5480,12 @@
       "manifest_section_3_owner": "§3.4 backend/app/services/integrations/ynab.py"
     },
     {
-      "file": "backend/scout_mcp/README.md",
-      "line": 14,
-      "table": "events",
-      "match": "events",
-      "text": "| `get_family_schedule`   | Upcoming calendar events in a date window        |",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 15,
-      "table": "routines",
-      "match": "routines",
-      "text": "| `get_tasks_summary`     | Pending personal tasks + today's routines/chores |",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 30,
-      "table": "notes",
-      "match": "notes",
-      "text": "- Child personality notes (parent-private)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 32,
-      "table": "families",
-      "match": "families",
-      "text": "- Other families' data (even if the DB has them)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 64,
-      "table": "families",
-      "match": "families",
-      "text": "SELECT id, name FROM families;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 122,
-      "table": "families",
-      "match": "families",
-      "text": "the value against `SELECT id FROM families;`.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "backend/scout_mcp/README.md",
-      "line": 218,
-      "table": "ai_tool_audit",
-      "match": "ai_tool_audit",
-      "text": "Every remote tool call writes an `ai_tool_audit` row with",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
       "file": "backend/scout_mcp/server.py",
       "line": 27,
       "table": "events",
       "match": "events",
       "text": "- ``get_family_schedule`` — events in a date range",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.5 backend/scout_mcp/server.py"
     },
     {
       "file": "backend/scout_mcp/server.py",
@@ -5814,7 +5493,7 @@
       "table": "events",
       "match": "events",
       "text": "events = calendar_service.list_events(db, family_id, start=start, end=end)",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.5 backend/scout_mcp/server.py"
     },
     {
       "file": "backend/scout_mcp/server.py",
@@ -5822,7 +5501,7 @@
       "table": "events",
       "match": "events",
       "text": "\"events\": [",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.5 backend/scout_mcp/server.py"
     },
     {
       "file": "backend/scout_mcp/server.py",
@@ -5830,7 +5509,7 @@
       "table": "events",
       "match": "events",
       "text": "for e in events",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.5 backend/scout_mcp/server.py"
     },
     {
       "file": "backend/scout_mcp/server.py",
@@ -5838,7 +5517,7 @@
       "table": "events",
       "match": "events",
       "text": "\"Return upcoming family events in a date window (default 7 days).\",",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.5 backend/scout_mcp/server.py"
     },
     {
       "file": "backend/services/connectors/base.py",
@@ -5846,7 +5525,7 @@
       "table": "events",
       "match": "events",
       "text": "historical window (e.g. last 60 days of calendar events).",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.4 backend/services/connectors/base.py"
     },
     {
       "file": "backend/services/connectors/google_calendar/adapter.py",
@@ -5854,7 +5533,7 @@
       "table": "events",
       "match": "events",
       "text": "Imported events are intentionally kept separate from",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.4 backend/services/connectors/google_calendar/adapter.py"
     },
     {
       "file": "backend/services/connectors/google_calendar/adapter.py",
@@ -5862,7 +5541,7 @@
       "table": "events",
       "match": "events",
       "text": "# 'calendar_event' = imported events from the family's GCal.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.4 backend/services/connectors/google_calendar/adapter.py"
     },
     {
       "file": "backend/services/connectors/google_calendar/adapter.py",
@@ -5870,7 +5549,7 @@
       "table": "events",
       "match": "events",
       "text": "# All-day events: midnight UTC for the local date.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.4 backend/services/connectors/google_calendar/adapter.py"
     },
     {
       "file": "backend/tests/conftest.py",
@@ -8441,1310 +8120,6 @@
       "manifest_section_3_owner": "§3.7 scripts/provision_smoke_child.py"
     },
     {
-      "file": "scout-ui/app.json",
-      "line": 48,
-      "table": "meals",
-      "match": "meals",
-      "text": "\"NSPhotoLibraryUsageDescription\": \"Scout uses your photos to let you attach images to chores, meals, and family memories.\",",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app.json",
-      "line": 53,
-      "table": "events",
-      "match": "events",
-      "text": "\"NSCalendarsUsageDescription\": \"Scout reads and writes your iOS Calendar so family events stay in sync between Scout, iCal, and shared displays.\",",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 20,
-      "table": "task_instances",
-      "match": "task_instances",
-      "text": "//   compute done from task_instances API — e.g. fetchTaskInstances(today)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 27,
-      "table": "events",
-      "match": "events",
-      "text": "//   source activity from action_items API + task_instance completion events.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 41,
-      "table": "meals",
-      "match": "meals",
-      "text": "// Build the 7-day meals grid from a real WeeklyMealPlan",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 69,
-      "table": "meals",
-      "match": "Meals",
-      "text": "// ---- Meals · This week — real data via fetchCurrentWeeklyPlan ----",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 112,
-      "table": "task_instances",
-      "match": "task_instances",
-      "text": "{/* ---- Kids · Today (done counts from seed; total from seed; TODO: task_instances API) ---- */}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 140,
-      "table": "meals",
-      "match": "Meals",
-      "text": "{/* ---- Meals · This week (real data from fetchCurrentWeeklyPlan) ---- */}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 143,
-      "table": "meals",
-      "match": "Meals",
-      "text": "<Text style={shared.cardTitle}>Meals · This week</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 144,
-      "table": "meals",
-      "match": "meals",
-      "text": "<Pressable onPress={() => router.push(\"/meals/this-week\")} accessibilityRole=\"link\">",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/index.tsx",
-      "line": 149,
-      "table": "meals",
-      "match": "Meals",
-      "text": "<Text style={styles.emptyText}>No plan yet — generate one on Meals.</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/_layout.tsx",
-      "line": 28,
-      "table": "meals",
-      "match": "meals",
-      "text": "if (pathname.startsWith(\"/meals\"))    return \"meals\";",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/_layout.tsx",
-      "line": 28,
-      "table": "meals",
-      "match": "meals",
-      "text": "if (pathname.startsWith(\"/meals\"))    return \"meals\";",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/_layout.tsx",
-      "line": 37,
-      "table": "bills",
-      "match": "bills",
-      "text": "personal:  { placeholder: \"What's on my plate today?\",                chips: [\"My tasks today\", \"Upcoming bills\", \"Add a note\", \"What's on my calendar?\"] },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/_layout.tsx",
-      "line": 39,
-      "table": "meals",
-      "match": "meals",
-      "text": "meals:     { placeholder: \"Generate next week's meal plan...\",         chips: [\"Generate next week's plan\", \"What can I make tonight?\", \"Build grocery list from plan\", \"Sally's dietary needs\"] },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/(scout)/home/index.tsx",
-      "line": 14,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: string | null;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/(scout)/home/index.tsx",
-      "line": 28,
-      "table": "families",
-      "match": "families",
-      "text": "fetch(`${API_BASE_URL}/families/${familyId}/home/zones`, { headers }).then(r => r.ok ? r.json() : []),",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/(scout)/home/index.tsx",
-      "line": 29,
-      "table": "families",
-      "match": "families",
-      "text": "fetch(`${API_BASE_URL}/families/${familyId}/home/instances`, { headers }).then(r => r.ok ? r.json() : []),",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 16,
-      "table": "routines",
-      "match": "Routines",
-      "text": "{ label: \"Chores\", description: \"Routines, chore templates, point values, streak config\", href: \"/admin/chores\", permission: \"chores.manage_config\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 18,
-      "table": "meals",
-      "match": "Meals",
-      "text": "{ label: \"Meals\", description: \"Plan rules, rating scale, batch cook templates\", href: \"/admin/meals\", permission: \"meals.manage_config\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 18,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ label: \"Meals\", description: \"Plan rules, rating scale, batch cook templates\", href: \"/admin/meals\", permission: \"meals.manage_config\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 18,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ label: \"Meals\", description: \"Plan rules, rating scale, batch cook templates\", href: \"/admin/meals\", permission: \"meals.manage_config\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 23,
-      "table": "notes",
-      "match": "notes",
-      "text": "{ label: \"AI Personalities\", description: \"Edit per-member AI voice (tone, vocabulary, verbosity, notes)\", href: \"/admin/ai/personalities\", permission: \"ai.edit_any_personality\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 37,
-      "table": "meals",
-      "match": "meals",
-      "text": "\"meals.manage_config\": useHasPermission(\"meals.manage_config\"),",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/index.tsx",
-      "line": 37,
-      "table": "meals",
-      "match": "meals",
-      "text": "\"meals.manage_config\": useHasPermission(\"meals.manage_config\"),",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 84,
-      "table": "personal_tasks",
-      "match": "personal_tasks",
-      "text": "\"FROM personal_tasks WHERE status = 'pending' \" +",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 88,
-      "table": "bills",
-      "match": "Bills",
-      "text": "name: \"Bills due in 3 days\",",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 91,
-      "table": "bills",
-      "match": "bills",
-      "text": "\"'bill' AS entity_kind, due_date AS scheduled_for FROM bills \" +",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 96,
-      "table": "events",
-      "match": "Events",
-      "text": "name: \"Events starting in 30 min\",",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 100,
-      "table": "events",
-      "match": "events",
-      "text": "\"FROM events e JOIN event_attendees ea ON ea.event_id = e.id \" +",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 100,
-      "table": "event_attendees",
-      "match": "event_attendees",
-      "text": "\"FROM events e JOIN event_attendees ea ON ea.event_id = e.id \" +",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 109,
-      "table": "task_instances",
-      "match": "task_instances",
-      "text": "\"FROM task_instances WHERE is_completed = false \" +",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 320,
-      "table": "member_config",
-      "match": "member_config",
-      "text": "// Reads member_config rows with key='nudges.quiet_hours'. Backend",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/nudges.tsx",
-      "line": 669,
-      "table": "personal_tasks",
-      "match": "personal_tasks",
-      "text": "\"SELECT assigned_to AS member_id, id AS entity_id, 'personal_task' AS entity_kind, due_at AS scheduled_for FROM personal_tasks WHERE status = 'pending' LIMIT 100\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/ai/personalities.tsx",
-      "line": 194,
-      "table": "notes",
-      "match": "Notes",
-      "text": "label=\"Notes to Scout\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 4,
-      "table": "routines",
-      "match": "routines",
-      "text": "* Section 1: Per-kid routines (editable list — name + pts, add/remove/edit)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 31,
-      "table": "routines",
-      "match": "routines",
-      "text": "// Per-kid routines editor component",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 36,
-      "table": "routines",
-      "match": "routines",
-      "text": "/** Initial routines from the canonical API (may be empty on first render). */",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 41,
-      "table": "routines",
-      "match": "routines",
-      "text": "// Local draft state — seeded from the canonical routines passed in by parent",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 42,
-      "table": "routines",
-      "match": "routines",
-      "text": "const [routines, setRoutines] = useState<ChoreRoutine[]>(initialRoutines);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 57,
-      "table": "routines",
-      "match": "routines",
-      "text": "// For new routines created locally (no db id yet), routine_key is the",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 59,
-      "table": "routines",
-      "match": "routines",
-      "text": "const payload = routines.map((r) => ({",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 73,
-      "table": "routines",
-      "match": "routines",
-      "text": "}, [kid.id, routines]);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 110,
-      "table": "member_config",
-      "match": "member_config",
-      "text": "// pts were a member_config artefact; canonical table stores label/recurrence.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 129,
-      "table": "routines",
-      "match": "routines",
-      "text": "{routines.length > 0 && (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 137,
-      "table": "routines",
-      "match": "routines",
-      "text": "{routines.map((routine) => {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 161,
-      "table": "routines",
-      "match": "routines",
-      "text": "{routines.length === 0 && (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 162,
-      "table": "routines",
-      "match": "routines",
-      "text": "<Text style={kidStyles.emptyText}>No routines yet. Add one below.</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 181,
-      "table": "routines",
-      "match": "routines",
-      "text": "accessibilityLabel={`Save routines for ${kid.first_name}`}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 200,
-      "table": "routines",
-      "match": "routines",
-      "text": "/** Canonical routines keyed by member_id, loaded once at mount. */",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 219,
-      "table": "routines",
-      "match": "routines",
-      "text": "// Fetch members and canonical routines in parallel",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 270,
-      "table": "routines",
-      "match": "routines",
-      "text": "Configure per-kid routines, point values, and family streak rules.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 274,
-      "table": "routines",
-      "match": "routines",
-      "text": "{/* Section 1: Per-kid routines                                         */}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/index.tsx",
-      "line": 278,
-      "table": "routines",
-      "match": "routines",
-      "text": "<Text style={shared.cardTitle}>Per-kid routines</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/chores/new.tsx",
-      "line": 92,
-      "table": "chore_templates",
-      "match": "chore_templates",
-      "text": "// chore_templates.due_time is NOT NULL in the DB. Default to",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/home/index.tsx",
-      "line": 14,
-      "table": "families",
-      "match": "families",
-      "text": "const res = await fetch(`${API_BASE_URL}/families/${familyId}/home/${path}`, {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/integrations/index.tsx",
-      "line": 361,
-      "table": "events",
-      "match": "events",
-      "text": "Coming soon — recent sync events, errors, last-successful-sync per integration.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 2,
-      "table": "meals",
-      "match": "meals",
-      "text": "* /admin/meals — Meals admin screen",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 2,
-      "table": "meals",
-      "match": "Meals",
-      "text": "* /admin/meals — Meals admin screen",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 10,
-      "table": "meals",
-      "match": "meals",
-      "text": "* Permission: meals.manage_config (seeded in migration 027)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 33,
-      "table": "meals",
-      "match": "meals",
-      "text": "} from \"../../../lib/meals\";",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 38,
-      "table": "meals",
-      "match": "meals",
-      "text": "} from \"../../../lib/meals\";",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 152,
-      "table": "meals",
-      "match": "meals",
-      "text": "const canManage = useHasPermission(\"meals.manage_config\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 159,
-      "table": "meals",
-      "match": "meals",
-      "text": "} = useFamilyConfig<MealsPlanRules>(\"meals.plan_rules\", DEFAULT_PLAN_RULES);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 202,
-      "table": "meals",
-      "match": "meals",
-      "text": "} = useFamilyConfig<MealsRatingScale>(\"meals.rating_scale\", DEFAULT_RATING_SCALE);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 243,
-      "table": "meals",
-      "match": "meals",
-      "text": "\"meals.dietary_notes\",",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 295,
-      "table": "meals",
-      "match": "Meals",
-      "text": "<Text style={styles.h1}>Meals</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 402,
-      "table": "notes",
-      "match": "notes",
-      "text": "<Text style={styles.fieldLabel}>Require notes for \"Retire\"</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 445,
-      "table": "notes",
-      "match": "notes",
-      "text": "These labels appear in the dietary notes panel and are referenced by",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/index.tsx",
-      "line": 477,
-      "table": "meals",
-      "match": "meals",
-      "text": "Coming soon — most-repeated meals, kid acceptance trends, prep time vs rating.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/staples/new.tsx",
-      "line": 20,
-      "table": "meals",
-      "match": "meals",
-      "text": "const canManage = useHasPermission(\"meals.manage_staples\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/staples/new.tsx",
-      "line": 44,
-      "table": "families",
-      "match": "families",
-      "text": "const res = await fetch(`${API_BASE_URL}/families/${familyId}/meals`, {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/admin/meals/staples/new.tsx",
-      "line": 44,
-      "table": "meals",
-      "match": "meals",
-      "text": "const res = await fetch(`${API_BASE_URL}/families/${familyId}/meals`, {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/child/[memberId].tsx",
-      "line": 39,
-      "table": "routines",
-      "match": "routines",
-      "text": "const [ti, tmpls, routines] = await Promise.all([",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/child/[memberId].tsx",
-      "line": 51,
-      "table": "routines",
-      "match": "routines",
-      "text": "routines.forEach((r) => {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/index.tsx",
-      "line": 4,
-      "table": "meals",
-      "match": "meals",
-      "text": "return <Redirect href=\"/meals/this-week\" />;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/prep.tsx",
-      "line": 2,
-      "table": "meals",
-      "match": "Meals",
-      "text": "* Meals — Sunday Prep tab.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/prep.tsx",
-      "line": 7,
-      "table": "meals",
-      "match": "meals",
-      "text": "* matches the rest of the redesigned meals surface.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/prep.tsx",
-      "line": 92,
-      "table": "notes",
-      "match": "notes",
-      "text": "// an array of strings, an array of {title, notes}, or a nested object.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 2,
-      "table": "meals",
-      "match": "Meals",
-      "text": "* Meals — Reviews tab.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 6,
-      "table": "meals",
-      "match": "meals",
-      "text": "* /meals/reviews via createMealReview on submit. Defaults are applied",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 23,
-      "table": "notes",
-      "match": "notes",
-      "text": "const [notes, setNotes] = useState(\"\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 57,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes.trim() || null,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 57,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes.trim() || null,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 122,
-      "table": "notes",
-      "match": "notes",
-      "text": "value={notes}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/reviews.tsx",
-      "line": 124,
-      "table": "notes",
-      "match": "Notes",
-      "text": "placeholder=\"Notes (optional)\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/this-week.tsx",
-      "line": 95,
-      "table": "notes",
-      "match": "notes",
-      "text": "// Load per-member dietary notes from config, with seedData fallback",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/this-week.tsx",
-      "line": 237,
-      "table": "notes",
-      "match": "notes",
-      "text": "<Text style={shared.cardTitle}>Dietary notes</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 7,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals\",          label: \"This week\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 8,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals/prep\",     label: \"Prep plan\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 9,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals/groceries\",label: \"Groceries\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 10,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals/reviews\",  label: \"Reviews\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 17,
-      "table": "meals",
-      "match": "meals",
-      "text": "href === \"/meals\" ? pathname === \"/meals\" || pathname === \"/meals/this-week\" : pathname.startsWith(href);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 17,
-      "table": "meals",
-      "match": "meals",
-      "text": "href === \"/meals\" ? pathname === \"/meals\" || pathname === \"/meals/this-week\" : pathname.startsWith(href);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 17,
-      "table": "meals",
-      "match": "meals",
-      "text": "href === \"/meals\" ? pathname === \"/meals\" || pathname === \"/meals/this-week\" : pathname.startsWith(href);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/meals/_layout.tsx",
-      "line": 22,
-      "table": "meals",
-      "match": "Meals",
-      "text": "<Text style={styles.h1}>Meals</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 138,
-      "table": "events",
-      "match": "events",
-      "text": "// ---- Calendar events — real data from fetchEvents for current week ----",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 139,
-      "table": "events",
-      "match": "events",
-      "text": "const [events, setEvents] = useState<Event[]>([]);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 158,
-      "table": "notes",
-      "match": "notes",
-      "text": "// ---- Recent notes — real data from fetchRecentNotes ----",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 159,
-      "table": "notes",
-      "match": "notes",
-      "text": "const [notes, setNotes] = useState<Note[]>([]);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 168,
-      "table": "bills",
-      "match": "Bills",
-      "text": "// ---- Bills — real data from fetchUnpaidBills ----",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 169,
-      "table": "bills",
-      "match": "bills",
-      "text": "const [bills, setBills] = useState<Bill[]>([]);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 177,
-      "table": "bills",
-      "match": "bills",
-      "text": "const totalDue = bills.reduce((s, b) => s + b.amount_cents / 100, 0);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 200,
-      "table": "events",
-      "match": "events",
-      "text": "{events.some((e) => {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 213,
-      "table": "events",
-      "match": "events",
-      "text": "{events.length === 0 ? (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 214,
-      "table": "events",
-      "match": "events",
-      "text": "<Text style={styles.emptyText}>No events this week.</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 216,
-      "table": "events",
-      "match": "events",
-      "text": "events.slice(0, 5).map((e) => (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 252,
-      "table": "notes",
-      "match": "notes",
-      "text": "{/* ---- Recent notes ---- */}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 255,
-      "table": "notes",
-      "match": "notes",
-      "text": "<Text style={shared.cardTitle}>Recent notes</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 258,
-      "table": "notes",
-      "match": "notes",
-      "text": "{notes.length === 0 ? (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 259,
-      "table": "notes",
-      "match": "notes",
-      "text": "<Text style={styles.emptyText}>No notes yet.</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 261,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes.map((n) => (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 271,
-      "table": "bills",
-      "match": "Bills",
-      "text": "{/* ---- Bills ---- */}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 274,
-      "table": "bills",
-      "match": "Bills",
-      "text": "<Text style={shared.cardTitle}>Bills</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 277,
-      "table": "bills",
-      "match": "bills",
-      "text": "{bills.length === 0 ? (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 278,
-      "table": "bills",
-      "match": "bills",
-      "text": "<Text style={styles.emptyText}>No unpaid bills.</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 280,
-      "table": "bills",
-      "match": "bills",
-      "text": "bills.map((b) => {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/personal/index.tsx",
-      "line": 294,
-      "table": "bills",
-      "match": "bills",
-      "text": "{bills.length > 0 && (",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/projects/[id].tsx",
-      "line": 267,
-      "table": "notes",
-      "match": "notes",
-      "text": "entries: { id: string; amount_cents: number; kind: string; vendor: string | null; notes: string | null; recorded_at: string }[];",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/settings/ai.tsx",
-      "line": 411,
-      "table": "notes",
-      "match": "Notes",
-      "text": "label=\"Notes to Scout\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/settings/index.tsx",
-      "line": 30,
-      "table": "meals",
-      "match": "meals",
-      "text": "const hasAdminMeals       = useHasPermission(\"meals.manage_config\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/app/settings/index.tsx",
-      "line": 193,
-      "table": "meals",
-      "match": "meals",
-      "text": "Manage allowance, chores, meals, grocery, Scout AI settings, family members, and integrations.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/ActionInbox.tsx",
-      "line": 91,
-      "table": "meals",
-      "match": "meals",
-      "text": "router.push(\"/meals/this-week\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/BottomTabBar.tsx",
-      "line": 10,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals\",   label: \"Meals\",   icon: \"♨\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/BottomTabBar.tsx",
-      "line": 10,
-      "table": "meals",
-      "match": "Meals",
-      "text": "{ href: \"/meals\",   label: \"Meals\",   icon: \"♨\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/FamilyMemorySection.tsx",
-      "line": 157,
-      "table": "notes",
-      "match": "notes",
-      "text": "per-child learning and coaching notes.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NavBar.tsx",
-      "line": 14,
-      "table": "meals",
-      "match": "meals",
-      "text": "{ href: \"/meals\",    label: \"Meals\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NavBar.tsx",
-      "line": 14,
-      "table": "meals",
-      "match": "Meals",
-      "text": "{ href: \"/meals\",    label: \"Meals\" },",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NeedSomething.tsx",
-      "line": 30,
-      "table": "notes",
-      "match": "notes",
-      "text": "const [notes, setNotes] = useState(\"\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NeedSomething.tsx",
-      "line": 52,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes || undefined,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NeedSomething.tsx",
-      "line": 52,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes || undefined,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/NeedSomething.tsx",
-      "line": 134,
-      "table": "notes",
-      "match": "notes",
-      "text": "value={notes}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 5,
-      "table": "events",
-      "match": "events",
-      "text": "* events, and grocery items before the parent approves a single",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 66,
-      "table": "events",
-      "match": "events",
-      "text": "const events: BundleEvent[] = Array.isArray(args?.events)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 77,
-      "table": "events",
-      "match": "events",
-      "text": "const [includeEvents, setIncludeEvents] = useState(events.length > 0);",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 83,
-      "table": "events",
-      "match": "events",
-      "text": "(!includeEvents || events.length === 0) &&",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 85,
-      "table": "events",
-      "match": "events",
-      "text": "[includeTasks, includeEvents, includeGrocery, tasks, events, groceryItems],",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 116,
-      "table": "events",
-      "match": "events",
-      "text": "events: includeEvents ? events : [],",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 116,
-      "table": "events",
-      "match": "events",
-      "text": "events: includeEvents ? events : [],",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 117,
-      "table": "grocery_items",
-      "match": "grocery_items",
-      "text": "grocery_items: includeGrocery ? groceryItems : [],",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 135,
-      "table": "events",
-      "match": "Events",
-      "text": "label=\"Events\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 136,
-      "table": "events",
-      "match": "events",
-      "text": "count={events.length}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/components/PlannerReviewCard.tsx",
-      "line": 139,
-      "table": "events",
-      "match": "events",
-      "text": "previews={events.slice(0, 4).map((e) => {",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/app/AppContext.tsx",
-      "line": 298,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes?: string;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/app/AppContext.tsx",
-      "line": 390,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: args.notes,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/assistant/ScoutAssistEntry.tsx",
-      "line": 82,
-      "table": "routines",
-      "match": "routines",
-      "text": "Scout owns chores, routines, completion, and Daily Wins. Hearth",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/hooks/index.ts",
-      "line": 98,
-      "table": "notes",
-      "match": "notes",
-      "text": "*   completion.run({ task_occurrence_id: \"occ-0007\", notes: \"had help\" });",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/lib/contracts.ts",
-      "line": 206,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes?: string;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/lib/contracts.ts",
-      "line": 239,
-      "table": "daily_wins",
-      "match": "daily_wins",
-      "text": "daily_wins: number;",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/lib/mockData.ts",
-      "line": 11,
-      "table": "routines",
-      "match": "routines",
-      "text": "*   - morning / after-school / evening routines with deadlines",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/lib/mockData.ts",
-      "line": 730,
-      "table": "daily_wins",
-      "match": "daily_wins",
-      "text": "daily_wins: wins,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/projects/ProjectsTodayCard.tsx",
-      "line": 5,
-      "table": "personal_tasks",
-      "match": "personal_tasks",
-      "text": "* Independent of promotion into personal_tasks — see Phase 3 spec.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/rewards/DailyWinCard.tsx",
-      "line": 5,
-      "table": "daily_wins",
-      "match": "daily_wins",
-      "text": "* /api/rewards/week/current ships `daily_wins` as a single integer count",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/rewards/DailyWinCard.tsx",
-      "line": 7,
-      "table": "daily_wins",
-      "match": "daily_wins",
-      "text": "* daily_wins. Day-by-day mapping lands when the backend exposes it.",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/rewards/WeeklyPayoutCard.tsx",
-      "line": 5,
-      "table": "daily_wins",
-      "match": "daily_wins",
-      "text": "*   { family_member_id, name, baseline_allowance, daily_wins,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/ChoreList.tsx",
-      "line": 9,
-      "table": "notes",
-      "match": "notes",
-      "text": "* (defaults completion_mode = \"manual\", no notes). Tapping the body",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 12,
-      "table": "notes",
-      "match": "notes",
-      "text": "*   - optional notes input (sent to POST /api/household/completions)",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 59,
-      "table": "notes",
-      "match": "notes",
-      "text": "const [notes, setNotes] = useState(\"\");",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 111,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes.trim() || undefined,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 111,
-      "table": "notes",
-      "match": "notes",
-      "text": "notes: notes.trim() || undefined,",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 157,
-      "table": "notes",
-      "match": "Notes",
-      "text": "<Text style={styles.notesLabel}>Notes (optional)</Text>",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 160,
-      "table": "notes",
-      "match": "notes",
-      "text": "value={notes}",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
-      "file": "scout-ui/features/today/CompletionSheet.tsx",
-      "line": 167,
-      "table": "notes",
-      "match": "notes",
-      "text": "accessibilityLabel=\"Optional completion notes\"",
-      "manifest_section_3_owner": "UNMAPPED"
-    },
-    {
       "file": "scout-ui/lib/allowance.ts",
       "line": 13,
       "table": "daily_wins",
@@ -10350,7 +8725,7 @@
       "table": "meals",
       "match": "Meals",
       "text": "* Shared loaders for the Meals pages.",
-      "manifest_section_3_owner": "UNMAPPED"
+      "manifest_section_3_owner": "§3.7 scout-ui/lib/meal_plan_hooks.ts"
     },
     {
       "file": "scout-ui/lib/mockScout.ts",
