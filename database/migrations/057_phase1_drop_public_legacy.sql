@@ -24,6 +24,24 @@
 --   Plan's step list is superseded by the 5-tier topological order
 --   in Step B below. See PR 1.3 handoff for full discussion.
 --
+-- POST-MERGE FIX (PR 1.4 / 2026-04-25):
+--   Original PR #75 merge of this migration crashed on Railway with
+--   "cannot drop table families because other objects depend on it"
+--   because public.family_members has FK family_members_family_id_fkey
+--   to public.families and the original Tier 5 alphabetical order
+--   put families first. Atomic transaction rollback meant nothing
+--   landed; verified by direct DB queries (42 public.* BASE TABLEs
+--   intact, no 057 row in _scout_migrations, all 4 Step A FKs still
+--   present). Fix: swap Tier 5 DROP TABLE order so family_members
+--   (the FK source side) drops first, taking its FK with it; then
+--   families drops cleanly. See docs/handoffs/2026-04-25_phase_1_pr_1_4.md
+--   and the attached postmortem for the gate-scope root cause and
+--   the corrected sprint-wide rule: "intra-tier independence check
+--   applies to every multi-table tier in any destructive PR, not
+--   just tiers explicitly named in scope review." The Tier 5 line
+--   swap is the proximate fix; the gate-scope generalization is the
+--   systemic fix.
+--
 -- Scope:
 --   - Drop 39 public.* tables (full drop set per v5.1 plan).
 --   - Drop 4 explicit FKs that block the topology (3 on kept
@@ -60,7 +78,13 @@
 --                                events to drop first).
 --            Tier 4 (2 tables):  chore_templates, routines (need
 --                                task_instances).
---            Tier 5 (2 tables):  families, family_members.
+--            Tier 5 (2 tables):  family_members, families. Order
+--                                non-alphabetical: family_members
+--                                has an FK to families, so the
+--                                source-side-first rule applies
+--                                (same rule as Tier 1's mutual
+--                                breaker, applied via order here
+--                                since the FK is single-direction).
 --   Step C - DO block asserting the public.* BASE TABLE set is
 --            exactly {_scout_migrations, sessions,
 --            scout_scheduled_runs}. Same pattern as 056's
@@ -168,13 +192,22 @@ DROP TABLE IF EXISTS public.task_instances;
 DROP TABLE IF EXISTS public.chore_templates;
 DROP TABLE IF EXISTS public.routines;
 
--- ---- Tier 5: families and family_members. The 2 high-fan-in
--- ----         identity tables. Once all earlier tiers drop, these
--- ----         have zero remaining incoming FKs (verified during
--- ----         scope review's Gate 1 check).
+-- ---- Tier 5: family_members and families, the 2 high-fan-in
+-- ----         identity tables. Order matters within this tier:
+-- ----         family_members.family_id_fkey -> families is an
+-- ----         intra-tier FK, so family_members (the FK SOURCE
+-- ----         side) drops FIRST, taking its FK with it; then
+-- ----         families drops with no incoming refs. Same
+-- ----         source-side-first rule as Step A's Tier 1 mutual
+-- ----         breaker, applied via order here because the FK is
+-- ----         single-direction (no mutual loop). PR #75 shipped
+-- ----         the original alphabetical order (families,
+-- ----         family_members) and crashed on Railway; transaction
+-- ----         rolled back atomically. Fixed in PR 1.4. See
+-- ----         docs/handoffs/2026-04-25_phase_1_pr_1_4_postmortem.md.
 
-DROP TABLE IF EXISTS public.families;
 DROP TABLE IF EXISTS public.family_members;
+DROP TABLE IF EXISTS public.families;
 
 -- ===========================================================================
 -- STEP C: post-drop set-match assertion. Asserts the public.* BASE
