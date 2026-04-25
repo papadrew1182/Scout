@@ -1,9 +1,16 @@
-# Scout canonical rewrite manifest v1.1
+# Scout canonical rewrite manifest v1.1.2
 
 **Date:** 2026-04-25
-**Repo state:** commit `07c61b8`, post PR 1.4 merge
+**Repo state:** commit `c7cc13a`, post PR 1.5 merge
 **Purpose:** SSOT for PR 1.5, PR 2.0, Phase 2, Phase 3, and Phase 5 gates after the Phase 1 stuck-state review.
-**v1.1 amendment:** incorporates secondary-review feedback before commit: role-tier names verified against the pre-rewrite snapshot, PR 3.4 owner typos corrected, PR 1.5 maintenance middleware made mandatory, and orphan public-table product decisions moved to an explicit pre-PR-3.4 gate.
+**Filename note:** the document file is intentionally retained at `docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md` despite the version bumps. Renaming would require updating `scripts/manifest_check.py`, `scripts/old_reference_grep.py`, and any downstream references in the same commit; for v1.1.x point releases the cost is not worth the rename. A future v2 may rename.
+
+## Version history
+
+- **v1.1.2** (2026-04-25, this revision) — ChatGPT pre-draft tertiary review of PR 2.1 (two passes) added: §0.2 fifth sprint-wide rule (rebuilt-table contract parity); §6 PR 2.1 gate criteria 6-9 (rebuilt-table contract parity, migration qualification, §2 FK restore parity, /ready maintenance semantic gate); §5 PR 2.1 ownership scope expansion (the /ready maintenance semantic patch); §3 GET /ready consumer row owner update; §1.4 UUID determinism note; §4 /ready semantic note. All inline-tagged `(added v1.1.2)`.
+- **v1.1.1** (2026-04-25) — PR 2.0 grep audit surfaced 5 §3 amendments tagged inline `(added v1.1.1)`: §3.1 `backend/app/database.py`, §3.2 `backend/app/scheduler.py`, §3.4 `backend/services/connectors/*` tree (5 explicit rows + 1 rolled-up), §3.5 `backend/scout_mcp/server.py`, §3.7 `scout-ui/lib/meal_plan_hooks.ts`.
+- **v1.1** (2026-04-25) — secondary-review feedback before commit: role-tier names verified against the pre-rewrite snapshot, PR 3.4 owner typos corrected, PR 1.5 maintenance middleware made mandatory, orphan public-table product decisions moved to an explicit pre-PR-3.4 gate.
+- **v1** (2026-04-25) — initial after Phase 1 stuck-state review (handoff `docs/handoffs/2026-04-25_phase_1_chatgpt_review_packet.md`). Replaces named-scope reviews with a generated dependency-surface manifest as SSOT.
 
 ## 0. Hard rule: this manifest replaces named-scope reviews
 
@@ -17,6 +24,22 @@ The fourth dependency class this manifest exists to prevent is **intermediate-st
 - No manual DB writes, no smoke-deployed manual dispatch, no Scout UI app launches, no MCP calls, and no local operator scripts except those named in this manifest.
 - Main must be able to boot after PR 1.5. It may return controlled maintenance responses for broken domain routes, but the container must start and `/health` must be 200.
 - PR 1.5 must install a canonical-rewrite maintenance guard in production. Until the relevant Phase 3 owner removes the guard or narrows it under a named gate, every non-health/non-ready route that can execute legacy DB code must return controlled HTTP 503 before handler logic runs. The guard is mandatory, not optional.
+
+### 0.2 Sprint-wide rules running tally
+
+(Section added v1.1.2; rules 1-4 surface lessons from prior PRs that previously lived only in handoff docs and the §0 narrative; rule 5 surfaced by ChatGPT pre-draft tertiary review of PR 2.1.)
+
+Each rule below was generalized after a specific failure or near-miss. The list is the running tally of "what category did the previous round not think to check"; each new rule is a strict superset of the gating discipline available before it.
+
+1. **Intra-tier independence check applies to every multi-table tier in any destructive PR.** Single-table tiers are trivially clean; multi-table tiers require explicit FK enumeration before push, not after. Surfaced in PR 1.4 postmortem (Tier 5 alphabetical drop order put `families` before `family_members` while the FK still pointed at `families`).
+
+2. **Poller queries against Railway should target the latest deployment ID explicitly** (`railway logs <id>`), not the default `--deployment` flag. Railway's default scopes to "last successful," which becomes invisible to a deploy-failure poller. Surfaced in PR 1.4 monitoring.
+
+3. **Consumer audits for destructive PRs cover the full container boot path** (`start.sh`, `migrate.py`, `seed.py`, app startup events, scheduler bootstrap), not just request handlers. Surfaced when post-PR-1.4 deploy crashed in `seed.py` despite all request-handler audits passing.
+
+4. **Intermediate-state search-path resurrection must be checked at every phase boundary.** Because `backend/app/database.py` sets `search_path TO public, scout`, an unqualified legacy reference that currently fails can begin resolving to a newly created same-name `scout.*` table during Phase 2 before Phase 3 has intentionally rewired it. Every unqualified legacy reference must be checked at every phase boundary against what the scout schema now has. Surfaced in v1 manifest §0 + §4 (the intermediate-state resolver).
+
+5. **Rebuild PRs must prove full object-contract parity, not just table existence and externally-dropped FK restoration.** For every table rebuilt from a dropped source table, the PR must include a snapshot-derived contract checklist covering columns, types, nullability, defaults, CHECKs, PKs, UNIQUEs, partial indexes, ordinary indexes, outgoing FKs that died with the dropped source table, triggers and the functions they invoke, required reference rows, and fully qualified migration DDL. Surfaced by ChatGPT pre-draft tertiary review of PR 2.1. (added v1.1.2)
 
 ## 1. Table inventory
 
@@ -181,6 +204,8 @@ Gate rule: PR 3.4 cannot use "remaining domains" language to cover these rows. T
 These rows are schema contracts, not optional data. PR 2.1 must create baseline `scout.role_tiers` rows before any role-tier FK or role-tier-permission natural-key insert can work. Global seed rows should move before Andrew bootstrap; family-scoped rows remain after bootstrap.
 
 Role-tier source-of-truth: the pre-rewrite snapshot contains exactly six role tier names: `DISPLAY_ONLY`, `PRIMARY_PARENT`, `PARENT`, `TEEN`, `YOUNG_CHILD`, and `CHILD`. There is no canonical `ADULT` row in the snapshot. Roberts-family age/persona handling maps users onto these rows in application logic; it does not create a separate `ADULT` role tier. Any proposal to introduce `ADULT`, lowercase `admin`, lowercase `parent_peer`, or any other tier name is a product/schema change requiring Andrew approval before PR 2.1.
+
+`scout.role_tiers` rows use non-deterministic UUIDs from `gen_random_uuid()`. Phase 5 PR 5.1's `role_tier_permissions` reseed joins on `role_tiers.name` (the natural key), not on `id`. Do not preserve old UUIDs from the dropped `public.role_tiers`. (added v1.1.2)
 
 | Table | Owner | Scope | Rows required | Gate reason |
 | --- | --- | --- | --- | --- |
@@ -370,7 +395,7 @@ Disposition meanings: `disable` means impossible to execute in the intermediate 
 | backend/app/main.py lifespan | boot | imports routes; starts scheduler only if env not false | safe with scheduler disabled | unsafe if scheduler enabled before Phase 3/5 | PR 1.5 + PR 5.3 | acceptable if env guard verified; scheduler cannot enable before Phase 5 |
 | backend/app/database.py | DB engine + session module (added v1.1.1) | sets connection-time `SET search_path TO public, scout`; defines SessionLocal and Base | safe; engine boots whether or not domain tables exist | this file is the literal mechanism §4 describes — every unqualified name resolves through this search_path; once PR 2.1 creates `scout.families` etc., the same hook is what enables silent resurrection | PR 1.5 (verify) + Phase 3 sweep (consider scout-first or scout-only search_path once rewires complete) | acceptable-as-is for PR 1.5; tree was missing from manifest v1.1, surfaced during PR 2.0 grep audit |
 | GET /health | boot/healthcheck | no DB | safe only after uvicorn starts | safe | PR 1.5 | must return 200 after PR 1.5 |
-| GET /ready | readiness | UserAccount ORM unqualified in try/except | returns 200 not_ready until identity rebuilt/rewired | resolves to scout.user_accounts after PR 2.1 if unqualified | PR 3.1 | rewire or keep try/except; not healthcheck gate |
+| GET /ready | readiness | UserAccount ORM unqualified in try/except | returns 200 not_ready until identity rebuilt/rewired | resolves to scout.user_accounts after PR 2.1 if unqualified | PR 2.1 semantic guard + PR 3.1 final rewire (updated v1.1.2) | PR 2.1 patches maintenance-mode readiness semantics so the DB probe's success does not flip status to "ready" while `SCOUT_CANONICAL_MAINTENANCE=true`; PR 3.1 later rewires or schema-qualifies the underlying identity query. (added v1.1.2) |
 
 ### 3.2 Scheduler entrypoints
 | Entrypoint | Context | DB contract touched | Current behavior | Intermediate-state behavior | Owner | Disposition |
@@ -638,13 +663,15 @@ Because connections set `search_path TO public, scout`, these unqualified names 
 
 At end Phase 3, every row above must be one of: qualified canonical reference, deleted feature path, disabled until future sprint, or acceptable kept-public table. At end Phase 5, scheduler, AI, smoke, and frontend auto-writers may only run after their rows are in the qualified/deleted/disabled/acceptable state.
 
+**Note on /ready observability (added v1.1.2):** the `user_accounts` resurrection at end of PR 2.1 is partially observable via `/ready`'s DB probe — the unqualified `UserAccount` query that currently fails (because `public.user_accounts` is dropped and `scout.user_accounts` does not yet exist) will start succeeding after PR 2.1 creates `scout.user_accounts`. PR 2.1 gate criterion 9 (§6) requires patching `/ready` so the probe's success does not flip the status field to `"ready"` while `SCOUT_CANONICAL_MAINTENANCE=true`. The probe still executes for resurrection observability; only the status field is gated. PR 3.1 owns the final rewire of the underlying identity query.
+
 ## 5. PR ownership map
 
 | PR / step | Scope | Owns | Cannot leave to later PR |
 | --- | --- | --- | --- |
 | PR 1.5 | Boot stabilization | Guard/disable `backend/seed.py`; add mandatory maintenance guard for every non-health/non-ready endpoint that can execute legacy DB code; prove app starts and `/health` returns 200; verify scheduler and AI env guards are off | Cannot create canonical identity tables before seed.py is guarded and request-time legacy DB execution is blocked |
 | PR 2.0 | Manifest + verification tooling | Commit this manifest; add scripts to verify table inventory, FK manifest, old-reference grep, resolver state, migration mirror; capture live post-057 schema query output | Cannot change schema except tooling |
-| PR 2.1 | Identity/member_config/role_tiers + 63 FK restores | Build scout.families, family_members, user_accounts, role_tiers, role_tier_overrides, member_config; seed role_tiers; restore all identity-target FKs including sessions and scout_scheduled_runs | Cannot leave unqualified legacy consumers enabled merely because scout.* now exists |
+| PR 2.1 | Identity/member_config/role_tiers + 63 FK restores + /ready semantic patch | Build scout.families, family_members, user_accounts, role_tiers, role_tier_overrides, member_config; seed role_tiers; restore all identity-target FKs including sessions and scout_scheduled_runs. PR 2.1 also owns the /ready maintenance semantic patch in `backend/app/main.py`: while `SCOUT_CANONICAL_MAINTENANCE=true`, /ready must not report `"status": "ready"` regardless of DB probe outcome. PR 3.1 still owns the final canonical identity rewire of the underlying UserAccount query. (added v1.1.2) | Cannot leave unqualified legacy consumers enabled merely because scout.* now exists |
 | PR 2.2 | Chores/tasks + 4 FK restores | Build/rebuild task/routine/task occurrence tables; add task_templates/task_occurrences FKs; preserve routine_steps second FK; ALTER existing standards_of_done/daily_win_results as needed | Cannot rely on CREATE IF NOT EXISTS against existing tables |
 | PR 2.3 | AI schema | Build scout.ai_* tables preserving metadata and homework subject CHECK | Cannot re-enable AI |
 | PR 2.4 | Meals/grocery/purchases schema | Build scout meal/grocery/purchase tables and define canonical mutual FK behavior | Cannot leave meals route old reader to scout.meal_transformations |
@@ -682,11 +709,50 @@ At end Phase 3, every row above must be one of: qualified canonical reference, d
 
 ### PR 2.1 gate
 
-- `scout.families`, `scout.family_members`, `scout.user_accounts`, `scout.role_tiers`, `scout.role_tier_overrides`, and `scout.member_config` exist as base tables, not views.
-- `scout.role_tiers` contains exactly the six required natural-key rows before any role-tier-permission reseed: `DISPLAY_ONLY`, `PRIMARY_PARENT`, `PARENT`, `TEEN`, `YOUNG_CHILD`, `CHILD`. No `ADULT`/lowercase legacy tiers without Andrew approval.
-- Every section-2 FK owned by PR 2.1 is present with the same constraint name, same source column, same ON DELETE, and target schema rewritten to scout.
-- Resolver audit shows every PR 2.1 resurrection row is either disabled or has a Phase 3 owner. No unqualified legacy path may be newly executable unless explicitly accepted.
-- Backend still boots and `/health` still returns 200.
+(Criteria 1-5 unchanged from v1.1; criteria 6-9 added v1.1.2 per ChatGPT pre-draft tertiary review.)
+
+1. `scout.families`, `scout.family_members`, `scout.user_accounts`, `scout.role_tiers`, `scout.role_tier_overrides`, and `scout.member_config` exist as base tables, not views.
+2. `scout.role_tiers` contains exactly the six required natural-key rows before any role-tier-permission reseed: `DISPLAY_ONLY`, `PRIMARY_PARENT`, `PARENT`, `TEEN`, `YOUNG_CHILD`, `CHILD`. No `ADULT`/lowercase legacy tiers without Andrew approval.
+3. Every section-2 FK owned by PR 2.1 is present with the same constraint name, same source column, same ON DELETE, and target schema rewritten to scout.
+4. Resolver audit shows every PR 2.1 resurrection row is either disabled or has a Phase 3 owner. No unqualified legacy path may be newly executable unless explicitly accepted.
+5. Backend still boots and `/health` still returns 200.
+6. **Rebuilt-table contract parity gate** (added v1.1.2). PR 2.1 must prove the following objects are present after migration `058_*.sql` lands, in addition to the six base tables themselves:
+
+    - **Internal FKs:** `family_members_family_id_fkey`, `user_accounts_family_member_id_fkey`, `role_tier_overrides_family_member_id_fkey`, `role_tier_overrides_role_tier_id_fkey`, `member_config_family_member_id_fkey`, `member_config_updated_by_fkey`.
+    - **PKs:** `families_pkey`, `family_members_pkey`, `user_accounts_pkey`, `role_tiers_pkey`, `role_tier_overrides_pkey`, `member_config_pkey`.
+    - **Unique and CHECK constraints:** `member_config_family_member_id_key_key`, `uq_role_tier_overrides_member`, `uq_role_tiers_name`, `chk_family_members_role` (lowercase `adult`/`child` only — preserve snapshot casing), `chk_user_accounts_auth_provider`, `chk_user_accounts_email_auth`.
+    - **Indexes:** `idx_family_members_family_id`, `idx_user_accounts_family_member_id`, `uq_user_accounts_email` (partial, `WHERE email IS NOT NULL`), `idx_role_tier_overrides_role_tier_id`, `idx_member_config_member`.
+    - **Triggers:** `trg_families_updated_at`, `trg_family_members_updated_at`, `trg_user_accounts_updated_at`, `trg_role_tiers_updated_at`, `trg_role_tier_overrides_updated_at`, `trg_member_config_updated_at`. All must invoke `public.set_updated_at()` — do not normalize to `clock_timestamp()` or any other function; preserve the snapshot contract.
+
+    Per-table contract source-of-truth is `docs/plans/_snapshots/2026-04-22_pre_rewrite_full.sql`. Naive copy from `public.<table>` to `scout.<table>` is the correct base; subtleties to preserve verbatim from the snapshot include `now()` defaults (do not normalize to `clock_timestamp()`), partial unique on `user_accounts.email`, lowercase `adult`/`child` in `chk_family_members_role`.
+
+7. **Migration qualification gate** (added v1.1.2). PR 2.1's mirrored migration SQL (`backend/migrations/058_*.sql` and `database/migrations/058_*.sql`) must contain:
+
+    - Zero unqualified `CREATE TABLE`; every `CREATE TABLE` writes `scout.<table>` explicitly.
+    - Zero unqualified `ALTER TABLE`; every `ALTER TABLE` writes `scout.<table>` or `public.<table>` explicitly.
+    - Zero unqualified `REFERENCES`; every FK writes `scout.<target>(id)` or `public.<target>(id)` explicitly.
+    - Zero unqualified `CREATE INDEX` or `CREATE UNIQUE INDEX ... ON`; every index target writes `scout.<table>` or `public.<table>` explicitly.
+    - Zero unqualified `CREATE TRIGGER ... ON`; every trigger target writes `scout.<table>` explicitly.
+    - Zero unqualified DML or query references inside seed/verification SQL; every `INSERT INTO`, `UPDATE`, `DELETE FROM`, `FROM`, and `JOIN` touching PR 2.1 tables must use `scout.<table>` or `public.<table>` explicitly.
+    - Zero `CREATE TABLE IF NOT EXISTS`; the six identity/config tables must use plain `CREATE TABLE` and fail loudly on collision. Retained source tables must never be `CREATE`d in PR 2.1.
+    - Zero `NOT VALID` constraints unless followed by `VALIDATE CONSTRAINT` in the same migration. Default expectation: all six internal rebuilt-table FKs and all 63 PR 2.1 §2 FKs land with `convalidated = true`.
+    - Backend/database migration mirror must be byte-identical for `058_*.sql`.
+
+    Rationale: `migrate.py` does not set `search_path` at migration time. PR 2.1 is the first canonical builder, so every table-bearing DDL and DML reference must be schema-qualified at draft time, not cleaned up during review.
+
+8. **§2 FK restore parity gate** (added v1.1.2). PR 2.1 owns exactly 63 of the 68 expected post-Phase-2 §2 FKs. Per-target subset (per ChatGPT review):
+
+    - 27 FKs targeting `scout.families(id)`.
+    - 28 FKs targeting `scout.family_members(id)`.
+    - 6 FKs targeting `scout.user_accounts(id)`.
+    - 2 FKs targeting `scout.role_tiers(id)` (the `role_tier_permissions_role_tier_id_fkey` and `user_family_memberships_role_tier_id_fkey` rows).
+    - 0 FKs targeting `scout.role_tier_overrides(id)` in PR 2.1's owned subset.
+
+    Each FK must preserve the original constraint name, source column, and `ON DELETE` action from the §2 manifest, with target schema rewritten from `public.*` to `scout.*`. All must end with `convalidated = true`. PR 2.6 still owns the final 68-row post-Phase-2 reconciliation.
+
+9. **/ready maintenance semantic gate** (added v1.1.2). PR 2.1 must patch `backend/app/main.py`'s `/ready` handler so that while `SCOUT_CANONICAL_MAINTENANCE=true`, the response body must not report `"status": "ready"` regardless of DB probe outcome. Required end state: HTTP 200 with a body containing at least `{"status": "not_ready", "reason": "canonical_maintenance", "database_reachable": <bool>}` when the maintenance flag is on. Extra diagnostic fields are allowed, but `status` must not be `"ready"` while maintenance is on. The DB probe should still execute (it is the live demonstration of §4 resurrection landing on the canonical path) but its success must not flip the status field while maintenance is on.
+
+    Rationale: at end of PR 2.1, `scout.user_accounts` exists, so the unqualified `UserAccount` query in `/ready` will start succeeding. Without this patch, `/ready` would report `"ready"` while every product endpoint still returns 503. That is an observability semantic failure, even though it is not a DB safety failure. Smoke verification (per the PR 1.5 handoff): re-curl `/ready` after PR 2.1 deploy and confirm the body changes from current `{not_ready, relation user_accounts does not exist}` to `{not_ready, canonical_maintenance, database_reachable: true}`.
 
 ### PR 2.2 gate
 
