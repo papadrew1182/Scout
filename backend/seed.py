@@ -4,10 +4,33 @@ Run once after migrations:
     python seed.py
 
 Idempotent: skips if family already exists.
+
+Maintenance gate (PR 1.5)
+-------------------------
+While the canonical rewrite sprint is in flight (Phase 1 dropped the
+public.* tables this script's ORM models target), running seed.py
+against the post-057 schema would crash on the first ORM query. The
+guard below short-circuits cleanly when SCOUT_CANONICAL_MAINTENANCE=true,
+so backend/start.sh can keep invoking ``python seed.py`` without
+edits. Default is ``false`` — non-rewrite environments are unaffected.
+
+The guard runs before any SQLAlchemy/app.* imports because those
+imports themselves can fail or trigger DB metadata work that depends
+on the dropped public.* shape. PR 3.1 owns rewriting or retiring this
+script against canonical scout.* tables; until then, the guard stays.
 """
 
 import os
 import sys
+
+if os.getenv("SCOUT_CANONICAL_MAINTENANCE", "false").strip().lower() == "true":
+    print(
+        "seed.py: SCOUT_CANONICAL_MAINTENANCE=true; "
+        "skipping seed during canonical rewrite",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 from datetime import date
 
 # Add backend to path so app modules can be imported

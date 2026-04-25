@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings, validate_startup
 from app.database import SessionLocal
+from app.middleware.canonical_maintenance import canonical_maintenance_middleware
 from app.routes import (
     affirmations,
     ai,
@@ -93,6 +94,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Canonical-rewrite maintenance gate. Registered LAST so it is the
+# outermost middleware: every non-allowlisted request is short-circuited
+# with 503 before CORS, auth, or any DB-touching handler runs while
+# SCOUT_CANONICAL_MAINTENANCE=true. Manifest v1.1.1 §6 PR 1.5 gate.
+app.middleware("http")(canonical_maintenance_middleware)
 
 app.include_router(auth.router)
 app.include_router(families.router)
