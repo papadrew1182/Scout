@@ -146,20 +146,54 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Readiness check: app booted, database reachable, config loaded."""
+    """Readiness check: app booted, database reachable, config loaded.
+
+    Maintenance-mode semantics (manifest v1.1.2 §6 PR 2.1 gate criterion 9):
+    while ``SCOUT_CANONICAL_MAINTENANCE`` is truthy, the response status
+    is pinned to ``"not_ready"`` with ``reason="canonical_maintenance"``
+    regardless of DB probe outcome, and ``database_reachable`` reports
+    whether the probe succeeded. The DB probe still executes — it is
+    the live demonstration of §4 search-path resurrection landing on
+    the canonical path. PR 3.1 owns the final canonical rewire of the
+    underlying ``UserAccount`` query; until then the unqualified read
+    is intentional, scout-search-path-resolved diagnostic.
+    """
     from sqlalchemy import func, select as sa_select, text
     from app.database import SessionLocal
+    from app.middleware.canonical_maintenance import _maintenance_enabled
     from app.models.foundation import UserAccount
+
     db = None
+    database_reachable = False
+    probe_error: str | None = None
+    account_count = 0
     try:
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         account_count = db.scalar(sa_select(func.count()).select_from(UserAccount)) or 0
+        database_reachable = True
     except Exception as e:
-        return {"status": "not_ready", "reason": f"database: {e}"}
+        probe_error = str(e)
     finally:
         if db:
             db.close()
+
+    if _maintenance_enabled():
+        return {
+            "status": "not_ready",
+            "reason": "canonical_maintenance",
+            "database_reachable": database_reachable,
+            "environment": settings.environment,
+            "auth_required": settings.auth_required,
+            "bootstrap_enabled": settings.enable_bootstrap,
+            "accounts_exist": account_count > 0,
+            "ai_available": settings.ai_available,
+            "transcribe_available": settings.transcribe_available,
+            "meal_generation": settings.enable_meal_generation,
+        }
+
+    if not database_reachable:
+        return {"status": "not_ready", "reason": f"database: {probe_error}"}
 
     return {
         "status": "ready",
