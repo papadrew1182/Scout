@@ -1,0 +1,26 @@
+Scout canonical rewrite manifest checker
+Manifest: docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md
+Repo root: C:\dev\scout
+DB host:   metro.proxy.rlwy.net:52683
+
+Schema snapshot written: docs\plans\runtime\2026-04-25\prod_schema_snapshot.txt
+
+========================================================================
+[PASS] Phase 1 migrations 053..057 byte-mirrored across backend/ and database/
+    053_phase1_drop_dependent_views.sql: sha256=762ea4891b8d (mirrored)
+    054_phase1_drop_fks_on_retained.sql: sha256=664303e67af4 (mirrored)
+    055_phase1_drop_scout_rebuilt.sql: sha256=fa24078c04b4 (mirrored)
+    056_phase1_truncate_domain_data.sql: sha256=ad22c9f1eb50 (mirrored)
+    057_phase1_drop_public_legacy.sql: sha256=f3bad57e5cf7 (mirrored)
+[PASS] Public schema base-table set matches manifest §1.1
+    expected: ['_scout_migrations', 'scout_scheduled_runs', 'sessions']
+    actual:   ['_scout_migrations', 'scout_scheduled_runs', 'sessions']
+[PASS] Scout schema retained-table set matches manifest §1.2
+    expected count: 53
+    actual count:   53
+[PASS] Migration 053's dropped scout views are absent; retained ones present
+    views that 053 must drop: ['connector_configs', 'connector_mappings', 'families', 'family_members', 'role_tier_overrides', 'role_tiers', 'sessions', 'user_accounts', 'v_household_today', 'v_rewards_current_week']
+    views retained per 053:   ['v_calendar_publication', 'v_control_plane']
+    actual scout views:       ['v_calendar_publication', 'v_control_plane']
+========================================================================
+PASSED: all 4 checks
