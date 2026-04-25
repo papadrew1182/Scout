@@ -52,9 +52,20 @@ MAINTENANCE_ALLOWLIST: frozenset[str] = frozenset({"/health", "/ready"})
 # indefinitely while we ship the canonical schema.
 RETRY_AFTER_SECONDS = "3600"
 
+# Common truthy environment-variable values. Liberal parser by design:
+# a required-for-boot flag must be biased toward correctly detecting
+# "on." A false-negative (env says on, parser reads off) crashes seed.py
+# at container boot and produces a hard outage with no auto-recovery.
+# A false-positive (env says off, parser reads on) produces 503s for
+# real traffic that an operator can clear in seconds with one env-var
+# flip. The asymmetry favors liberal detection of on. Mirror in
+# backend/seed.py — kept as a duplicated literal there so the seed-time
+# guard never imports backend/app/* code.
+_TRUE_VALUES: frozenset[str] = frozenset({"true", "1", "yes", "on"})
+
 
 def _maintenance_enabled() -> bool:
-    """True if the env var resolves to canonical 'true'.
+    """True if the env var resolves to a common truthy value.
 
     Read fresh on every request so an operator flipping the Railway
     env var takes effect after the next pod restart picks up the new
@@ -62,7 +73,7 @@ def _maintenance_enabled() -> bool:
     request time, so this is effectively per-process state — but
     reading on each call costs ~one os.environ lookup and keeps the
     helper testable without monkeypatching module state)."""
-    return os.getenv(MAINTENANCE_ENV_VAR, "false").strip().lower() == "true"
+    return os.getenv(MAINTENANCE_ENV_VAR, "false").strip().lower() in _TRUE_VALUES
 
 
 async def canonical_maintenance_middleware(request: Request, call_next):

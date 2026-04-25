@@ -7,11 +7,13 @@ app with only the maintenance middleware and a handful of routes
 (allowlisted + non-allowlisted), then exercise both maintenance-on
 and maintenance-off paths.
 
-The tests deliberately avoid the project conftest's real-DB
-fixtures: the middleware's behavior is not DB-dependent, and
-isolating it from the test DB infrastructure keeps these tests
-runnable on a workstation that doesn't have the scout_test database
-provisioned.
+DB isolation is achieved via the local `setup_database` fixture
+below, which shadows the conftest's session-scoped autouse
+`setup_database` fixture. Pytest's collection model inherits autouse
+fixtures from parent conftests regardless of test-module
+docstrings; the only way to actually opt out is to define a
+same-name fixture inside this module that yields without doing any
+DB work.
 """
 
 from __future__ import annotations
@@ -26,6 +28,27 @@ from app.middleware.canonical_maintenance import (
     RETRY_AFTER_SECONDS,
     canonical_maintenance_middleware,
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_database():
+    """Override the conftest autouse `setup_database` fixture for this
+    module only.
+
+    The maintenance middleware tests are deliberately DB-free — the
+    middleware operates on env vars and request paths, not on database
+    state. Without this shadow, pytest's autouse-fixture inheritance
+    rules would still trigger the project conftest's session-scoped
+    real-DB fixture (drop schemas, run migrations against scout_test)
+    before this module runs, even though the tests don't use any of
+    its returns. Shadowing here keeps the tests genuinely DB-free and
+    runnable on any workstation that has the backend Python deps but
+    not a provisioned scout_test database.
+
+    Caught by tertiary review of PR 1.5: pytest collection ignores
+    docstring claims about test isolation; only fixture-name shadowing
+    actually opts out of an autouse fixture."""
+    yield
 
 
 @pytest.fixture
@@ -137,15 +160,44 @@ def test_env_var_value_with_whitespace_enables_gate(monkeypatch, client):
     assert response.status_code == 503
 
 
-def test_env_var_truthy_alternatives_treated_as_false(monkeypatch, client):
-    """Only canonical 'true' enables maintenance. Values like '1',
-    'yes', 'on' are treated as off so an operator who intended off
-    but wrote a truthy-ish value gets the safer pass-through default
-    rather than an unintended outage."""
-    for truthy_alt in ("1", "yes", "on", "True!"):
+def test_env_var_truthy_alternatives_enable_gate(monkeypatch, client):
+    """Common truthy values must enable maintenance. Manifest §6
+    PR 1.5 gate handoff: a required-for-boot flag must be biased
+    toward correctly detecting "on." A false-negative (env says on,
+    parser reads off) crashes seed.py at boot with no auto-recovery;
+    a false-positive (env says off, parser reads on) produces 503s
+    that an operator clears with one env-var flip. The asymmetry
+    favors liberal detection of on."""
+    for truthy_alt in ("1", "yes", "on", "TRUE", "Yes", "ON", "  true  ", "TrUe"):
         monkeypatch.setenv(MAINTENANCE_ENV_VAR, truthy_alt)
         response = client.get("/api/families")
-        assert response.status_code == 200, f"unexpected 503 for value {truthy_alt!r}"
+        assert response.status_code == 503, (
+            f"expected 503 for truthy value {truthy_alt!r}, got {response.status_code}"
+        )
+
+
+def test_env_var_garbage_treated_as_false(monkeypatch, client):
+    """Random non-truthy strings must NOT enable maintenance.
+    Conservative for non-truthy values so operator typos do not put
+    the service into maintenance unintentionally. The truthy set is
+    explicit; everything else is off."""
+    for garbage in (
+        "maybe",
+        "sometimes",
+        "42",
+        "false",
+        "no",
+        "off",
+        "",
+        "yes please",
+        "trueish",
+        "0",
+    ):
+        monkeypatch.setenv(MAINTENANCE_ENV_VAR, garbage)
+        response = client.get("/api/families")
+        assert response.status_code == 200, (
+            f"unexpected 503 for non-truthy value {garbage!r}, got {response.status_code}"
+        )
 
 
 # --- Allowlist invariant ----------------------------------------------------

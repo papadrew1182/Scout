@@ -23,9 +23,15 @@ script against canonical scout.* tables; until then, the guard stays.
 import os
 import sys
 
-if os.getenv("SCOUT_CANONICAL_MAINTENANCE", "false").strip().lower() == "true":
+# Mirror of backend/app/middleware/canonical_maintenance.py:_TRUE_VALUES.
+# Duplicated as a literal (not imported) so this guard runs without
+# importing any backend/app/* code — the whole purpose of the guard is
+# to short-circuit before the heavy SQLAlchemy/app.* imports below.
+_MAINTENANCE_TRUE_VALUES = {"true", "1", "yes", "on"}
+
+if os.getenv("SCOUT_CANONICAL_MAINTENANCE", "false").strip().lower() in _MAINTENANCE_TRUE_VALUES:
     print(
-        "seed.py: SCOUT_CANONICAL_MAINTENANCE=true; "
+        "seed.py: SCOUT_CANONICAL_MAINTENANCE is truthy; "
         "skipping seed during canonical rewrite",
         file=sys.stderr,
     )
