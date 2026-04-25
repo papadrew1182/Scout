@@ -168,12 +168,17 @@ EXCLUDED_DIR_NAMES: frozenset[str] = frozenset({
     "coverage", ".turbo", ".cache",
 })
 
-# Specific files self-excluded: this script and the manifest checker
-# legitimately enumerate the dropped table names as expected-set
-# definitions, not as consumers.
+# Specific files self-excluded: gate-tooling that references the dropped
+# table names by design (not as consumers). manifest_check.py and this
+# script enumerate the dropped table names as expected-set definitions;
+# test_canonical_maintenance.py uses `/api/families` and similar paths
+# as deliberate fixtures for the maintenance-middleware allowlist tests.
+# §3 is a consumer manifest; adding test fixtures there would conflate
+# two different concepts.
 EXCLUDED_FILES: frozenset[str] = frozenset({
     "scripts/manifest_check.py",
     "scripts/old_reference_grep.py",
+    "backend/tests/test_canonical_maintenance.py",
 })
 
 # Truncate each captured line to this many chars so the JSON stays
