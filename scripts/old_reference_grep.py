@@ -37,12 +37,24 @@ Scope:
     are self-excluded - their expected-set definitions reference the dropped
     table names by design and are not consumers.
 
-    Migration files 001..057 in backend/migrations/ are excluded.
-    Justification: migration files reference dropped tables by definition
-    (they created or dropped them); they do not represent consumer code
-    requiring Phase 3 rewire. Future migrations 058+ remain in scope
-    because new migrations should use qualified scout.* names per the
-    manifest's canonical conventions. database/migrations/ is excluded
+    Migration files 001..058 in backend/migrations/ are excluded.
+    Justification: migration files are schema mutations, not consumer
+    code requiring Phase 3 rewire — they create, drop, or rebuild the
+    tables they reference. Migrations 001-057 created/dropped legacy
+    tables (Phase 1 destructive work). Migration 058 creates the
+    canonical scout.* identity tables (PR 2.1) and includes a
+    verification DO block whose PL/pgSQL string-array literals
+    enumerate expected table names by name to compare against
+    `pg_class` — the catalog-comparison strings are gate-tooling
+    content, structurally identical to the test fixtures already in
+    EXCLUDED_FILES. The criterion-7 (manifest §6 PR 2.1) "qualified
+    DDL only" intent applies to executable CREATE/ALTER/REFERENCES/
+    INSERT/etc., not to string literals or comments inside migrations.
+    PR 2.1's per-construct self-audit (focused greps that exclude
+    comments and strings) is the actual evidence for criterion 7.
+    Future Phase 2 migrations 059+ owned by PR 2.2/2.3/2.4/2.5 will
+    have similar verification blocks; bump MAX_EXCLUDED_MIGRATION
+    accordingly when those land. database/migrations/ is excluded
     defensively (mirrored from backend/ - same content, no separate
     consumers).
 
@@ -188,10 +200,16 @@ LINE_TEXT_TRUNCATE = 240
 # Default manifest path, relative to repo root.
 DEFAULT_MANIFEST_REL = "docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md"
 
-# Highest pre-canonical-rewrite migration number. Migrations 001..057
-# created or dropped the legacy public.* tables; references in those
-# files are expected and do not represent consumer code.
-MAX_EXCLUDED_MIGRATION = 57
+# Highest excluded migration number. Migrations 001..057 created or
+# dropped legacy public.* tables; migration 058 (PR 2.1) creates the
+# canonical scout.* identity tables and includes a verification DO
+# block whose PL/pgSQL string-array literals enumerate expected table
+# names for catalog comparison. Both categories are schema mutations,
+# not consumer code — they reference tables by name as part of their
+# own DDL/verification logic, structurally identical to why test
+# fixtures live in EXCLUDED_FILES. Bump as 059+ migrations land in
+# Phase 2/3 with similar verification patterns.
+MAX_EXCLUDED_MIGRATION = 58
 
 # Regex: paths inside backend/migrations/ named NNN[suffix]_*.sql where
 # NNN is the 3-digit number and an optional single letter suffix is

@@ -1,5 +1,5 @@
 {
-  "scan_date_utc": "2026-04-25T23:02:25.532620+00:00",
+  "scan_date_utc": "2026-04-25T23:53:52.183850+00:00",
   "repo_root": "C:/dev/scout",
   "manifest_path": "docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md",
   "scan_paths": [
@@ -58,7 +58,7 @@
     "scout-ui/features/",
     "backend/app/schemas/"
   ],
-  "excluded_migrations_through": 57,
+  "excluded_migrations_through": 58,
   "dropped_public_tables": [
     "activity_records",
     "ai_conversations",
