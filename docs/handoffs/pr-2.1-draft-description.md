@@ -138,6 +138,34 @@ The criterion-7 self-audit (focused per-construct grep, results in the table abo
 
 If the multi-reviewer round prefers to split the script change to a separate PR (analogous to how PR #79's grep fix was a separate commit on the manifest/v1.1.2 branch), the bump is a single-file, two-edit change with no test impact.
 
+## Self-audit limitations
+
+The verification DO block in `058_phase2_canonical_identity.sql` is a powerful gate — it asserts every required object exists and counts match — but two specific properties are checked only by name/count rather than by per-object detail. These are deliberate tradeoffs surfaced during Andrew's chat review pass (P1 findings #4 and #5):
+
+### (a) §2 FK ON DELETE actions are asserted by count, not per-constraint
+
+The DO block asserts `count = 63` for §2 FKs targeting the four identity-table targets, with `convalidated = true`. It does **not** assert that each FK's `confdeltype` matches the action specified in manifest §2 (e.g. `CASCADE` vs `SET NULL` vs `RESTRICT`).
+
+A miscoded ON DELETE — e.g., writing `CASCADE` for an FK that §2 specifies as `SET NULL` — would pass the count check.
+
+**Mitigation (this PR's gate):** reviewer manual-diff of Step F (lines 234-495 of the migration) against the §2 manifest in `docs/plans/2026-04-25_canonical_rewrite_manifest_v1_1.md` lines 234-301. Each ALTER TABLE ADD CONSTRAINT statement should be cross-checked: source table, source column, ON DELETE action all match the §2 row.
+
+**Why not encode in the DO block:** adding 63 individual `confdeltype` assertions to the DO block would balloon the verification logic to 75+ checks (63 §2 FKs + 6 internal FKs + 6 PKs + 6 uniques + ...). The line-by-line manual diff against the manifest is the more economical gate; the DO block's role is "prove the right structural shape is there," not "prove every per-constraint detail."
+
+### (b) Trigger function targets are asserted by trigger name, not by tgfoid resolution
+
+Criterion 6 specifies all 6 `trg_*_updated_at` triggers must invoke `public.set_updated_at()`. The DO block asserts each trigger exists by name in `pg_trigger`. It does **not** verify each trigger's `tgfoid` resolves to the expected function OID.
+
+A miscoded trigger — e.g., one that runs `clock_timestamp()` directly via inline pg/sql or invokes a different function — would pass the name check.
+
+**Mitigation (this PR's gate):** reviewer manual-diff of Step D (lines 196-201 of the migration) against the snapshot. All six `CREATE TRIGGER ... EXECUTE FUNCTION public.set_updated_at()` lines should be visually identical apart from the trigger name and target table.
+
+**Why not encode in the DO block:** same tradeoff as (a). Per-trigger `tgfoid` resolution is a 6-line addition to the DO block that's easy to add, but the manual-diff against Step D is already the gate language criterion 6 specifies ("preserve the snapshot contract"). If a future PR loosens this — e.g., introduces a different `set_updated_at` variant — the DO block would have to be updated in tandem; for now the simpler shape is fine.
+
+### Combined limitation surface
+
+Both gaps share the same shape: count and name are asserted, per-property semantics are not. The shared mitigation is reviewer manual-diff against the source-of-truth (§2 manifest for FKs, snapshot DDL for triggers). PR review should treat Step D (lines 196-201) and Step F (lines 234-495) as gate sections requiring line-by-line cross-check, not just spot-check.
+
 ## Out-of-scope items (per v1.1.2 manifest)
 
 - `seed.py` rewrite/retire (PR 3.1 owner; PR 1.5's guarded no-op remains).

@@ -97,6 +97,10 @@ def test_maintenance_on_db_reachable_returns_not_ready_canonical(monkeypatch, cl
     assert body["status"] == "not_ready"
     assert body["reason"] == "canonical_maintenance"
     assert body["database_reachable"] is True
+    # Mock returns scalar=0, so account_count=0, accounts_exist=False.
+    # Boolean (not None) because the probe succeeded — the answer is
+    # "we looked and found zero," distinct from "probe failed."
+    assert body["accounts_exist"] is False
 
 
 # --- Case 2: maintenance ON + DB unreachable -------------------------------
@@ -112,6 +116,10 @@ def test_maintenance_on_db_unreachable_returns_not_ready_canonical(monkeypatch, 
     assert body["status"] == "not_ready"
     assert body["reason"] == "canonical_maintenance"
     assert body["database_reachable"] is False
+    # Probe failed → accounts_exist is None (not the zero-initialized
+    # False). Distinguishes "probe failed, count unknown" from "probe
+    # succeeded, count is zero." Andrew review fix.
+    assert body["accounts_exist"] is None
 
 
 # --- Case 3: maintenance OFF + DB reachable --------------------------------

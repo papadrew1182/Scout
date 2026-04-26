@@ -179,6 +179,13 @@ def ready():
             db.close()
 
     if _maintenance_enabled():
+        # accounts_exist must reflect the probe outcome, not the
+        # zero-initialized default. If the probe failed, account_count
+        # is still 0 — but reporting accounts_exist=False would imply
+        # "no accounts found," which is misleading. Surface None to
+        # signal "unknown" so callers can distinguish "probed and
+        # found zero" from "probe failed."
+        accounts_exist = (account_count > 0) if database_reachable else None
         return {
             "status": "not_ready",
             "reason": "canonical_maintenance",
@@ -186,7 +193,7 @@ def ready():
             "environment": settings.environment,
             "auth_required": settings.auth_required,
             "bootstrap_enabled": settings.enable_bootstrap,
-            "accounts_exist": account_count > 0,
+            "accounts_exist": accounts_exist,
             "ai_available": settings.ai_available,
             "transcribe_available": settings.transcribe_available,
             "meal_generation": settings.enable_meal_generation,
