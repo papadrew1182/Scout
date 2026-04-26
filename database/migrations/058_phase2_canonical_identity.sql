@@ -501,25 +501,41 @@ ALTER TABLE scout.user_family_memberships
 -- before the migration commits. Any mismatch raises EXCEPTION and the
 -- whole transaction rolls back.
 --
--- Counts asserted:
+-- Counts and exact-set assertions:
 --   6 base tables
 --   6 PKs
---   6 unique constraints (uq_role_tier_overrides_member, uq_role_tiers_name,
---                         member_config_family_member_id_key_key,
---                         + the 3 implicit pkey unique indexes are already
---                         covered by the PK count)
+--   3 explicit unique constraints (uq_role_tier_overrides_member,
+--                                  uq_role_tiers_name,
+--                                  member_config_family_member_id_key_key);
+--                                  PK-implicit uniques are counted in PKs above
 --   3 CHECK constraints (chk_family_members_role,
 --                        chk_user_accounts_auth_provider,
 --                        chk_user_accounts_email_auth)
---   5 explicit indexes
---   6 updated_at triggers
+--   5 explicit indexes (incl. uq_user_accounts_email partial-predicate
+--                       check that pg_index.indpred contains "email IS NOT NULL")
+--   6 updated_at triggers (each verified to invoke public.set_updated_at()
+--                          via tgfoid -> pg_proc -> pg_namespace)
 --   6 internal FKs (rebuilt-table FKs)
---   63 §2 FKs (PR 2.1 owned subset)
+--   63 §2 FKs (PR 2.1 owned subset) — exact-set match by
+--             (constraint_name, source_qual, source_column, target_qual,
+--              on_delete) using a FULL OUTER JOIN against an inline
+--             VALUES list. Catches both "missing" and "unexpected"
+--             constraints; raises EXCEPTION for either direction with
+--             the offending constraint names.
 -- All FKs must be convalidated = true.
 
 DO $$
 DECLARE
     cnt int;
+    -- §2 FK exact-set difference outputs (missing or wrong-attributes;
+    -- unexpected). Set to NULL by string_agg when no rows match the
+    -- corresponding FILTER predicate, which is the pass condition.
+    missing_fks text;
+    extra_fks text;
+    -- Partial-index predicate for uq_user_accounts_email, captured via
+    -- pg_get_expr(indpred, indrelid). Expected to contain the substring
+    -- "email IS NOT NULL".
+    email_predicate text;
     expected_tables text[] := ARRAY[
         'families', 'family_members', 'user_accounts',
         'role_tiers', 'role_tier_overrides', 'member_config'
@@ -606,14 +622,47 @@ BEGIN
         RAISE EXCEPTION '058 verification: expected 5 explicit indexes, got %', cnt;
     END IF;
 
-    -- 6 updated_at triggers.
+    -- uq_user_accounts_email partial-index predicate must contain
+    -- "email IS NOT NULL". Per ChatGPT tertiary review: the index name
+    -- check above does not prove the predicate. A regression that
+    -- changed the predicate (e.g., to NOT NULL on a different column,
+    -- or removed the partial-ness entirely so the index covers all
+    -- rows including NULL emails) would still pass the name check.
+    SELECT pg_get_expr(i.indpred, i.indrelid)
+    INTO email_predicate
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'scout' AND c.relname = 'uq_user_accounts_email';
+    IF email_predicate IS NULL THEN
+        RAISE EXCEPTION '058 verification: uq_user_accounts_email index missing or has no partial predicate (pg_index.indpred IS NULL)';
+    END IF;
+    -- pg_get_expr renders the predicate as text; for the source
+    -- "WHERE (email IS NOT NULL)" Postgres typically returns
+    -- "email IS NOT NULL" (with or without enclosing parens).
+    IF email_predicate NOT LIKE '%email IS NOT NULL%' THEN
+        RAISE EXCEPTION '058 verification: uq_user_accounts_email predicate is wrong (expected "email IS NOT NULL", got: %)', email_predicate;
+    END IF;
+
+    -- 6 updated_at triggers, all invoking public.set_updated_at().
+    -- Per ChatGPT tertiary review: name-only matching does not prove
+    -- function target. Joining pg_proc + pg_namespace via tgfoid asserts
+    -- the trigger fires public.set_updated_at() specifically — a
+    -- regression that swapped the function (e.g., to a custom variant
+    -- or to clock_timestamp() inline) would drop the count below 6.
     SELECT count(*) INTO cnt
     FROM pg_trigger t
     JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'scout' AND NOT t.tgisinternal AND t.tgname = ANY(expected_triggers);
+    JOIN pg_proc p ON p.oid = t.tgfoid
+    JOIN pg_namespace pn ON pn.oid = p.pronamespace
+    WHERE n.nspname = 'scout'
+      AND NOT t.tgisinternal
+      AND t.tgname = ANY(expected_triggers)
+      AND p.proname = 'set_updated_at'
+      AND pn.nspname = 'public';
     IF cnt <> 6 THEN
-        RAISE EXCEPTION '058 verification: expected 6 updated_at triggers, got %', cnt;
+        RAISE EXCEPTION '058 verification: expected 6 updated_at triggers invoking public.set_updated_at(), got %', cnt;
     END IF;
 
     -- 6 internal FKs, all convalidated.
@@ -628,26 +677,144 @@ BEGIN
         RAISE EXCEPTION '058 verification: expected 6 internal FKs convalidated, got %', cnt;
     END IF;
 
-    -- 63 §2 FKs targeting the six identity tables, all convalidated.
-    -- Sources span scout.* (60) and public.* kept tables (3: sessions
-    -- + 2 on scout_scheduled_runs).
-    SELECT count(*) INTO cnt
-    FROM pg_constraint c
-    JOIN pg_class src ON src.oid = c.conrelid
-    JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
-    JOIN pg_class tgt ON tgt.oid = c.confrelid
-    JOIN pg_namespace tgt_ns ON tgt_ns.oid = tgt.relnamespace
-    WHERE c.contype = 'f'
-      AND c.convalidated = true
-      AND tgt_ns.nspname = 'scout'
-      AND tgt.relname IN ('families', 'family_members', 'user_accounts', 'role_tiers')
-      -- Exclude the 6 internal FKs sourced inside the new tables.
-      AND NOT (src_ns.nspname = 'scout' AND src.relname IN (
-          'family_members', 'user_accounts',
-          'role_tier_overrides', 'member_config'
-      ));
-    IF cnt <> 63 THEN
-        RAISE EXCEPTION '058 verification: expected 63 §2 FKs, got %', cnt;
+    -- 63 §2 FKs (PR 2.1 owned subset), exact-set match by
+    -- (constraint_name, source_qual, source_column, target_qual,
+    -- on_delete) using a FULL OUTER JOIN against an inline VALUES
+    -- list of the expected 63 rows. Sources span scout.* (60) and
+    -- public.* kept tables (3: sessions + 2 on scout_scheduled_runs).
+    --
+    -- Per ChatGPT tertiary review: count-only verification could pass
+    -- with semantically wrong content (e.g., one expected FK missing
+    -- AND one unexpected FK landed; or CASCADE swapped to SET NULL on
+    -- two rows). The FULL OUTER JOIN below catches both directions:
+    -- expected rows missing from actual aggregate to missing_fks;
+    -- actual rows missing from expected aggregate to extra_fks. A
+    -- single FK with wrong attributes shows in BOTH lists (its
+    -- constraint name) — the operator can read that as "FK exists but
+    -- with wrong attributes."
+    --
+    -- The actual-side filter pulls every FK whose target is one of
+    -- the five identity tables (families, family_members,
+    -- user_accounts, role_tiers, role_tier_overrides) excluding the
+    -- six internal FKs sourced inside the new identity tables. This
+    -- catches stray FKs that target role_tier_overrides (none expected
+    -- in PR 2.1's owned subset) — they would show in extra_fks.
+    SELECT
+        string_agg(expected.conname, ', ' ORDER BY expected.conname) FILTER (WHERE actual.conname IS NULL),
+        string_agg(actual.conname, ', ' ORDER BY actual.conname) FILTER (WHERE expected.conname IS NULL)
+    INTO missing_fks, extra_fks
+    FROM (VALUES
+        -- 27 FKs targeting scout.families(id)
+        ('connector_accounts_family_id_fkey', 'scout.connector_accounts', 'family_id', 'scout.families', 'CASCADE'),
+        ('home_assets_family_id_fkey', 'scout.home_assets', 'family_id', 'scout.families', 'CASCADE'),
+        ('home_zones_family_id_fkey', 'scout.home_zones', 'family_id', 'scout.families', 'CASCADE'),
+        ('household_rules_family_id_fkey', 'scout.household_rules', 'family_id', 'scout.families', 'CASCADE'),
+        ('maintenance_instances_family_id_fkey', 'scout.maintenance_instances', 'family_id', 'scout.families', 'CASCADE'),
+        ('maintenance_templates_family_id_fkey', 'scout.maintenance_templates', 'family_id', 'scout.families', 'CASCADE'),
+        ('nudge_rules_family_id_fkey', 'scout.nudge_rules', 'family_id', 'scout.families', 'CASCADE'),
+        ('quiet_hours_family_family_id_fkey', 'scout.quiet_hours_family', 'family_id', 'scout.families', 'CASCADE'),
+        ('reward_policies_family_id_fkey', 'scout.reward_policies', 'family_id', 'scout.families', 'CASCADE'),
+        ('user_family_memberships_family_id_fkey', 'scout.user_family_memberships', 'family_id', 'scout.families', 'CASCADE'),
+        ('allowance_periods_family_id_fkey', 'scout.allowance_periods', 'family_id', 'scout.families', 'CASCADE'),
+        ('reward_extras_catalog_family_id_fkey', 'scout.reward_extras_catalog', 'family_id', 'scout.families', 'CASCADE'),
+        ('reward_ledger_entries_family_id_fkey', 'scout.reward_ledger_entries', 'family_id', 'scout.families', 'CASCADE'),
+        ('settlement_batches_family_id_fkey', 'scout.settlement_batches', 'family_id', 'scout.families', 'CASCADE'),
+        ('standards_of_done_family_id_fkey', 'scout.standards_of_done', 'family_id', 'scout.families', 'CASCADE'),
+        ('daily_win_results_family_id_fkey', 'scout.daily_win_results', 'family_id', 'scout.families', 'CASCADE'),
+        ('time_blocks_family_id_fkey', 'scout.time_blocks', 'family_id', 'scout.families', 'CASCADE'),
+        ('calendar_exports_family_id_fkey', 'scout.calendar_exports', 'family_id', 'scout.families', 'CASCADE'),
+        ('activity_events_family_id_fkey', 'scout.activity_events', 'family_id', 'scout.families', 'CASCADE'),
+        ('external_calendar_events_family_id_fkey', 'scout.external_calendar_events', 'family_id', 'scout.families', 'CASCADE'),
+        ('work_context_events_family_id_fkey', 'scout.work_context_events', 'family_id', 'scout.families', 'CASCADE'),
+        ('budget_snapshots_family_id_fkey', 'scout.budget_snapshots', 'family_id', 'scout.families', 'CASCADE'),
+        ('bill_snapshots_family_id_fkey', 'scout.bill_snapshots', 'family_id', 'scout.families', 'CASCADE'),
+        ('travel_estimates_family_id_fkey', 'scout.travel_estimates', 'family_id', 'scout.families', 'CASCADE'),
+        ('project_templates_family_id_fkey', 'scout.project_templates', 'family_id', 'scout.families', 'CASCADE'),
+        ('projects_family_id_fkey', 'scout.projects', 'family_id', 'scout.families', 'CASCADE'),
+        ('scout_scheduled_runs_family_id_fkey', 'public.scout_scheduled_runs', 'family_id', 'scout.families', 'CASCADE'),
+        -- 28 FKs targeting scout.family_members(id)
+        ('affirmations_created_by_fkey', 'scout.affirmations', 'created_by', 'scout.family_members', 'SET NULL'),
+        ('affirmations_updated_by_fkey', 'scout.affirmations', 'updated_by', 'scout.family_members', 'SET NULL'),
+        ('affirmation_feedback_family_member_id_fkey', 'scout.affirmation_feedback', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('affirmation_delivery_log_family_member_id_fkey', 'scout.affirmation_delivery_log', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('maintenance_instances_owner_member_id_fkey', 'scout.maintenance_instances', 'owner_member_id', 'scout.family_members', 'CASCADE'),
+        ('maintenance_instances_completed_by_member_id_fkey', 'scout.maintenance_instances', 'completed_by_member_id', 'scout.family_members', 'SET NULL'),
+        ('maintenance_templates_default_owner_member_id_fkey', 'scout.maintenance_templates', 'default_owner_member_id', 'scout.family_members', 'SET NULL'),
+        ('nudge_dispatch_items_family_member_id_fkey', 'scout.nudge_dispatch_items', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('nudge_dispatches_family_member_id_fkey', 'scout.nudge_dispatches', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('nudge_rules_created_by_family_member_id_fkey', 'scout.nudge_rules', 'created_by_family_member_id', 'scout.family_members', 'SET NULL'),
+        ('push_deliveries_family_member_id_fkey', 'scout.push_deliveries', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('push_devices_family_member_id_fkey', 'scout.push_devices', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('reward_policies_family_member_id_fkey', 'scout.reward_policies', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('user_family_memberships_family_member_id_fkey', 'scout.user_family_memberships', 'family_member_id', 'scout.family_members', 'SET NULL'),
+        ('task_completions_completed_by_fkey', 'scout.task_completions', 'completed_by', 'scout.family_members', 'SET NULL'),
+        ('task_notes_author_id_fkey', 'scout.task_notes', 'author_id', 'scout.family_members', 'SET NULL'),
+        ('task_exceptions_created_by_fkey', 'scout.task_exceptions', 'created_by', 'scout.family_members', 'SET NULL'),
+        ('allowance_results_family_member_id_fkey', 'scout.allowance_results', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('reward_ledger_entries_family_member_id_fkey', 'scout.reward_ledger_entries', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('daily_win_results_family_member_id_fkey', 'scout.daily_win_results', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('greenlight_exports_family_member_id_fkey', 'scout.greenlight_exports', 'family_member_id', 'scout.family_members', 'CASCADE'),
+        ('activity_events_family_member_id_fkey', 'scout.activity_events', 'family_member_id', 'scout.family_members', 'SET NULL'),
+        ('project_templates_created_by_family_member_id_fkey', 'scout.project_templates', 'created_by_family_member_id', 'scout.family_members', 'SET NULL'),
+        ('projects_primary_owner_family_member_id_fkey', 'scout.projects', 'primary_owner_family_member_id', 'scout.family_members', 'SET NULL'),
+        ('projects_created_by_family_member_id_fkey', 'scout.projects', 'created_by_family_member_id', 'scout.family_members', 'CASCADE'),
+        ('project_tasks_owner_family_member_id_fkey', 'scout.project_tasks', 'owner_family_member_id', 'scout.family_members', 'SET NULL'),
+        ('project_budget_entries_recorded_by_family_member_id_fkey', 'scout.project_budget_entries', 'recorded_by_family_member_id', 'scout.family_members', 'CASCADE'),
+        ('scout_scheduled_runs_member_id_fkey', 'public.scout_scheduled_runs', 'member_id', 'scout.family_members', 'CASCADE'),
+        -- 6 FKs targeting scout.user_accounts(id)
+        ('connector_accounts_user_account_id_fkey', 'scout.connector_accounts', 'user_account_id', 'scout.user_accounts', 'SET NULL'),
+        ('device_registrations_user_account_id_fkey', 'scout.device_registrations', 'user_account_id', 'scout.user_accounts', 'CASCADE'),
+        ('user_family_memberships_user_account_id_fkey', 'scout.user_family_memberships', 'user_account_id', 'scout.user_accounts', 'CASCADE'),
+        ('user_preferences_user_account_id_fkey', 'scout.user_preferences', 'user_account_id', 'scout.user_accounts', 'CASCADE'),
+        ('work_context_events_user_account_id_fkey', 'scout.work_context_events', 'user_account_id', 'scout.user_accounts', 'SET NULL'),
+        ('sessions_user_account_id_fkey', 'public.sessions', 'user_account_id', 'scout.user_accounts', 'CASCADE'),
+        -- 2 FKs targeting scout.role_tiers(id)
+        ('role_tier_permissions_role_tier_id_fkey', 'scout.role_tier_permissions', 'role_tier_id', 'scout.role_tiers', 'CASCADE'),
+        ('user_family_memberships_role_tier_id_fkey', 'scout.user_family_memberships', 'role_tier_id', 'scout.role_tiers', 'SET NULL')
+    ) AS expected (conname, src_qual, src_col, tgt_qual, on_delete)
+    FULL OUTER JOIN (
+        SELECT
+            c.conname::text AS conname,
+            (src_ns.nspname || '.' || src.relname)::text AS src_qual,
+            src_attr.attname::text AS src_col,
+            (tgt_ns.nspname || '.' || tgt.relname)::text AS tgt_qual,
+            CASE c.confdeltype
+                WHEN 'c' THEN 'CASCADE'
+                WHEN 'n' THEN 'SET NULL'
+                WHEN 'r' THEN 'RESTRICT'
+                WHEN 'a' THEN 'NO ACTION'
+                WHEN 'd' THEN 'SET DEFAULT'
+                ELSE 'UNKNOWN(' || c.confdeltype::text || ')'
+            END AS on_delete
+        FROM pg_constraint c
+        JOIN pg_class src ON src.oid = c.conrelid
+        JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
+        JOIN pg_attribute src_attr ON src_attr.attrelid = c.conrelid
+                                  AND src_attr.attnum = c.conkey[1]
+        JOIN pg_class tgt ON tgt.oid = c.confrelid
+        JOIN pg_namespace tgt_ns ON tgt_ns.oid = tgt.relnamespace
+        WHERE c.contype = 'f'
+          AND c.convalidated = true
+          AND tgt_ns.nspname = 'scout'
+          AND tgt.relname IN ('families', 'family_members', 'user_accounts',
+                              'role_tiers', 'role_tier_overrides')
+          -- Exclude the 6 internal FKs sourced inside the new identity tables.
+          AND NOT (src_ns.nspname = 'scout' AND src.relname IN (
+              'family_members', 'user_accounts',
+              'role_tier_overrides', 'member_config'
+          ))
+    ) AS actual
+    ON expected.conname = actual.conname
+       AND expected.src_qual = actual.src_qual
+       AND expected.src_col = actual.src_col
+       AND expected.tgt_qual = actual.tgt_qual
+       AND expected.on_delete = actual.on_delete;
+
+    IF missing_fks IS NOT NULL THEN
+        RAISE EXCEPTION '058 verification: §2 FKs missing or with wrong attributes (constraint names): %', missing_fks;
+    END IF;
+    IF extra_fks IS NOT NULL THEN
+        RAISE EXCEPTION '058 verification: unexpected §2 FKs landed (constraint names): %', extra_fks;
     END IF;
 
     -- 6 role_tiers reference rows by exact natural-key set.

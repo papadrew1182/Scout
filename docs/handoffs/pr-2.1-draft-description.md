@@ -12,7 +12,7 @@ Builds the six canonical identity tables in the `scout` schema, seeds the six re
 | File | Status | Purpose |
 | --- | --- | --- |
 | `backend/migrations/058_phase2_canonical_identity.sql` | + | Steps A-F + verification DO block |
-| `database/migrations/058_phase2_canonical_identity.sql` | + | Byte-identical mirror (sha256 `34c158b731a6...`) |
+| `database/migrations/058_phase2_canonical_identity.sql` | + | Byte-identical mirror (sha256 `c036e1ac686f...`) |
 | `backend/app/main.py` | M | `/ready` handler patched per criterion 9 |
 | `backend/tests/test_ready_endpoint.py` | + | 6 unit tests covering 4 maintenance × DB-state cells + 2 cross-case invariants |
 | `scripts/old_reference_grep.py` | M | `MAX_EXCLUDED_MIGRATION` bumped 57 → 58 (058 verification DO block uses PL/pgSQL string-array literals to compare expected table names against `pg_class`; gate-tooling content, not unqualified DDL — see "Tooling change" section below) |
@@ -30,7 +30,7 @@ Per manifest v1.1.2 §6 PR 2.1 gate, every criterion below is a binary check at 
 | 4 | Resolver audit: every PR 2.1 resurrection row is disabled or has Phase 3 owner. No unqualified legacy path newly executable unless explicitly accepted | ✓ | Six §4 resurrection rows at end of PR 2.1 (`families`, `family_members`, `user_accounts`, `role_tiers`, `role_tier_overrides`, `member_config`) all owned by PR 3.1. Containment: PR 1.5 maintenance middleware blocks request-time DB execution for non-allowlisted paths (`/api/*` → 503); scheduler import gated by `SCOUT_SCHEDULER_ENABLED=false`; AI gated by `SCOUT_ENABLE_AI=false`; `seed.py` guarded by `SCOUT_CANONICAL_MAINTENANCE`; `/ready` patched in this PR (criterion 9) |
 | 5 | Backend still boots and `/health` still returns 200 | ✓ | `/ready` patch is additive (does not change boot path); `/health` handler unchanged. Will be confirmed at Railway deploy time post-merge |
 | 6 | Rebuilt-table contract parity gate: 6 internal FKs / 6 PKs / 3 uniques / 3 CHECKs / 5 indexes / 6 triggers all present | ✓ | Verification DO block asserts each set with explicit `expected_*` arrays (lines 565-700 of migration). Subtleties preserved: `now()` defaults (not `clock_timestamp()`), partial unique on `user_accounts.email WHERE email IS NOT NULL`, lowercase `adult`/`child` in `chk_family_members_role`, `public.set_updated_at()` invoked by all 6 triggers |
-| 7 | Migration qualification gate (zero unqualified DDL/DML, zero `IF NOT EXISTS`, zero unvalidated `NOT VALID`, byte-identical mirror) | ✓ | Self-audit grep results captured below; backend/database mirror sha256 match: `34c158b731a6267207f06d254302568018da8303bb88cc2d0a716360efeec5c0` |
+| 7 | Migration qualification gate (zero unqualified DDL/DML, zero `IF NOT EXISTS`, zero unvalidated `NOT VALID`, byte-identical mirror) | ✓ | Self-audit grep results captured below; backend/database mirror sha256 match: `c036e1ac686f285baa08b8297b48e22f2422bceb7490bea9a68f94995d4cb21f` |
 | 8 | §2 FK restore parity gate: PR 2.1 owns exactly 63 of 68. Per-target subset 27/28/6/2/0 = 63 | ✓ | Step F structured by target. Counts: 27 → `scout.families(id)`; 28 → `scout.family_members(id)`; 6 → `scout.user_accounts(id)`; 2 → `scout.role_tiers(id)`; 0 → `scout.role_tier_overrides(id)`. Total grep count: `FOREIGN KEY` = 69 (6 internal + 63 §2). All convalidated |
 | 9 | `/ready` maintenance semantic gate | ✓ | `backend/app/main.py` `/ready` patched: while `SCOUT_CANONICAL_MAINTENANCE` truthy, body is `{"status": "not_ready", "reason": "canonical_maintenance", "database_reachable": <bool>, ...diagnostic fields}`. DB probe still executes. 6 unit tests in `backend/tests/test_ready_endpoint.py` cover the 4 maintenance × DB-state cells + 2 cross-case invariants (truthy parser consistency with middleware) |
 
@@ -85,7 +85,7 @@ All run against `backend/migrations/058_phase2_canonical_identity.sql`:
 | `^DELETE FROM ` not followed by `scout.` or `public.` | 0 | 0 (no DELETE statements) | ✓ |
 | `CREATE TABLE IF NOT EXISTS` | 0 | 0 | ✓ |
 | `NOT VALID` (excluding the line 19 docstring "(no NOT VALID)" comment) | 0 | 0 | ✓ |
-| Backend/database 058 mirror sha256 match | match | `34c158b731a6...` both sides | ✓ |
+| Backend/database 058 mirror sha256 match | match | `c036e1ac686f...` both sides | ✓ |
 
 ## Snapshot subtleties preserved verbatim (criterion 6 detail)
 
